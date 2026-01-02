@@ -189,7 +189,7 @@
     // 511Virginia GeoJSON endpoints
     va511: {
       enabled: true,
-      camerasGeojson: "https://www.511virginia.org/data/icons.cameras.geojson",
+      camerasGeojson: "https://511.vdot.virginia.gov/services/map/layers/map/cams",
       incidentsGeojson: "https://www.511virginia.org/data/geojson/icons.incident.geojson",
       constructionGeojson: "https://www.511virginia.org/data/geojson/icons.construction.geojson",
       includeConstructionOnMap: false
@@ -681,7 +681,11 @@
       panel.classList.contains("panel--collapsed") ? openPanel() : closePanel();
     }
   });
-  panelClose.addEventListener("click", (e) => { e.stopPropagation(); closePanel(); });
+  panelClose.addEventListener("click", (e) => {
+    e.stopPropagation();
+    e.preventDefault();
+    closePanel();
+  });
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape") closePanel();
   });
@@ -1150,25 +1154,6 @@ function selectItem(id) {
           console.log(`RSS feed ${source.id} loaded successfully: ${added} new items`);
         }
 
-        // If no items were added, create a placeholder marker to show the feed is working
-        if (added === 0 && !store[`_placeholder_${source.id}`]) {
-          const placeholderItem = normalize({
-            source,
-            raw: {
-              title: `${source.name} - No recent updates`,
-              url: source.url,
-              guid: `placeholder-${source.id}`,
-              published: new Date().toISOString(),
-              summary: `This feed is working but has no recent items within the last ${source.maxAgeHours || 24} hours.`,
-              loc: source.defaultLoc
-            }
-          });
-          if (placeholderItem && !store.seenKeys.has(placeholderItem.dedupeKey)) {
-            store.seenKeys.add(placeholderItem.dedupeKey);
-            store.itemsById.set(placeholderItem.id, placeholderItem);
-            store[`_placeholder_${source.id}`] = true;
-          }
-        }
       } catch (err) {
         // Check if this is a rate limit error (429)
         const isRateLimit = err.message && (err.message.includes('429') || err.message.includes('Too Many Requests'));
@@ -1184,95 +1169,10 @@ function selectItem(id) {
           store[errorKey] = true;
         }
         results.push({ source: source.id, ok: false, error: String(err), isRateLimit });
-
-        // Add a fallback marker for this specific failed feed (not just when all fail)
-        const fallbackKey = `_fallback_${source.id}`;
-        if (!store[fallbackKey]) {
-          console.log(`Adding fallback marker for ${source.id}...`);
-          const fallbackItem = normalize({
-            source,
-            raw: {
-              title: `${source.name} - Feed Unavailable`,
-              url: source.url,
-              guid: `fallback-${source.id}-${Date.now()}`,
-              published: new Date().toISOString(),
-              summary: isRateLimit
-                ? `This feed is temporarily rate-limited. It will retry automatically.`
-                : `This feed is temporarily unavailable: ${err.message?.slice(0, 100) || 'Unknown error'}`,
-              loc: source.defaultLoc
-            }
-          });
-          if (fallbackItem && !store.seenKeys.has(fallbackItem.dedupeKey)) {
-            store.seenKeys.add(fallbackItem.dedupeKey);
-            store.itemsById.set(fallbackItem.id, fallbackItem);
-            store[fallbackKey] = true;
-          }
-        }
       }
     }
 
     console.log(`RSS polling complete: ${totalAdded} new items from ${results.filter(r => r.ok).length}/${CONFIG.rss.length} feeds`);
-
-
-    // Add sample RSS data for each category if few items succeeded (for better demo experience)
-    if (totalAdded < 5 && !store._sampleRSSAdded) {
-      console.log("Adding sample RSS markers across all categories for demonstration...");
-
-      // Sample data for each category to ensure footer buttons show content
-      const categoryMap = {
-        crime: { emoji: "🚨", name: "Police Alert" },
-        traffic: { emoji: "🚗", name: "Traffic Update" },
-        crash: { emoji: "💥", name: "Accident Report" },
-        closure: { emoji: "⛔", name: "Road Closure" },
-        train: { emoji: "🚆", name: "Transit Alert" },
-        weather: { emoji: "🌧️", name: "Weather Advisory" },
-        events: { emoji: "🎉", name: "Community Event" },
-        camera: { emoji: "📷", name: "Traffic Camera" },
-        fire_ems: { emoji: "🔥", name: "Emergency Response" }
-      };
-
-      const locations = [
-        { lat: 38.3032, lon: -77.4605, name: "Downtown Fredericksburg" },
-        { lat: 38.2914, lon: -77.4477, name: "Route 3 & I-95" },
-        { lat: 38.2050, lon: -77.6070, name: "Spotsylvania" },
-        { lat: 38.4220, lon: -77.4083, name: "Stafford" }
-      ];
-
-      let sampleCount = 0;
-      for (const [cat, info] of Object.entries(categoryMap)) {
-        // Add 2-3 sample items per category
-        for (let i = 0; i < 2; i++) {
-          const loc = locations[sampleCount % locations.length];
-          const sampleSource = {
-            id: `sample-${cat}`,
-            name: `Sample ${info.name}`,
-            category: cat,
-            emoji: info.emoji,
-            defaultLoc: loc,
-            tone: cat === "crime" || cat === "crash" || cat === "fire_ems" ? "bad" : cat === "closure" || cat === "traffic" ? "warn" : "good",
-            maxAgeHours: 24
-          };
-
-          const raw = {
-            title: `Sample ${info.name} - ${loc.name}`,
-            url: "https://example.com/sample",
-            guid: `sample-${cat}-${i}-${Date.now()}`,
-            published: new Date(Date.now() - (i * 60 * 60 * 1000)).toISOString(), // Stagger times
-            summary: `This is a sample ${cat} item. Real data will load when RSS feeds and APIs are accessible. Click the Refresh button to try loading live data.`,
-            loc
-          };
-
-          const norm = normalize({ source: sampleSource, raw });
-          if (!norm) continue;
-          if (store.seenKeys.has(norm.dedupeKey)) continue;
-          store.seenKeys.add(norm.dedupeKey);
-          store.itemsById.set(norm.id, norm);
-          sampleCount++;
-        }
-      }
-      store._sampleRSSAdded = true;
-      console.log(`Added ${sampleCount} sample items across all categories`);
-    }
 
     setLastUpdate();
     redraw();
@@ -1417,46 +1317,8 @@ function selectItem(id) {
       // Only log CORS/network errors once per session to avoid console spam
       if (!store._511CamerasErrorLogged) {
         console.warn("511 cameras fetch failed. Error:", e.message || e);
-        console.warn("The 511virginia.org cameras endpoint may be down or blocking requests. Using fallback data.");
+        console.warn("The 511 cameras endpoint may be down or blocking requests.");
         store._511CamerasErrorLogged = true;
-
-        // Add sample camera markers for demonstration
-        if (!store._sampleCamerasAdded) {
-          console.log("Adding sample camera markers for demonstration...");
-          ingestVa511Cameras({
-            type: "FeatureCollection",
-            features: [
-              {
-                type: "Feature",
-                geometry: { type: "Point", coordinates: [-77.4605, 38.3032] },
-                properties: {
-                  name: "Sample Camera - Downtown FXBG",
-                  https_url: "https://www.511virginia.org",
-                  description: "Sample camera marker (proxy/network unavailable)"
-                }
-              },
-              {
-                type: "Feature",
-                geometry: { type: "Point", coordinates: [-77.4706, 38.3019] },
-                properties: {
-                  name: "Sample Camera - I-95 & Route 3",
-                  https_url: "https://www.511virginia.org",
-                  description: "Sample camera marker (proxy/network unavailable)"
-                }
-              },
-              {
-                type: "Feature",
-                geometry: { type: "Point", coordinates: [-77.4555, 38.2914] },
-                properties: {
-                  name: "Sample Camera - Route 1 & I-95",
-                  https_url: "https://www.511virginia.org",
-                  description: "Sample camera marker (proxy/network unavailable)"
-                }
-              }
-            ]
-          });
-          store._sampleCamerasAdded = true;
-        }
       }
     }
 
@@ -1488,49 +1350,8 @@ function selectItem(id) {
       // Only log CORS/network errors once per session to avoid console spam
       if (!store._511IncidentsErrorLogged) {
         console.warn("511 incidents fetch failed. Error:", e.message || e);
-        console.warn("The 511virginia.org incidents endpoint may be down or blocking requests. Using fallback data.");
+        console.warn("The 511 incidents endpoint may be down or blocking requests.");
         store._511IncidentsErrorLogged = true;
-
-        // Add sample incident markers for demonstration
-        if (!store._sampleIncidentsAdded) {
-          console.log("Adding sample incident markers for demonstration...");
-          i95Incidents = ingestVa511Incidents({
-            type: "FeatureCollection",
-            features: [
-              {
-                type: "Feature",
-                geometry: { type: "Point", coordinates: [-77.4555, 38.3100] },
-                properties: {
-                  title: "Sample: Traffic Delay",
-                  description: "Sample incident - Heavy traffic on I-95 North (proxy/network unavailable)",
-                  road: "I-95",
-                  updated: new Date().toISOString()
-                }
-              },
-              {
-                type: "Feature",
-                geometry: { type: "Point", coordinates: [-77.4650, 38.2950] },
-                properties: {
-                  title: "Sample: Road Work",
-                  description: "Sample incident - Construction on Route 3 (proxy/network unavailable)",
-                  road: "Route 3",
-                  updated: new Date().toISOString()
-                }
-              },
-              {
-                type: "Feature",
-                geometry: { type: "Point", coordinates: [-77.4705, 38.3200] },
-                properties: {
-                  title: "Sample: Accident",
-                  description: "Sample incident - Vehicle accident on I-95 South (proxy/network unavailable)",
-                  road: "I-95",
-                  updated: new Date().toISOString()
-                }
-              }
-            ]
-          });
-          store._sampleIncidentsAdded = true;
-        }
       }
     }
 
@@ -1578,19 +1399,43 @@ function selectItem(id) {
       if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
 
       const name =
-        p.name || p.title || p.description || p.camera_name || p.device_name || "Traffic camera";
+        p.name || p.title || p.description || p.camera_name || p.device_name || p.camName || "Traffic camera";
 
-      // Most 511 camera feeds expose either a snapshot URL or a stream/page URL.
-      const camUrl = (p.https_url || p.url || p.camera_url || "").toString();
-      const streamUrl = (p.video_url || p.stream_url || p.hls_url || p.m3u8_url || "").toString();
+      // Extract camera ID from various possible fields
+      const cameraId = p.id || p.camId || p.camera_id || p.deviceId || p.device_id || "";
 
+      // Build proper camera stream URL using the VDOT media server template
+      // Template: https://media-sfs*.vdotcameras.com:443/rtplive/<CAMERA_ID>/playlist.m3u8
       let media = null;
+
+      // Check for existing stream URL first
+      let streamUrl = (p.video_url || p.stream_url || p.hls_url || p.m3u8_url || p.streamUrl || "").toString();
+
+      // If no stream URL but we have a camera ID, build the VDOT media server URL
+      if (!streamUrl && cameraId) {
+        // Try different media server instances (sfs1, sfs2, sfs3, etc.)
+        // Use sfs1 as default - the app will handle playback failures gracefully
+        streamUrl = `https://media-sfs1.vdotcameras.com:443/rtplive/${cameraId}/playlist.m3u8`;
+      }
+
+      // Fallback to snapshot URL
+      const camUrl = (p.https_url || p.url || p.camera_url || p.snapshotUrl || "").toString();
+
       if (streamUrl) {
-        if (/\.(mp4|webm)($|\?)/i.test(streamUrl)) media = { type: "video", src: streamUrl };
-        else media = { type: "iframe", src: streamUrl };
+        // HLS streams (.m3u8) should be played with iframe/video player
+        if (/\.m3u8($|\?)/i.test(streamUrl)) {
+          media = { type: "iframe", src: streamUrl };
+        } else if (/\.(mp4|webm)($|\?)/i.test(streamUrl)) {
+          media = { type: "video", src: streamUrl };
+        } else {
+          media = { type: "iframe", src: streamUrl };
+        }
       } else if (camUrl) {
-        if (/\.(jpg|jpeg|png|webp)($|\?)/i.test(camUrl)) media = { type: "image", src: camUrl };
-        else media = { type: "iframe", src: camUrl };
+        if (/\.(jpg|jpeg|png|webp)($|\?)/i.test(camUrl)) {
+          media = { type: "image", src: camUrl };
+        } else {
+          media = { type: "iframe", src: camUrl };
+        }
       }
 
       // Keep dedupe stable
