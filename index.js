@@ -1216,44 +1216,18 @@ function selectItem(id) {
     if (!CONFIG.va511.enabled) return { i95Incidents: 0 };
 
     // Cameras (always ok; doesn't bloat too much and is useful)
-    // Try direct fetch first (511 Virginia supports CORS), then fallback to proxy
+    // Use proxy to avoid CORS issues with 511virginia.org redirects
     let camerasLoaded = false;
     try {
-      let cams = null;
-
-      // Try direct fetch first
-      try {
-        const directRes = await fetch(CONFIG.va511.camerasGeojson, {
-          headers: {
-            "Accept": "application/geo+json,application/json,*/*",
-            "Cache-Control": "no-cache"
-          },
-          signal: AbortSignal.timeout(12000)
-        });
-
-        if (directRes.ok) {
-          const contentType = directRes.headers.get('content-type') || '';
-          if (contentType.includes('json')) {
-            cams = await directRes.json();
-            console.log("511 cameras loaded successfully (direct)");
-          }
-        }
-      } catch (directErr) {
-        // Direct fetch failed, will try proxy
-      }
-
-      // If direct fetch failed, try proxy
-      if (!cams) {
-        cams = await fetchWithProxies(CONFIG.va511.camerasGeojson, {
-          expect: "json",
-          headers: {
-            "X-Cache-TTL-MS": "120000",
-            "Accept": "application/geo+json,application/json,*/*"
-          },
-          timeoutMs: 15000
-        });
-        console.log("511 cameras loaded successfully (proxy)");
-      }
+      const cams = await fetchWithProxies(CONFIG.va511.camerasGeojson, {
+        expect: "json",
+        headers: {
+          "X-Cache-TTL-MS": "120000",
+          "Accept": "application/geo+json,application/json,*/*"
+        },
+        timeoutMs: 15000
+      });
+      console.log("511 cameras loaded successfully (proxy)");
 
       ingestVa511Cameras(cams);
       camerasLoaded = true;
@@ -1305,45 +1279,19 @@ function selectItem(id) {
     }
 
     // Incidents (STRICT time gate)
-    // Try direct fetch first (511 Virginia supports CORS), then fallback to proxy
+    // Use proxy to avoid CORS issues with 511virginia.org redirects
     let i95Incidents = 0;
     let incidentsLoaded = false;
     try {
-      let inc = null;
-
-      // Try direct fetch first
-      try {
-        const directRes = await fetch(CONFIG.va511.incidentsGeojson, {
-          headers: {
-            "Accept": "application/geo+json,application/json,*/*",
-            "Cache-Control": "no-cache"
-          },
-          signal: AbortSignal.timeout(12000)
-        });
-
-        if (directRes.ok) {
-          const contentType = directRes.headers.get('content-type') || '';
-          if (contentType.includes('json')) {
-            inc = await directRes.json();
-            console.log("511 incidents loaded successfully (direct)");
-          }
-        }
-      } catch (directErr) {
-        // Direct fetch failed, will try proxy
-      }
-
-      // If direct fetch failed, try proxy
-      if (!inc) {
-        inc = await fetchWithProxies(CONFIG.va511.incidentsGeojson, {
-          expect: "json",
-          headers: {
-            "X-Cache-TTL-MS": "60000",
-            "Accept": "application/geo+json,application/json,*/*"
-          },
-          timeoutMs: 15000
-        });
-        console.log("511 incidents loaded successfully (proxy)");
-      }
+      const inc = await fetchWithProxies(CONFIG.va511.incidentsGeojson, {
+        expect: "json",
+        headers: {
+          "X-Cache-TTL-MS": "60000",
+          "Accept": "application/geo+json,application/json,*/*"
+        },
+        timeoutMs: 15000
+      });
+      console.log("511 incidents loaded successfully (proxy)");
 
       i95Incidents = ingestVa511Incidents(inc);
       incidentsLoaded = true;
