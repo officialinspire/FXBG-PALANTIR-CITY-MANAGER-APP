@@ -1318,7 +1318,8 @@ function selectItem(id) {
       // Validate that we got actual GeoJSON
       if (cams && (cams.type === "FeatureCollection" || Array.isArray(cams.features))) {
         console.log("511 cameras loaded successfully:", cams.features?.length || 0, "cameras");
-        ingestVa511Cameras(cams);
+        const result = ingestVa511Cameras(cams);
+        console.log(`511 cameras ingested: ${result.added} cameras added from ${result.total} total`);
         camerasLoaded = true;
       } else {
         throw new Error("Invalid GeoJSON response (missing features)");
@@ -1415,8 +1416,36 @@ function selectItem(id) {
       // Extract camera ID from various possible fields
       const cameraId = p.id || p.camId || p.camera_id || p.deviceId || p.device_id || "";
 
-      // Get snapshot URL (prioritize snapshot images over video streams)
-      const camUrl = (p.https_url || p.url || p.camera_url || p.snapshotUrl || "").toString();
+      // Get snapshot URL - try multiple property names (Virginia 511 uses different naming)
+      // Priority: direct snapshot URLs, then HTTPS URLs, then regular URLs
+      const camUrl = (
+        p.snapshotURL ||      // Common in VDOT feeds (capital URL)
+        p.snapshotUrl ||      // Alternative spelling
+        p.snapshot_url ||     // Snake case variant
+        p.https_url ||        // HTTPS secure URL
+        p.imageURL ||         // Image URL variant
+        p.imageUrl ||         // Alternative
+        p.url ||              // Generic URL
+        p.camera_url ||       // Camera-specific URL
+        ""
+      ).toString();
+
+      // Get camera page URL - try multiple property names for the detail/viewing page
+      const pageUrl = (
+        p.webURL ||           // Common in VDOT feeds (capital URL)
+        p.webUrl ||           // Alternative spelling
+        p.detailURL ||        // Detail page URL
+        p.detailUrl ||        // Alternative
+        p.page_url ||         // Snake case variant
+        p.pageURL ||          // Alternative
+        p.link ||             // Generic link
+        p.videoURL ||         // Video page URL
+        p.videoUrl ||         // Alternative
+        ""
+      ).toString();
+
+      // If we have a camera ID but no page URL, construct the standard 511 Virginia camera URL
+      const finalPageUrl = pageUrl || (cameraId ? `https://511.vdot.virginia.gov/map?camera=${cameraId}` : "https://www.511virginia.org/");
 
       let media = null;
 
@@ -1426,6 +1455,16 @@ function selectItem(id) {
         // Proxy the image URL to avoid CORS errors
         const proxiedUrl = `${location.origin}/proxy?url=${encodeURIComponent(camUrl)}`;
         media = { type: "image", src: proxiedUrl, originalSrc: camUrl };
+      }
+
+      // Debug logging for first 3 cameras to help troubleshoot
+      if (added < 3) {
+        console.log(`Camera ${added + 1}: "${name}"`, {
+          id: cameraId,
+          snapshotURL: camUrl ? camUrl.slice(0, 80) + '...' : 'NONE',
+          pageURL: finalPageUrl.slice(0, 80) + '...',
+          hasMedia: !!media
+        });
       }
 
       // Keep dedupe stable
@@ -1442,7 +1481,7 @@ function selectItem(id) {
           "Traffic camera feed.",
         sourceName: "511 Virginia",
         sourceId: "va511-cameras",
-        url: (p.page_url || p.link || p.url || "").toString() || "https://www.511virginia.org/",
+        url: finalPageUrl,
         timestamp: new Date().toISOString(),
         lat,
         lon,
