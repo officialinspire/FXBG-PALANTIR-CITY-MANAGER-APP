@@ -112,18 +112,36 @@ async function proxyFetch(targetUrl, reqHeaders) {
       // Node 18+ has global fetch
       let upstream;
       try {
+      // Build headers with better User-Agent and optional Referer for specific sites
+      const upstreamHeaders = {
+        // Disable gzip/deflate so we can cache raw bytes uniformly
+        "Accept-Encoding": "identity",
+        "Accept-Language": "en-US,en;q=0.9",
+        // Use realistic browser User-Agent to avoid blocking
+        "User-Agent": reqHeaders["user-agent"] || "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        // Allow callers to hint a specific Accept header via the incoming request; fallback to */*
+        "Accept": accept || "*/*",
+      };
+
+      // Add Referer if provided by client
+      if (reqHeaders["referer"]) {
+        upstreamHeaders["Referer"] = reqHeaders["referer"];
+      } else {
+        // Set appropriate referer based on target URL
+        try {
+          const targetHost = new URL(targetUrl).hostname;
+          if (targetHost.includes("511virginia.org") || targetHost.includes("511.vdot.virginia.gov")) {
+            upstreamHeaders["Referer"] = "https://www.511virginia.org/";
+          } else if (targetHost.includes("fredericksburgva.gov") || targetHost.includes("spotsylvania.va.us")) {
+            upstreamHeaders["Referer"] = `https://${targetHost}/`;
+          }
+        } catch {}
+      }
+
       upstream = await fetch(targetUrl, {
         method: "GET",
         redirect: "follow",
-        headers: {
-          // Disable gzip/deflate so we can cache raw bytes uniformly
-          "Accept-Encoding": "identity",
-          "Accept-Language": "en-US,en;q=0.9",
-          "Referer": "http://localhost",
-          "User-Agent": "CityManagerProxy/1.0 (+localhost)",
-          // Allow callers to hint a specific Accept header via the incoming request; fallback to */*
-          "Accept": accept || "*/*",
-        },
+        headers: upstreamHeaders,
       });
       } catch (e) {
         if (staleCandidate) {
@@ -153,6 +171,11 @@ async function proxyFetch(targetUrl, reqHeaders) {
         };
       }
 
+      // Log non-200 responses for debugging
+      if (upstream.status !== 200) {
+        console.warn(`[proxy] ${targetUrl} returned HTTP ${upstream.status}`);
+      }
+
       // If we get 404 and have no stale cache, return the error
       if (upstream.status === 404) {
         const errorBody = Buffer.from(JSON.stringify({
@@ -176,6 +199,13 @@ async function proxyFetch(targetUrl, reqHeaders) {
       const buf = Buffer.from(await upstream.arrayBuffer());
       const contentType = upstream.headers.get("content-type") || "application/octet-stream";
 
+      // Log empty responses for debugging
+      if (buf.length === 0) {
+        console.warn(`[proxy] WARNING: ${targetUrl} returned empty response (0 bytes)`);
+        console.warn(`[proxy]   Content-Type: ${contentType}`);
+        console.warn(`[proxy]   Accept: ${accept}`);
+      }
+
       // Validate response content for JSON/XML endpoints
       // Detect HTML responses when JSON/XML is expected to catch proxy errors
       const isTextContent = contentType.includes("text/") || contentType.includes("json") || contentType.includes("xml");
@@ -186,10 +216,11 @@ async function proxyFetch(targetUrl, reqHeaders) {
         // Check if caller expected JSON/XML based on Accept header or content-type
         const expectsStructuredData = contentType.includes("json") || contentType.includes("xml") ||
                                        accept.includes("json") || accept.includes("xml") ||
-                                       accept.includes("geojson");
+                                       accept.includes("geojson") || accept.includes("rss") || accept.includes("atom");
 
         if (looksLikeHtml && expectsStructuredData) {
           console.warn(`[proxy] WARNING: ${targetUrl} returned HTML when structured data expected (Accept: ${accept})`);
+          console.warn(`[proxy]   Preview: ${preview.slice(0, 200)}`);
           // Return stale cache if available for HTML error pages
           if (staleCandidate) {
             console.log(`[proxy] Using stale cache instead of HTML error page`);

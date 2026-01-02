@@ -547,12 +547,12 @@
 
     // Default timeout for all network calls (ms). If opts.timeoutMs is provided,
     // use that; otherwise fall back to any CONFIG.net.timeoutMs, or
-    // CONFIG.polling.timeoutMs, or a hardcoded default (12000ms).
+    // CONFIG.polling.timeoutMs, or a hardcoded default (15000ms - increased from 12000).
     const timeoutMs = (opts && typeof opts.timeoutMs === 'number')
       ? opts.timeoutMs
       : (((CONFIG && CONFIG.net && typeof CONFIG.net.timeoutMs === 'number') ? CONFIG.net.timeoutMs
           : ((CONFIG && CONFIG.polling && typeof CONFIG.polling.timeoutMs === 'number') ? CONFIG.polling.timeoutMs
-            : 12000)));
+            : 15000)));
 
     // Build list of candidate fetch targets: prefer our local proxy if possible,
     // then same-origin/direct requests, then any configured public proxies.
@@ -606,11 +606,22 @@
         // endpoints are sensitive to overly strict Accept values, so always
         // allow any type as a fallback ("*/*").
         const acceptHeader = expected === 'json' ? 'application/json,*/*' : 'text/plain,*/*';
-        const mergedHeaders = { 'Accept': acceptHeader, ...extraHeaders };
+
+        // Improved User-Agent to avoid being blocked by servers
+        const userAgent = extraHeaders['User-Agent'] ||
+                         'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+
+        const mergedHeaders = {
+          'Accept': acceptHeader,
+          'User-Agent': userAgent,
+          ...extraHeaders
+        };
 
         const res = await fetch(candidate.url, {
           signal: controller.signal,
-          headers: mergedHeaders
+          headers: mergedHeaders,
+          credentials: 'omit', // Don't send cookies to avoid CORS issues
+          mode: candidate.type === 'direct' ? 'cors' : 'cors'
         });
 
         clearTimeout(timeout);
@@ -644,7 +655,14 @@
         }
 
         // Default to returning raw text when not expecting JSON.
-        return await res.text();
+        const textResponse = await res.text();
+
+        // Log empty responses for debugging
+        if (CONFIG.debug && CONFIG.debug.rss && (!textResponse || textResponse.trim().length === 0)) {
+          console.warn(`[fetchWithProxies] Empty response from ${url} via ${candidate.type}`);
+        }
+
+        return textResponse;
       } catch (err) {
         lastErr = err;
         if (!errors.some(e => e.error === err.message)) {
@@ -654,10 +672,16 @@
       }
     }
 
-    // Enhanced error message with details
-    const errMsg = errors.length > 0
+    // Enhanced error message with details and guidance
+    let errMsg = errors.length > 0
       ? `Fetch failed for ${url}: ${errors.map(e => `[${e.type}] ${e.error}`).join(', ')}`
       : 'Fetch failed';
+
+    // Add helpful guidance if proxy failed
+    if (errors.some(e => e.type === 'proxy')) {
+      errMsg += ' (Tip: Make sure proxy server is running: node proxy-server.js)';
+    }
+
     const enhancedErr = new Error(errMsg);
     enhancedErr.details = errors;
     throw enhancedErr;
@@ -1642,12 +1666,20 @@ function selectItem(id) {
       } catch (err) {
         // Check if this is a rate limit error (429)
         const isRateLimit = err.message && (err.message.includes('429') || err.message.includes('Too Many Requests'));
+        const isEmpty = err.message && err.message.includes('Empty response');
+        const isProxyError = err.message && err.message.includes('proxy');
 
         // Only log RSS errors once per session per source to avoid console spam
         const errorKey = `_rssError_${source.id}`;
         if (!store[errorKey]) {
           if (isRateLimit) {
             console.warn(`RSS feed ${source.id} rate limited (HTTP 429). Using cached data or will retry later.`);
+          } else if (isEmpty || isProxyError) {
+            console.error(`RSS feed ${source.id} failed. Error: ${err.message || err}`);
+            if (isProxyError || isEmpty) {
+              console.error(`  → Check that proxy server is running: node proxy-server.js`);
+              console.error(`  → Feed URL: ${source.url}`);
+            }
           } else {
             console.warn(`RSS feed ${source.id} failed. Error:`, err.message || err);
           }
@@ -1786,9 +1818,10 @@ function selectItem(id) {
         headers: {
           "X-Cache-TTL-MS": "120000",
           "Accept": "application/geo+json,application/json,*/*",
-          "User-Agent": "Mozilla/5.0 (compatible; CityManager/1.0)"
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+          "Referer": "https://511.vdot.virginia.gov/"
         },
-        timeoutMs: 20000
+        timeoutMs: 25000
       });
 
       // Validate that we got actual GeoJSON
@@ -1806,6 +1839,7 @@ function selectItem(id) {
       if (!store._511CamerasErrorLogged) {
         console.warn("511 cameras fetch failed. Error:", e.message || e);
         console.warn("The 511 cameras endpoint may be down or blocking requests.");
+        console.warn("  → Ensure proxy server is running: node proxy-server.js");
         store._511CamerasErrorLogged = true;
       }
     }
@@ -1820,9 +1854,10 @@ function selectItem(id) {
         headers: {
           "X-Cache-TTL-MS": "60000",
           "Accept": "application/geo+json,application/json,*/*",
-          "User-Agent": "Mozilla/5.0 (compatible; CityManager/1.0)"
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+          "Referer": "https://www.511virginia.org/"
         },
-        timeoutMs: 20000
+        timeoutMs: 25000
       });
 
       // Validate that we got actual GeoJSON
@@ -1837,8 +1872,10 @@ function selectItem(id) {
     } catch (e) {
       // Only log CORS/network errors once per session to avoid console spam
       if (!store._511IncidentsErrorLogged) {
-        console.warn("511 incidents fetch failed. Error:", e.message || e);
-        console.warn("The 511 incidents endpoint may be down or blocking requests.");
+        console.error("511 incidents fetch failed. Error:", e.message || e);
+        console.error("The 511 incidents endpoint may be down or blocking requests.");
+        console.error("  → Ensure proxy server is running: node proxy-server.js");
+        console.error("  → Endpoint: " + CONFIG.va511.incidentsGeojson);
         store._511IncidentsErrorLogged = true;
       }
     }
