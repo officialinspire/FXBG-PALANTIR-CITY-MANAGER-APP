@@ -629,8 +629,12 @@
     const maxAgeMs = Math.max(2, CONFIG.freshness?.uiListMaxAgeHours || 24) * 3600 * 1000;
     const items = Array.from(store.itemsById.values())
       .filter(it => it.category === catKey)
-      .filter(it => it.timestamp && (now - it.timestamp) <= maxAgeMs)
-      .sort((a,b) => b.timestamp - a.timestamp)
+      .filter(it => {
+        if (!it.timestamp) return false;
+        const ts = new Date(it.timestamp).getTime();
+        return !isNaN(ts) && (now - ts) <= maxAgeMs;
+      })
+      .sort((a,b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
       .slice(0, 30);
 
     const ids = items.map(it => it.id);
@@ -848,7 +852,7 @@ function selectItem(id) {
     const cams = items.filter(i => i.sourceId === "va511-cameras");
     const others = items.filter(i => i.sourceId !== "va511-cameras");
 
-    others.sort((a,b) => new Date(b.timestamp) - new Date(a.timestamp));
+    others.sort((a,b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
     const trimmed = others.slice(0, CONFIG.perf.maxTotalItems);
 
     store.itemsById.clear();
@@ -876,8 +880,18 @@ function selectItem(id) {
     // Fetch RSS via proxy, expecting plain text
     // Cache TTL set to 6 minutes (360000ms) to exceed polling interval and prevent rate limiting
     const xmlText = await fetchWithProxies(source.url, { expect: "text", headers: { "X-Cache-TTL-MS": "360000" } });
+
+    // Check if we received HTML instead of XML (common proxy error)
+    if (xmlText && /^\s*<!DOCTYPE html/i.test(xmlText)) {
+      throw new Error(`RSS parse error for ${source.id}: Received HTML instead of XML (likely proxy error)`);
+    }
+
     const doc = new DOMParser().parseFromString(xmlText, "text/xml");
-    if (doc.querySelector("parsererror")) throw new Error(`RSS parse error for ${source.id}`);
+    const parseError = doc.querySelector("parsererror");
+    if (parseError) {
+      const errorText = parseError.textContent || "Unknown parse error";
+      throw new Error(`RSS parse error for ${source.id}: ${errorText.slice(0, 100)}`);
+    }
 
     const items = Array.from(doc.querySelectorAll("item"));
     const entries = Array.from(doc.querySelectorAll("entry"));
@@ -960,7 +974,12 @@ function selectItem(id) {
         }
         results.push({ source: source.id, ok: true, added });
       } catch (err) {
-        console.warn(err);
+        // Only log RSS errors once per session per source to avoid console spam
+        const errorKey = `_rssError_${source.id}`;
+        if (!store[errorKey]) {
+          console.warn(`RSS fetch failed for ${source.id} (CORS or network issue). Running a local proxy server may help.`, err);
+          store[errorKey] = true;
+        }
         results.push({ source: source.id, ok: false, error: String(err) });
       }
     }
@@ -1069,8 +1088,13 @@ function selectItem(id) {
     if (!CONFIG.va511.enabled) return { i95Incidents: 0 };
 
     // Cameras (always ok; doesn't bloat too much and is useful)
+    // Cache TTL set to 2 minutes (120000ms) to reduce request frequency
     try {
-      const cams = await fetchWithProxies(CONFIG.va511.camerasGeojson, { expect: "json", headers: { "X-Cache-TTL-MS": "90000" } });
+      const cams = await fetchWithProxies(CONFIG.va511.camerasGeojson, {
+        expect: "json",
+        headers: { "X-Cache-TTL-MS": "120000" },
+        timeoutMs: 15000
+      });
       ingestVa511Cameras(cams);
     } catch (e) {
       // Only log CORS/network errors once per session to avoid console spam
@@ -1081,9 +1105,14 @@ function selectItem(id) {
     }
 
     // Incidents (STRICT time gate)
+    // Cache TTL set to 1 minute (60000ms) for fresher incident data
     let i95Incidents = 0;
     try {
-      const inc = await fetchWithProxies(CONFIG.va511.incidentsGeojson, { expect: "json" });
+      const inc = await fetchWithProxies(CONFIG.va511.incidentsGeojson, {
+        expect: "json",
+        headers: { "X-Cache-TTL-MS": "60000" },
+        timeoutMs: 15000
+      });
       i95Incidents = ingestVa511Incidents(inc);
     } catch (e) {
       // Only log CORS/network errors once per session to avoid console spam
@@ -1095,7 +1124,11 @@ function selectItem(id) {
 
     if (CONFIG.va511.includeConstructionOnMap) {
       try {
-        const con = await fetchWithProxies(CONFIG.va511.constructionGeojson, { expect: "json" });
+        const con = await fetchWithProxies(CONFIG.va511.constructionGeojson, {
+          expect: "json",
+          headers: { "X-Cache-TTL-MS": "120000" },
+          timeoutMs: 15000
+        });
         ingestVa511Construction(con);
       } catch (e) {
         // Only log CORS/network errors once per session to avoid console spam
@@ -1118,7 +1151,7 @@ function selectItem(id) {
     }
   }
 
-  
+
   function ingestVa511Cameras(geojson) {
     const feats = geojson?.features || [];
     let added = 0;
@@ -1155,20 +1188,23 @@ function selectItem(id) {
 
       const item = {
         id: key,
-        category: "cameras",
+        category: "camera",
         title: name,
         summary:
           (p.longDescription || p.description || p.status || "").toString().trim() ||
           "Traffic camera feed.",
-        sourceLabel: "511 Virginia",
-        link: (p.page_url || p.link || p.url || "").toString(),
+        sourceName: "511 Virginia",
+        sourceId: "va511-cameras",
+        url: (p.page_url || p.link || p.url || "").toString() || "https://www.511virginia.org/",
         timestamp: new Date().toISOString(),
         lat,
         lon,
         emoji: "📷",
-        priority: 0,
+        tone: "good",
         media,
         dedupeKey: key,
+        message: (p.longDescription || p.description || p.status || "").toString().trim() || "Traffic camera feed.",
+        panelHtml: ""
       };
 
       store.itemsById.set(item.id, item);
