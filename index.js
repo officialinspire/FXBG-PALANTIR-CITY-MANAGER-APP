@@ -48,9 +48,7 @@
       rss: 5 * 60 * 1000,
       nws: 2 * 60 * 1000,
       arcgisCrash: 5 * 60 * 1000,
-      virginiaCrashData: 4 * 60 * 1000,
       va511: 2 * 60 * 1000,
-      vaRoads: 3 * 60 * 1000,
       openUV: 30 * 60 * 1000,      // UV data updates every 30 minutes
       cdc: 24 * 60 * 60 * 1000     // CDC data updates daily
     },
@@ -431,26 +429,6 @@
       recordCap: 250
     },
 
-    // Virginia Crash Data APIs (multiple sources for comprehensive coverage)
-    virginiaCrashData: {
-      // DISABLED: The data.virginia.gov Socrata endpoint is returning 404 errors
-      // The dataset ID e9fd3f45-7f33-424b-b472-b531043fa02a appears to have been removed or changed
-      // Alternative endpoints to explore:
-      // - https://www.virginiaroads.org/datasets/crashdata-details-2/api
-      // - https://www.virginiaroads.org/datasets/crashdata-basic-1/api
-      // - ArcGIS FeatureServer endpoints via virginiaroads.org
-      enabled: false,
-      // CrashData Basic API from Virginia Roads Open Data Portal
-      crashDataBasicUrl: "https://www.virginiaroads.org/datasets/crashdata-basic-1/api",
-      // CrashData Details from data.virginia.gov (CURRENTLY BROKEN - Returns 404)
-      crashDataDetailsUrl: "https://data.virginia.gov/resource/e9fd3f45-7f33-424b-b472-b531043fa02a.json",
-      // Virginia Roads API definition endpoint
-      apiDefinitionUrl: "https://www.virginiaroads.org/api/search/definition",
-      // API key (if needed - currently not required for public endpoints)
-      apiKey: null,
-      maxAgeHours: 48,  // Show crashes from last 48 hours
-      recordCap: 200
-    },
 
     // 511Virginia GeoJSON endpoints
     // NOTE: Both 511virginia.org and iteriscdn.com endpoints are currently returning HTML
@@ -469,12 +447,6 @@
       includeConstructionOnMap: false
     },
 
-    // Virginia Roads API
-    vaRoads: {
-      enabled: true,
-      searchUrl: "https://www.virginiaroads.org/api/search",
-      eventsUrl: "https://www.virginiaroads.org/api/events"
-    },
 
     // OpenUV API - UV Index data for Fredericksburg area
     openUV: {
@@ -691,15 +663,6 @@
     const tmp = document.createElement("div");
     tmp.innerHTML = html || "";
     return (tmp.textContent || tmp.innerText || "").replace(/\s+/g, " ").trim();
-  }
-
-  function escapeHtml(str) {
-    return String(str)
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      .replace(/\"/g, "&quot;")
-      .replace(/'/g, "&#039;");
   }
 
 
@@ -1431,7 +1394,7 @@
     itemsById: new Map(),
     seenKeys: new Set(),
     markersById: new Map(),
-    locks: { rss:false, nws:false, arcgis:false, virginiaCrashData:false, va511:false, vaRoads:false, openUV:false, cdc:false },
+    locks: { rss:false, nws:false, arcgis:false, va511:false, openUV:false, cdc:false },
     lastByCategory: new Map()
   };
 
@@ -2734,148 +2697,6 @@ function selectItem(id) {
     return pick.slice(0,10).map(([k,v]) => `${k}: ${v}`).join(" • ");
   }
 
-  // -----------------------------
-  // Virginia Crash Data API Integration (Multiple Sources)
-  // -----------------------------
-  async function pollVirginiaCrashData() {
-    if (store.locks.virginiaCrashData) return { added: 0 };
-    store.locks.virginiaCrashData = true;
-    try {
-      if (!CONFIG.virginiaCrashData.enabled) return { added: 0 };
-
-      let totalAdded = 0;
-      const source = {
-        id: "virginia-crash-data",
-        name: "Virginia Crash Data Portal",
-        category: "crash",
-        emoji: "💥",
-        url: "https://www.virginiaroads.org/",
-        defaultLoc: CONFIG.center,
-        tone: "bad",
-        maxAgeHours: CONFIG.virginiaCrashData.maxAgeHours
-      };
-
-      // Try CrashData Details from data.virginia.gov (Socrata Open Data API)
-      try {
-        // Build Socrata query with proper date filtering
-        // Use a more generous time window to ensure we get data
-        const since = new Date(Date.now() - (CONFIG.virginiaCrashData.maxAgeHours * 60 * 60 * 1000));
-        const sinceStr = since.toISOString().split('T')[0]; // YYYY-MM-DD format
-
-        // Build URL with Socrata SoQL parameters
-        // Note: Socrata uses $ prefix for query operators
-        // Try without date filter first as the field may have changed or data may be sparse
-        const queryParams = [
-          `$limit=${CONFIG.virginiaCrashData.recordCap}`,
-          `$order=:id DESC`  // Order by internal ID descending to get most recent records
-        ];
-
-        const detailsUrl = `${CONFIG.virginiaCrashData.crashDataDetailsUrl}?${queryParams.join('&')}`;
-
-        console.log(`[Virginia Crash Data] Fetching from: ${detailsUrl.replace(/\?.*/, '?...')}`);
-
-        const data = await fetchWithProxies(detailsUrl, {
-          expect: "json",
-          headers: CONFIG.virginiaCrashData.apiKey ? {
-            'X-App-Token': CONFIG.virginiaCrashData.apiKey,
-            'Accept': 'application/json'
-          } : {
-            'Accept': 'application/json'
-          },
-          timeoutMs: 20000
-        });
-
-        if (Array.isArray(data)) {
-          let added = 0;
-          for (const record of data.slice(0, CONFIG.perf.maxPerSource)) {
-            const lat = parseFloat(record.latitude || record.lat || record.y);
-            const lon = parseFloat(record.longitude || record.lon || record.x || record.long);
-
-            if (!isFinite(lat) || !isFinite(lon)) continue;
-            if (!inBbox(lat, lon, CONFIG.bbox)) continue;
-
-            const crashDate = toDate(record.crash_date || record.date || record.report_date);
-            if (!crashDate || hoursAgo(crashDate) > source.maxAgeHours) continue;
-
-            const title = record.crash_type || record.severity || record.collision_type || "Crash Reported";
-            const summary = [
-              record.locality ? `Location: ${record.locality}` : null,
-              record.route ? `Route: ${record.route}` : null,
-              record.severity ? `Severity: ${record.severity}` : null,
-              record.crash_type ? `Type: ${record.crash_type}` : null
-            ].filter(Boolean).join(" • ");
-
-            const norm = normalize({
-              source,
-              raw: {
-                title: `💥 ${title}`,
-                url: CONFIG.virginiaCrashData.crashDataDetailsUrl,
-                guid: record.objectid || record.id || record.crash_id || `${lat},${lon},${crashDate.toISOString()}`,
-                published: crashDate.toISOString(),
-                summary: summary || "Crash reported in Virginia",
-                loc: { lat, lon }
-              }
-            });
-
-            if (!norm || store.seenKeys.has(norm.dedupeKey)) continue;
-            store.seenKeys.add(norm.dedupeKey);
-            store.itemsById.set(norm.id, norm);
-            added++;
-            totalAdded++;
-          }
-
-          if (added > 0) {
-            console.log(`Virginia Crash Data Details API loaded: ${added} new crashes`);
-          }
-        }
-      } catch (e) {
-        if (!store._virginiaCrashDataErrorLogged) {
-          console.warn("Virginia Crash Data Details API failed:", e.message);
-          if (e.message.includes('404')) {
-            console.warn("  → The Socrata endpoint may have changed or been removed");
-            console.warn("  → Visit https://data.virginia.gov to check for updated crash data endpoints");
-          } else if (e.message.includes('403')) {
-            console.warn("  → Access denied - the endpoint may require authentication");
-            console.warn("  → Consider obtaining a Socrata App Token from https://data.virginia.gov");
-          }
-          console.warn("  → Ensure proxy server is running: node proxy-server.js");
-          store._virginiaCrashDataErrorLogged = true;
-        }
-      }
-
-      setLastUpdate();
-      redraw();
-      return { added: totalAdded };
-    } catch (e) {
-      console.warn("Virginia Crash Data refresh failed:", e);
-      return { added: 0 };
-    } finally {
-      store.locks.virginiaCrashData = false;
-    }
-  }
-
-  // -----------------------------
-  // Virginia Roads API Integration
-  // -----------------------------
-  async function pollVaRoads() {
-    if (store.locks.vaRoads) return;
-    store.locks.vaRoads = true;
-    try {
-      if (!CONFIG.vaRoads.enabled) return;
-
-      // Virginia Roads API doesn't have a simple public endpoint we can poll directly
-      // Instead we'll use the RSS feeds already configured which cover regional news
-      // This is a placeholder for potential future API integration if they expose public endpoints
-
-      // For now, the RSS feeds (Free Lance-Star, Potomac Local, etc.) provide the news coverage
-      console.log("Virginia Roads API integration placeholder - using RSS feeds for regional coverage");
-
-    } catch (e) {
-      console.warn("Virginia Roads API check failed:", e);
-    } finally {
-      store.locks.vaRoads = false;
-    }
-  }
 
   // -----------------------------
   // OpenUV API - UV Index data
@@ -3059,9 +2880,7 @@ function selectItem(id) {
       pollRSS().catch(e => console.warn("RSS refresh partial", e)),
       CONFIG.nws.enabled ? fetchNWS().catch(e => console.warn("NWS refresh partial", e)) : Promise.resolve(),
       pollArcgisCrashes().catch(e => console.warn("ArcGIS crash refresh partial", e)),
-      pollVirginiaCrashData().catch(e => console.warn("Virginia Crash Data refresh partial", e)),
       pollVa511().catch(e => console.warn("511 refresh partial", e)),
-      pollVaRoads().catch(e => console.warn("VA Roads refresh partial", e)),
       CONFIG.openUV.enabled ? fetchOpenUV().catch(e => console.warn("OpenUV refresh partial", e)) : Promise.resolve(),
       CONFIG.cdc.enabled ? fetchCDC().catch(e => console.warn("CDC refresh partial", e)) : Promise.resolve()
     ]);
@@ -3080,9 +2899,7 @@ function selectItem(id) {
   setInterval(pollRSS, CONFIG.polling.rss);
   setInterval(fetchNWS, CONFIG.polling.nws);
   setInterval(pollArcgisCrashes, CONFIG.polling.arcgisCrash);
-  setInterval(pollVirginiaCrashData, CONFIG.polling.virginiaCrashData);
   setInterval(pollVa511, CONFIG.polling.va511);
-  setInterval(pollVaRoads, CONFIG.polling.vaRoads);
   setInterval(fetchOpenUV, CONFIG.polling.openUV);
   setInterval(fetchCDC, CONFIG.polling.cdc);
 })();
