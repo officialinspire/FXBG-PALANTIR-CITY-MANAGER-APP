@@ -676,7 +676,9 @@
     panel.classList.add("panel--collapsed");
     panelHandle.setAttribute("aria-expanded", "false");
   }
-  panelHandle.addEventListener("click", () => {
+  panelHandle.addEventListener("click", (e) => {
+    // Don't toggle if clicking the close button or any button inside the handle
+    if (e.target.closest('.iconBtn') || e.target.closest('button')) return;
     panel.classList.contains("panel--collapsed") ? openPanel() : closePanel();
   });
   panelHandle.addEventListener("keydown", (e) => {
@@ -687,6 +689,7 @@
   });
   panelClose.addEventListener("click", (e) => {
     e.stopPropagation();
+    e.stopImmediatePropagation();
     e.preventDefault();
     closePanel();
   });
