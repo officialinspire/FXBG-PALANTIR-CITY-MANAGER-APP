@@ -30,7 +30,7 @@
     // Freshness (CURRENT ONLY)
     freshness: {
       // "Current" defaults:
-      rssMaxAgeHours: 24,      // newsroom/civic posts: last day only
+      rssMaxAgeHours: 168,     // newsroom/civic posts: last 7 days (increased from 24h to show low-volume feeds)
       va511MaxAgeHours: 6,     // incidents: last 6 hours
       crashesMaxAgeHours: 24,  // crashes: last 24 hours (you can tighten to 6 if desired)
       nwsMaxAgeHours: 24
@@ -850,7 +850,17 @@
     const publishedDate = toDate(raw.published);
     const maxAge = source.maxAgeHours ?? CONFIG.freshness.rssMaxAgeHours;
 
-    if (!publishedDate || hoursAgo(publishedDate) > maxAge) return null;
+    // Debug logging for filtering decisions
+    if (!publishedDate) {
+      console.log(`[RSS Filter] Dropped item from ${source.id}: "${raw.title?.slice(0, 50) || 'untitled'}" - Bad/missing date (${raw.published})`);
+      return null;
+    }
+
+    const age = hoursAgo(publishedDate);
+    if (age > maxAge) {
+      console.log(`[RSS Filter] Dropped item from ${source.id}: "${raw.title?.slice(0, 50) || 'untitled'}" - Too old (${age.toFixed(1)}h ago, max: ${maxAge}h)`);
+      return null;
+    }
 
     const dedupeSeed = `${source.id}|${raw.guid || raw.url || raw.title || ""}|${publishedDate.toISOString()}`;
     const dedupeKey = fnv1a(dedupeSeed);
@@ -1098,6 +1108,8 @@ function selectItem(id) {
     const entries = Array.from(doc.querySelectorAll("entry"));
     const out = [];
 
+    console.log(`[RSS Parse] ${source.id}: Found ${items.length || entries.length} raw items/entries in feed XML`);
+
     const push = (row) => {
       if (out.length < CONFIG.perf.maxPerSource) out.push(row);
     };
@@ -1116,7 +1128,7 @@ function selectItem(id) {
 
         const publishedDate = toDate(pubDate);
         if (!publishedDate) continue;
-        if (hoursAgo(publishedDate) > (source.maxAgeHours ?? CONFIG.freshness.rssMaxAgeHours)) continue;
+        // Freshness filtering moved to normalize() to avoid double-filtering
 
         const cleanDesc = stripHtml(desc);
         push({
@@ -1141,7 +1153,7 @@ function selectItem(id) {
 
         const publishedDate = toDate(updated);
         if (!publishedDate) continue;
-        if (hoursAgo(publishedDate) > (source.maxAgeHours ?? CONFIG.freshness.rssMaxAgeHours)) continue;
+        // Freshness filtering moved to normalize() to avoid double-filtering
 
         const cleanSummary = stripHtml(summary);
         push({
@@ -1156,6 +1168,7 @@ function selectItem(id) {
       }
     }
 
+    console.log(`[RSS Parse] ${source.id}: Parsed ${out.length} valid items (with dates) from feed`);
     return out;
   }
 
@@ -1170,23 +1183,31 @@ function selectItem(id) {
       await sleep((CONFIG.polling && CONFIG.polling.rssStaggerMs) || 300);
       try {
         const items = await fetchRSS(source);
+        console.log(`[RSS Ingest] ${source.id}: Starting ingestion of ${items.length} parsed items (maxAge: ${source.maxAgeHours ?? CONFIG.freshness.rssMaxAgeHours}h)`);
+
         let added = 0;
+        let skippedDupe = 0;
+        let skippedFilter = 0;
+
         for (const raw of items) {
           const norm = normalize({ source, raw });
-          if (!norm) continue;
-          if (store.seenKeys.has(norm.dedupeKey)) continue;
+          if (!norm) {
+            skippedFilter++;
+            continue;
+          }
+          if (store.seenKeys.has(norm.dedupeKey)) {
+            skippedDupe++;
+            continue;
+          }
           store.seenKeys.add(norm.dedupeKey);
           store.itemsById.set(norm.id, norm);
           added++;
           totalAdded++;
         }
+
+        console.log(`[RSS Ingest] ${source.id}: Added ${added} new items, skipped ${skippedFilter} (filtered), ${skippedDupe} (duplicates)`);
         results.push({ source: source.id, ok: true, added });
         anySucceeded = true;
-
-        // Log success for debugging
-        if (added > 0) {
-          console.log(`RSS feed ${source.id} loaded successfully: ${added} new items`);
-        }
 
       } catch (err) {
         // Check if this is a rate limit error (429)
