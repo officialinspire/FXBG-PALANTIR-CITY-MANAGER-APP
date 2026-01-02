@@ -1,5 +1,21 @@
 <!doctype html>
 <html lang="en">
+<!--
+  CITY MANAGER — FXBG-PALANTIR
+
+  Virginia Crash Data APIs Integrated:
+  • CrashData Basic API: https://www.virginiaroads.org/datasets/crashdata-basic-1/api
+  • CrashData Details: https://data.virginia.gov/resource/e9fd3f45-7f33-424b-b472-b531043fa02a.json
+  • 511 Virginia Cameras: https://www.511virginia.org/data/geojson/icons.cameras.geojson
+  • ArcGIS CrashData FeatureServer: https://services.arcgis.com/p5v98VHDX9Atv3l7/arcgis/rest/services/CrashData_test/FeatureServer/0/query
+
+  API Keys:
+  • Most endpoints are public and do not require API keys
+  • If you have a Socrata API key for data.virginia.gov, set it in index.js: CONFIG.virginiaCrashData.apiKey
+  • If you have a Virginia Roads API key, set it in index.js: CONFIG.vaRoads.apiKey (when available)
+
+  All popup panels are draggable - click and drag the panel header to reposition.
+-->
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
