@@ -366,7 +366,7 @@
     const local = tryLocalProxy();
     if (local) candidates.push(() => local);
 
-    // Allow direct fetch only for same-origin or known CORS-friendly APIs (ex: NWS, 511 Virginia).
+    // Allow direct fetch only for same-origin or known CORS-friendly APIs (ex: NWS).
     const isSameOrigin = (() => {
       try { return new URL(url, location.href).origin === location.origin; } catch { return false; }
     })();
@@ -374,8 +374,8 @@
       try {
         const u = new URL(url, location.href);
         const host = u.hostname.toLowerCase();
-        // Known CORS-friendly APIs
-        return host.includes('weather.gov') || host.includes('511virginia.org');
+        // Known CORS-friendly APIs (removed 511virginia.org - it requires proxy)
+        return host.includes('weather.gov');
       } catch {
         return false;
       }
