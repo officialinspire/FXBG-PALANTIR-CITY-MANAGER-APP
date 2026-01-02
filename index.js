@@ -1,10 +1,17 @@
-// CITY MANAGER — FXBG-PALANTIR toolkit (v12)
-// v12 fixes: Markers/waypoints loading, 511 API errors, footer data display, better error handling
+// CITY MANAGER — FXBG-PALANTIR toolkit (v13)
+// v13 fixes: All RSS feeds implemented, NWS weather alerts, improved 511 handling, panel dragging fixed
 // Key changes:
-// - Strong freshness gates (RSS <= 24h, 511 incidents <= 6h, crashes <= 24h by default)
-// - ArcGIS CrashData: auto-discover DATE field via layer metadata, request only recent records,
-//   and hard client-side drop if older than window. Also caps record count.
-// - Global hard cap on markers (keeps newest N only).
+// - Added all requested RSS feeds: Stafford Sheriff News, Potomac Local Stafford, FXBG Free Press Podcast
+// - Fixed Stafford Sheriff RSS URL (now uses /apps/public/news/rss)
+// - Fixed panel dragging glitch (panels no longer drop/glitch when being dragged)
+// - Improved 511 cameras and incidents error handling with better fallbacks
+// - Increased content display limits (240 → 400+ chars) for full RSS feed text
+// - Added podcast emoji (🎙️) support in keyword matching
+// - NWS weather alerts fully integrated and working
+// - Better User-Agent headers for 511virginia.org endpoints
+// - Strong freshness gates (RSS <= 24h, 511 incidents <= 6h, crashes <= 24h, podcasts <= 7 days)
+// - ArcGIS CrashData: auto-discover DATE field via layer metadata, request only recent records
+// - Global hard cap on markers (keeps newest N only)
 
 (() => {
   // -----------------------------
@@ -116,12 +123,31 @@
         name: "Stafford Sheriff — News",
         category: "crime",
         emoji: "🚨",
-        url: "https://www.staffordsheriff.com/feed/",
+        url: "https://www.staffordsheriff.com/apps/public/news/rss",
         defaultLoc: { lat: 38.4220, lon: -77.4083 },
         tone: "warn",
         maxAgeHours: 24
+      },
+      {
+        id: "potomaclocal-stafford",
+        name: "Potomac Local — Stafford",
+        category: "events",
+        emoji: "📰",
+        url: "https://www.potomaclocal.com/category/stafford/feed/",
+        defaultLoc: { lat: 38.4220, lon: -77.4083 },
+        tone: "good",
+        maxAgeHours: 24
+      },
+      {
+        id: "fxbg-freepress-podcast",
+        name: "FXBG Free Press — Press Rewind",
+        category: "events",
+        emoji: "🎙️",
+        url: "https://feeds.buzzsprout.com/2557117.rss",
+        defaultLoc: { lat: 38.3032, lon: -77.4605 },
+        tone: "good",
+        maxAgeHours: 168  // 7 days for podcasts (they update less frequently)
       }
-      // Podcast feed intentionally removed from map (often older episodes) — re-add if you want
     ],
 
     // NWS (no API key required)
@@ -188,6 +214,7 @@
     { re: /(train|vre|amtrak)/i, emoji: "🚆", category: "train", tone: "warn" },
     { re: /(weather|storm|wind|flood|snow|ice|tornado|hurricane)/i, emoji: "🌧️", category: "weather", tone: "warn" },
     { re: /(camera|webcam|live view|traffic cam)/i, emoji: "📷", category: "camera", tone: "good" },
+    { re: /(podcast|episode|audio|interview|broadcast)/i, emoji: "🎙️", category: "events", tone: "good" },
     { re: /(event|festival|parade|concert|market)/i, emoji: "🎉", category: "events", tone: "good" }
   ];
 
@@ -203,20 +230,38 @@
     if (!el || !handle) return;
     let dragging = false;
     let startX = 0, startY = 0, origX = 0, origY = 0;
+    let originalTransform = "";
 
     const onDown = (e) => {
       // Only left click / primary touch
       if (e.button !== undefined && e.button !== 0) return;
+      // Don't start dragging if clicking on the close button or other interactive elements
+      if (e.target.closest('.iconBtn') || e.target.closest('button:not(.panel__handle)')) return;
+
       dragging = true;
+
+      // Store and remove any transform (like translateY for collapsed state)
+      const computed = window.getComputedStyle(el);
+      originalTransform = computed.transform !== "none" ? computed.transform : "";
+      el.style.transform = "none";
+
+      // Expand panel if collapsed when starting to drag
+      if (el.classList.contains("panel--collapsed")) {
+        el.classList.remove("panel--collapsed");
+      }
+
       const rect = el.getBoundingClientRect();
       origX = rect.left;
       origY = rect.top;
       startX = e.clientX;
       startY = e.clientY;
+
+      // Remove any right/bottom positioning and switch to left/top
       el.style.right = "auto";
       el.style.bottom = "auto";
       el.style.left = `${origX}px`;
       el.style.top = `${origY}px`;
+
       el.classList.add("is-dragging");
       handle.setPointerCapture?.(e.pointerId);
       e.preventDefault();
@@ -231,18 +276,30 @@
       const y = Math.max(72, Math.min(window.innerHeight - 120, origY + dy));
       el.style.left = `${x}px`;
       el.style.top = `${y}px`;
+      e.preventDefault();
     };
 
-    const onUp = () => {
+    const onUp = (e) => {
       if (!dragging) return;
       dragging = false;
       el.classList.remove("is-dragging");
+
+      // Release pointer capture
+      if (handle.releasePointerCapture && e.pointerId !== undefined) {
+        try {
+          handle.releasePointerCapture(e.pointerId);
+        } catch (err) {
+          // Ignore errors if pointer was already released
+        }
+      }
     };
 
     handle.style.touchAction = "none";
+    handle.style.cursor = "grab";
     handle.addEventListener("pointerdown", onDown);
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
   }
 
 
@@ -1008,13 +1065,14 @@ function selectItem(id) {
         if (!publishedDate) continue;
         if (hoursAgo(publishedDate) > (source.maxAgeHours ?? CONFIG.freshness.rssMaxAgeHours)) continue;
 
+        const cleanDesc = stripHtml(desc);
         push({
           title,
           url: link,
           guid,
           published: publishedDate.toISOString(),
-          message: stripHtml(desc),
-          summary: stripHtml(desc).slice(0, 240),
+          message: cleanDesc,
+          summary: cleanDesc.slice(0, 400),  // Increased from 240 to 400 chars
           loc: loc || null
         });
       }
@@ -1032,12 +1090,14 @@ function selectItem(id) {
         if (!publishedDate) continue;
         if (hoursAgo(publishedDate) > (source.maxAgeHours ?? CONFIG.freshness.rssMaxAgeHours)) continue;
 
+        const cleanSummary = stripHtml(summary);
         push({
           title,
           url: link,
           guid: id,
           published: publishedDate.toISOString(),
-          summary: stripHtml(summary).slice(0, 240),
+          message: cleanSummary,
+          summary: cleanSummary.slice(0, 400),  // Increased from 240 to 400 chars
           loc: loc || null
         });
       }
@@ -1271,7 +1331,7 @@ function selectItem(id) {
       if (!sentDate) continue;
       if (hoursAgo(sentDate) > source.maxAgeHours) continue;
 
-      const summary = (p.description || p.instruction || "").slice(0, 240);
+      const summary = (p.description || p.instruction || "").slice(0, 500);  // Show more detail for weather alerts
 
       let loc = null;
       const geom = f.geometry;
@@ -1313,19 +1373,26 @@ function selectItem(id) {
         expect: "json",
         headers: {
           "X-Cache-TTL-MS": "120000",
-          "Accept": "application/geo+json,application/json,*/*"
+          "Accept": "application/geo+json,application/json,*/*",
+          "User-Agent": "Mozilla/5.0 (compatible; CityManager/1.0)"
         },
-        timeoutMs: 15000
+        timeoutMs: 20000
       });
-      console.log("511 cameras loaded successfully (proxy)");
 
-      ingestVa511Cameras(cams);
-      camerasLoaded = true;
+      // Validate that we got actual GeoJSON
+      if (cams && (cams.type === "FeatureCollection" || Array.isArray(cams.features))) {
+        console.log("511 cameras loaded successfully:", cams.features?.length || 0, "cameras");
+        ingestVa511Cameras(cams);
+        camerasLoaded = true;
+      } else {
+        throw new Error("Invalid GeoJSON response (missing features)");
+      }
 
     } catch (e) {
       // Only log CORS/network errors once per session to avoid console spam
       if (!store._511CamerasErrorLogged) {
         console.warn("511 cameras fetch failed. Error:", e.message || e);
+        console.warn("The 511virginia.org cameras endpoint may be down or blocking requests. Using fallback data.");
         store._511CamerasErrorLogged = true;
 
         // Add sample camera markers for demonstration
@@ -1377,19 +1444,26 @@ function selectItem(id) {
         expect: "json",
         headers: {
           "X-Cache-TTL-MS": "60000",
-          "Accept": "application/geo+json,application/json,*/*"
+          "Accept": "application/geo+json,application/json,*/*",
+          "User-Agent": "Mozilla/5.0 (compatible; CityManager/1.0)"
         },
-        timeoutMs: 15000
+        timeoutMs: 20000
       });
-      console.log("511 incidents loaded successfully (proxy)");
 
-      i95Incidents = ingestVa511Incidents(inc);
-      incidentsLoaded = true;
+      // Validate that we got actual GeoJSON
+      if (inc && (inc.type === "FeatureCollection" || Array.isArray(inc.features))) {
+        console.log("511 incidents loaded successfully:", inc.features?.length || 0, "incidents");
+        i95Incidents = ingestVa511Incidents(inc);
+        incidentsLoaded = true;
+      } else {
+        throw new Error("Invalid GeoJSON response (missing features)");
+      }
 
     } catch (e) {
       // Only log CORS/network errors once per session to avoid console spam
       if (!store._511IncidentsErrorLogged) {
         console.warn("511 incidents fetch failed. Error:", e.message || e);
+        console.warn("The 511virginia.org incidents endpoint may be down or blocking requests. Using fallback data.");
         store._511IncidentsErrorLogged = true;
 
         // Add sample incident markers for demonstration
@@ -1585,7 +1659,8 @@ function selectItem(id) {
           url: link,
           guid: p.id || p.incident_id || `${lat},${lon},${title},${whenDate.toISOString()}`,
           published: whenDate.toISOString(),
-          summary: stripHtml(desc).slice(0, 240) || (road ? `Road: ${road}` : ""),
+          summary: stripHtml(desc).slice(0, 400) || (road ? `Road: ${road}` : ""),  // Show more detail for incidents
+          message: stripHtml(desc) || (road ? `Road: ${road}` : ""),
           loc: { lat, lon }
         }
       });
@@ -1636,7 +1711,7 @@ function selectItem(id) {
           guid: p.id || `${lat},${lon},${title},${when.toISOString()}`,
           published: when.toISOString(),
           message: stripHtml(desc),
-          summary: stripHtml(desc).slice(0, 240),
+          summary: stripHtml(desc).slice(0, 400),  // Show more detail for construction
           loc: { lat, lon }
         }
       });
