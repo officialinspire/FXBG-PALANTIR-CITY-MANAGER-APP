@@ -303,7 +303,7 @@ body{
 }
 .leaflet-container{ background: rgba(10,14,24,1); }
 
-/* Custom emoji marker */
+/* Custom emoji marker with source-type color coding */
 .emojiMarker{
   width: 36px; height: 36px;
   border-radius: 14px;
@@ -312,10 +312,24 @@ body{
   background: linear-gradient(180deg, rgba(255,255,255,.10), rgba(0,0,0,.28));
   box-shadow: 10px 10px 24px rgba(0,0,0,.55), -8px -8px 18px rgba(255,255,255,.05);
   font-size: 18px;
+  position: relative;
 }
-.emojiMarker[data-tone="good"]{ outline: 2px solid rgba(68,240,166,.32); }
-.emojiMarker[data-tone="warn"]{ outline: 2px solid rgba(255,216,107,.32); }
-.emojiMarker[data-tone="bad"]{ outline: 2px solid rgba(255,107,138,.32); }
+
+/* Source type color ring - creates a colored border based on data source */
+.emojiMarker::before {
+  content: '';
+  position: absolute;
+  inset: -3px;
+  border-radius: 16px;
+  border: 2px solid var(--source-color, rgba(126,240,255,.4));
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+/* Tone-based accents (secondary visual indicator) */
+.emojiMarker[data-tone="good"]{ outline: 2px solid rgba(68,240,166,.25); }
+.emojiMarker[data-tone="warn"]{ outline: 2px solid rgba(255,216,107,.25); }
+.emojiMarker[data-tone="bad"]{ outline: 2px solid rgba(255,107,138,.25); }
 
 @media (max-width: 860px){
   .topbar{ grid-template-columns: 1fr 1fr; height: auto; padding: 10px; }

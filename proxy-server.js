@@ -63,13 +63,30 @@ function parseTtl(reqUrl, reqHeaders) {
     const u = new URL(reqUrl);
     const h = u.hostname;
     const p = u.pathname.toLowerCase();
+
+    // Weather APIs
     if (h.includes("api.weather.gov")) return 60 * 1000;
+
+    // Traffic/511 APIs
     if (h.includes("511virginia.org") || h.includes("511.vdot.virginia.gov")) return 90 * 1000;
+
+    // Crash data APIs
     if (h.includes("arcgis.com") || h.includes("virginiaroads.org")) return 90 * 1000;
     if (h.includes("data.virginia.gov")) return 120 * 1000; // Socrata APIs - cache longer
-    // Increased RSS cache TTL to 6 minutes (360s) to exceed the 5-minute polling interval
+
+    // OpenUV API - cache for 30 minutes (UV data doesn't change frequently)
+    if (h.includes("api.openuv.io") || h.includes("openuv")) return 30 * 60 * 1000;
+
+    // CDC API - cache for 6 hours (health surveillance data updates slowly)
+    if (h.includes("data.cdc.gov") || h.includes("cdc.gov")) return 6 * 60 * 60 * 1000;
+
+    // Nominatim geocoding - cache for 7 days (addresses don't change)
+    if (h.includes("nominatim.openstreetmap.org")) return 7 * 24 * 60 * 60 * 1000;
+
+    // RSS feeds - increased cache TTL to 6 minutes (360s) to exceed the 5-minute polling interval
     // and prevent upstream 429 rate limit errors
     if (p.endsWith(".rss") || p.includes("rss") || p.includes("feed")) return 360 * 1000;
+
     // Camera images should cache for 2 minutes
     if (p.match(/\.(jpg|jpeg|png|webp|gif)($|\?)/i)) return 120 * 1000;
   } catch {}
