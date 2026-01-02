@@ -969,7 +969,27 @@ function selectItem(id) {
     const mediaEl = $("panelMedia");
     if (item.media && item.media.type === "image" && item.media.src) {
       mediaEl.style.display = "block";
-      mediaEl.innerHTML = `<img class="panelMedia__img" src="${escapeAttr(item.media.src)}" alt="${escapeAttr(item.media.alt || "media")}" loading="lazy" />`; 
+      // Remove loading="lazy" to ensure immediate loading when panel opens
+      // Add error handling and loading state for better UX
+      const imgAlt = escapeAttr(item.media.alt || item.title || "Traffic camera snapshot");
+      const imgSrc = escapeAttr(item.media.src);
+
+      // Log camera image URL for debugging
+      console.log(`Loading camera image: ${item.media.originalSrc || item.media.src}`);
+
+      mediaEl.innerHTML = `
+        <div class="panelMedia__wrapper" style="position: relative; min-height: 200px; background: #1a1a1a; border-radius: 8px; overflow: hidden;">
+          <div class="panelMedia__loading" style="position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: rgba(255,255,255,0.6); font-size: 14px;">
+            <span>📷 Loading camera snapshot...</span>
+          </div>
+          <img class="panelMedia__img"
+               src="${imgSrc}"
+               alt="${imgAlt}"
+               style="display: none; width: 100%; height: auto; position: relative; z-index: 1;"
+               onload="this.style.display='block'; this.parentElement.querySelector('.panelMedia__loading').style.display='none';"
+               onerror="this.style.display='none'; const loading = this.parentElement.querySelector('.panelMedia__loading'); loading.innerHTML = '<div style=\\'text-align: center; padding: 20px;\\'><div style=\\'font-size: 32px; margin-bottom: 8px;\\'>📷</div><div style=\\'color: rgba(255,255,255,0.7);\\'>Camera snapshot unavailable</div><div style=\\'font-size: 12px; color: rgba(255,255,255,0.5); margin-top: 4px;\\'>The camera feed may be offline or temporarily unavailable</div></div>'; loading.style.display='flex';" />
+        </div>
+      `;
     } else if (item.media && item.media.type === "iframe" && item.media.src) {
       mediaEl.style.display = "block";
       mediaEl.innerHTML = `<iframe class="panelMedia__frame" src="${escapeAttr(item.media.src)}" title="${escapeAttr(item.media.title || "media")}" loading="lazy" referrerpolicy="no-referrer"></iframe>`;
@@ -1422,13 +1442,28 @@ function selectItem(id) {
         p.snapshotURL ||      // Common in VDOT feeds (capital URL)
         p.snapshotUrl ||      // Alternative spelling
         p.snapshot_url ||     // Snake case variant
-        p.https_url ||        // HTTPS secure URL
-        p.imageURL ||         // Image URL variant
+        p.imageURL ||         // Image URL variant (try before https_url for images)
         p.imageUrl ||         // Alternative
+        p.image_url ||        // Snake case image
+        p.https_url ||        // HTTPS secure URL
         p.url ||              // Generic URL
         p.camera_url ||       // Camera-specific URL
+        p.streamURL ||        // Stream URL (some cameras use this)
+        p.streamUrl ||        // Alternative spelling
         ""
       ).toString();
+
+      // Clean up the URL if it exists - some feeds have malformed URLs
+      let cleanedCamUrl = "";
+      if (camUrl) {
+        try {
+          // If it's a valid URL, use it; otherwise skip
+          const urlTest = new URL(camUrl);
+          cleanedCamUrl = camUrl;
+        } catch (e) {
+          console.warn(`Invalid camera URL for "${name}": ${camUrl}`);
+        }
+      }
 
       // Get camera page URL - try multiple property names for the detail/viewing page
       const pageUrl = (
@@ -1451,19 +1486,21 @@ function selectItem(id) {
 
       // Always prefer snapshot images for cameras (video feeds often don't work)
       // IMPORTANT: Wrap camera URLs with proxy to avoid CORS issues
-      if (camUrl) {
+      if (cleanedCamUrl) {
         // Proxy the image URL to avoid CORS errors
-        const proxiedUrl = `${location.origin}/proxy?url=${encodeURIComponent(camUrl)}`;
-        media = { type: "image", src: proxiedUrl, originalSrc: camUrl };
+        const proxiedUrl = `${location.origin}/proxy?url=${encodeURIComponent(cleanedCamUrl)}`;
+        media = { type: "image", src: proxiedUrl, originalSrc: cleanedCamUrl, alt: name };
       }
 
-      // Debug logging for first 3 cameras to help troubleshoot
-      if (added < 3) {
+      // Debug logging for first 5 cameras to help troubleshoot
+      if (added < 5) {
         console.log(`Camera ${added + 1}: "${name}"`, {
           id: cameraId,
-          snapshotURL: camUrl ? camUrl.slice(0, 80) + '...' : 'NONE',
+          snapshotURL: cleanedCamUrl || 'NONE',
+          proxiedURL: media ? `${location.origin}/proxy?url=${encodeURIComponent(cleanedCamUrl)}` : 'NONE',
           pageURL: finalPageUrl.slice(0, 80) + '...',
-          hasMedia: !!media
+          hasMedia: !!media,
+          allProperties: Object.keys(p).filter(k => k.toLowerCase().includes('url') || k.toLowerCase().includes('image') || k.toLowerCase().includes('snapshot'))
         });
       }
 
