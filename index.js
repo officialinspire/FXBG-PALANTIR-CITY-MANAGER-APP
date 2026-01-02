@@ -928,11 +928,23 @@ function selectItem(id) {
     clusters.clearLayers();
     store.markersById.clear();
 
+    let markerCount = 0;
+    let filtered = { category: 0, bbox: 0 };
+
     for (const item of store.itemsById.values()) {
-      if (!activeCategories.has(item.category)) continue;
-      if (!inBbox(item.lat, item.lon, CONFIG.bbox)) continue;
+      if (!activeCategories.has(item.category)) {
+        filtered.category++;
+        continue;
+      }
+      if (!inBbox(item.lat, item.lon, CONFIG.bbox)) {
+        filtered.bbox++;
+        continue;
+      }
       attachMarker(item);
+      markerCount++;
     }
+
+    console.log(`Redraw complete: ${markerCount} markers visible (${store.itemsById.size} total items, ${filtered.category} filtered by category, ${filtered.bbox} outside bbox)`);
   }
 
   // -----------------------------
@@ -940,19 +952,36 @@ function selectItem(id) {
   // -----------------------------
   async function fetchRSS(source) {
     // Fetch RSS via proxy, expecting plain text
-    // Cache TTL set to 6 minutes (360000ms) to exceed polling interval and prevent rate limiting
-    const xmlText = await fetchWithProxies(source.url, { expect: "text", headers: { "X-Cache-TTL-MS": "360000" } });
+    // Cache TTL set to 15 minutes (900000ms) to prevent rate limiting (429 errors)
+    const xmlText = await fetchWithProxies(source.url, { expect: "text", headers: { "X-Cache-TTL-MS": "900000" } });
 
     // Check if we received HTML instead of XML (common proxy error)
     if (xmlText && /^\s*<!DOCTYPE html/i.test(xmlText)) {
       throw new Error(`RSS parse error for ${source.id}: Received HTML instead of XML (likely proxy error)`);
     }
 
-    const doc = new DOMParser().parseFromString(xmlText, "text/xml");
-    const parseError = doc.querySelector("parsererror");
-    if (parseError) {
-      const errorText = parseError.textContent || "Unknown parse error";
-      throw new Error(`RSS parse error for ${source.id}: ${errorText.slice(0, 100)}`);
+    // Try to parse XML - handle malformed XML gracefully
+    let doc;
+    try {
+      doc = new DOMParser().parseFromString(xmlText, "text/xml");
+      const parseError = doc.querySelector("parsererror");
+      if (parseError) {
+        const errorText = parseError.textContent || "Unknown parse error";
+
+        // For malformed XML, try to clean it and parse again
+        console.warn(`RSS parse error for ${source.id}, attempting to clean XML...`);
+        const cleanedXml = xmlText
+          .replace(/<!\[CDATA\[.*?\]\]>/gs, '') // Remove CDATA sections that might be malformed
+          .replace(/&(?!amp;|lt;|gt;|quot;|apos;)/g, '&amp;'); // Escape unescaped ampersands
+
+        doc = new DOMParser().parseFromString(cleanedXml, "text/xml");
+        const parseError2 = doc.querySelector("parsererror");
+        if (parseError2) {
+          throw new Error(`RSS parse error for ${source.id}: ${errorText.slice(0, 100)}`);
+        }
+      }
+    } catch (e) {
+      throw new Error(`RSS parse error for ${source.id}: ${e.message}`);
     }
 
     const items = Array.from(doc.querySelectorAll("item"));
@@ -1022,6 +1051,7 @@ function selectItem(id) {
     store.locks.rss = true;
     const results = [];
     let anySucceeded = false;
+    let totalAdded = 0;
 
     for (const source of CONFIG.rss) {
       await sleep((CONFIG.polling && CONFIG.polling.rssStaggerMs) || 300);
@@ -1035,19 +1065,79 @@ function selectItem(id) {
           store.seenKeys.add(norm.dedupeKey);
           store.itemsById.set(norm.id, norm);
           added++;
+          totalAdded++;
         }
         results.push({ source: source.id, ok: true, added });
         anySucceeded = true;
+
+        // Log success for debugging
+        if (added > 0) {
+          console.log(`RSS feed ${source.id} loaded successfully: ${added} new items`);
+        }
+
+        // If no items were added, create a placeholder marker to show the feed is working
+        if (added === 0 && !store[`_placeholder_${source.id}`]) {
+          const placeholderItem = normalize({
+            source,
+            raw: {
+              title: `${source.name} - No recent updates`,
+              url: source.url,
+              guid: `placeholder-${source.id}`,
+              published: new Date().toISOString(),
+              summary: `This feed is working but has no recent items within the last ${source.maxAgeHours || 24} hours.`,
+              loc: source.defaultLoc
+            }
+          });
+          if (placeholderItem && !store.seenKeys.has(placeholderItem.dedupeKey)) {
+            store.seenKeys.add(placeholderItem.dedupeKey);
+            store.itemsById.set(placeholderItem.id, placeholderItem);
+            store[`_placeholder_${source.id}`] = true;
+          }
+        }
       } catch (err) {
+        // Check if this is a rate limit error (429)
+        const isRateLimit = err.message && (err.message.includes('429') || err.message.includes('Too Many Requests'));
+
         // Only log RSS errors once per session per source to avoid console spam
         const errorKey = `_rssError_${source.id}`;
         if (!store[errorKey]) {
-          console.warn(`RSS fetch failed for ${source.id}. Error:`, err.message || err);
+          if (isRateLimit) {
+            console.warn(`RSS feed ${source.id} rate limited (HTTP 429). Using cached data or will retry later.`);
+          } else {
+            console.warn(`RSS feed ${source.id} failed. Error:`, err.message || err);
+          }
           store[errorKey] = true;
         }
-        results.push({ source: source.id, ok: false, error: String(err) });
+        results.push({ source: source.id, ok: false, error: String(err), isRateLimit });
+
+        // Add a fallback marker for this specific failed feed (not just when all fail)
+        const fallbackKey = `_fallback_${source.id}`;
+        if (!store[fallbackKey]) {
+          console.log(`Adding fallback marker for ${source.id}...`);
+          const fallbackItem = normalize({
+            source,
+            raw: {
+              title: `${source.name} - Feed Unavailable`,
+              url: source.url,
+              guid: `fallback-${source.id}-${Date.now()}`,
+              published: new Date().toISOString(),
+              summary: isRateLimit
+                ? `This feed is temporarily rate-limited. It will retry automatically.`
+                : `This feed is temporarily unavailable: ${err.message?.slice(0, 100) || 'Unknown error'}`,
+              loc: source.defaultLoc
+            }
+          });
+          if (fallbackItem && !store.seenKeys.has(fallbackItem.dedupeKey)) {
+            store.seenKeys.add(fallbackItem.dedupeKey);
+            store.itemsById.set(fallbackItem.id, fallbackItem);
+            store[fallbackKey] = true;
+          }
+        }
       }
     }
+
+    console.log(`RSS polling complete: ${totalAdded} new items from ${results.filter(r => r.ok).length}/${CONFIG.rss.length} feeds`);
+
 
     // Add sample RSS data if no sources succeeded
     if (!anySucceeded && !store._sampleRSSAdded) {
