@@ -1,4 +1,4 @@
-# CITY MANAGER — FXBG-PALANTIR (v14)
+# CITY MANAGER — FXBG-PALANTIR (v15)
 
 Real-time situational awareness dashboard for Fredericksburg, VA metro area.
 
@@ -18,9 +18,16 @@ http://localhost:8000
 
 The proxy server handles all external API requests (RSS feeds, 511 Virginia traffic, NWS weather, ArcGIS crash data) to bypass CORS restrictions.
 
-## 🔧 Recent Fixes (v14)
+## 🔧 Recent Fixes (v15)
 
-### Latest Fixes (v14)
+### Latest Fixes (v15)
+- ✅ **511 Virginia incidents endpoint** - Added fallback to Iteris CDN with JSONP parsing
+- ✅ **Virginia crash data API** - Improved error handling for 404/403 responses with helpful guidance
+- ✅ **Better API error diagnostics** - Added specific troubleshooting steps for different error types
+- ✅ **Endpoint resilience** - Multiple endpoint fallbacks for critical data sources
+- ✅ **Improved logging** - Clear debugging information for API endpoint issues
+
+### Previous Fixes (v14)
 - ✅ **Improved RSS feed reliability** - Enhanced error handling and better User-Agent headers
 - ✅ **Fixed 511 Virginia incidents endpoint** - Updated headers to avoid HTML responses
 - ✅ **Better proxy server logging** - Detailed logging for empty responses and errors
@@ -36,17 +43,17 @@ The proxy server handles all external API requests (RSS feeds, 511 Virginia traf
 - ✅ **Better error messages** - Console warnings are now more helpful
 - ✅ **Fallback sample data** - Demo markers appear when APIs are unavailable (for testing)
 
-### What Was Fixed in v14
-1. **RSS feeds returning empty responses** - Improved headers and error detection
-2. **511 Virginia returning HTML instead of JSON** - Better User-Agent and Referer headers
-3. **Unclear error messages** - Added guidance to run proxy server
-4. **Timeouts too short** - Increased default timeout from 12s to 15s
+### What Was Fixed in v15
+1. **511 Virginia incidents returning HTML** - Added fallback endpoint (Iteris CDN) with JSONP support
+2. **Virginia crash data 404 errors** - Removed problematic date filter, improved error messages
+3. **API error diagnostics** - Context-specific troubleshooting guidance for 404/403/network errors
+4. **Endpoint resilience** - Automatic failover between primary and fallback endpoints
 
-### How It's Fixed
-1. **Enhanced `fetchWithProxies` function** - Realistic browser User-Agent, better error guidance
-2. **Improved proxy server headers** - Proper Referer headers for different endpoints
-3. **Better logging** - Detailed warnings for empty responses and HTML errors
-4. **Smarter error handling** - Detects proxy issues and provides actionable guidance
+### How It's Fixed (v15)
+1. **Dual-endpoint strategy for 511 Virginia** - Try primary endpoint first, fall back to Iteris CDN
+2. **JSONP parsing support** - Handle both JSON and JSONP response formats
+3. **Smarter Socrata queries** - Removed date filters that cause 404s, use ID-based ordering
+4. **Enhanced error messages** - Specific guidance for 404 (endpoint changed), 403 (auth required)
 
 ## 📡 Data Sources
 

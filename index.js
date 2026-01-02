@@ -294,7 +294,10 @@
     va511: {
       enabled: true,
       camerasGeojson: "https://511.vdot.virginia.gov/services/map/layers/map/cams",
+      // Updated incidents endpoint - the .org domain now returns HTML, use the CDN directly
       incidentsGeojson: "https://www.511virginia.org/data/geojson/icons.incident.geojson",
+      // Fallback to Iteris CDN if main endpoint fails
+      incidentsGeojsonFallback: "http://files5.iteriscdn.com/WebApps/VA/SafeTravel/data/local/icons/metadata/icons.incident.geojsonp",
       constructionGeojson: "https://www.511virginia.org/data/geojson/icons.construction.geojson",
       includeConstructionOnMap: false
     },
@@ -1848,35 +1851,62 @@ function selectItem(id) {
     // Use proxy to avoid CORS issues with 511virginia.org redirects
     let i95Incidents = 0;
     let incidentsLoaded = false;
-    try {
-      const inc = await fetchWithProxies(CONFIG.va511.incidentsGeojson, {
-        expect: "json",
-        headers: {
+
+    // Helper to parse JSONP response (strips callback wrapper)
+    const parseJsonp = (text) => {
+      if (typeof text !== 'string') return text;
+      const match = text.match(/^\s*\w+\s*\(\s*({[\s\S]*})\s*\)\s*;?\s*$/);
+      return match ? JSON.parse(match[1]) : JSON.parse(text);
+    };
+
+    // Try primary endpoint first, then fallback if it fails
+    const incidentsEndpoints = [
+      { url: CONFIG.va511.incidentsGeojson, format: 'json', name: 'primary' },
+      { url: CONFIG.va511.incidentsGeojsonFallback, format: 'jsonp', name: 'fallback' }
+    ];
+
+    for (const endpoint of incidentsEndpoints) {
+      if (incidentsLoaded) break;
+
+      try {
+        const headers = {
           "X-Cache-TTL-MS": "60000",
           "Accept": "application/geo+json,application/json,*/*",
-          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-          "Referer": "https://www.511virginia.org/"
-        },
-        timeoutMs: 25000
-      });
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        };
 
-      // Validate that we got actual GeoJSON
-      if (inc && (inc.type === "FeatureCollection" || Array.isArray(inc.features))) {
-        console.log("511 incidents loaded successfully:", inc.features?.length || 0, "incidents");
-        i95Incidents = ingestVa511Incidents(inc);
-        incidentsLoaded = true;
-      } else {
-        throw new Error("Invalid GeoJSON response (missing features)");
-      }
+        // Only add Referer for non-fallback endpoints (fallback works better without)
+        if (endpoint.name === 'primary') {
+          headers["Referer"] = "https://www.511virginia.org/";
+        }
 
-    } catch (e) {
-      // Only log CORS/network errors once per session to avoid console spam
-      if (!store._511IncidentsErrorLogged) {
-        console.error("511 incidents fetch failed. Error:", e.message || e);
-        console.error("The 511 incidents endpoint may be down or blocking requests.");
-        console.error("  → Ensure proxy server is running: node proxy-server.js");
-        console.error("  → Endpoint: " + CONFIG.va511.incidentsGeojson);
-        store._511IncidentsErrorLogged = true;
+        const response = await fetchWithProxies(endpoint.url, {
+          expect: endpoint.format === 'jsonp' ? 'text' : 'json',
+          headers,
+          timeoutMs: 25000
+        });
+
+        // Parse response based on format
+        const inc = endpoint.format === 'jsonp' ? parseJsonp(response) : response;
+
+        // Validate that we got actual GeoJSON
+        if (inc && (inc.type === "FeatureCollection" || Array.isArray(inc.features))) {
+          console.log(`511 incidents loaded successfully from ${endpoint.name}:`, inc.features?.length || 0, "incidents");
+          i95Incidents = ingestVa511Incidents(inc);
+          incidentsLoaded = true;
+        } else {
+          throw new Error("Invalid GeoJSON response (missing features)");
+        }
+
+      } catch (e) {
+        // Try next endpoint if available
+        if (endpoint.name === 'fallback' && !store._511IncidentsErrorLogged) {
+          console.error("All 511 incidents endpoints failed. Error:", e.message || e);
+          console.error("The 511 incidents service may be down or blocking requests.");
+          console.error("  → Ensure proxy server is running: node proxy-server.js");
+          console.error("  → Tried endpoints:", incidentsEndpoints.map(ep => ep.url).join(', '));
+          store._511IncidentsErrorLogged = true;
+        }
       }
     }
 
@@ -2385,18 +2415,25 @@ function selectItem(id) {
 
         // Build URL with Socrata SoQL parameters
         // Note: Socrata uses $ prefix for query operators
+        // Try without date filter first as the field may have changed or data may be sparse
         const queryParams = [
           `$limit=${CONFIG.virginiaCrashData.recordCap}`,
-          `$where=crash_date >= '${sinceStr}'`,
-          `$order=crash_date DESC`
+          `$order=:id DESC`  // Order by internal ID descending to get most recent records
         ];
 
         const detailsUrl = `${CONFIG.virginiaCrashData.crashDataDetailsUrl}?${queryParams.join('&')}`;
 
+        console.log(`[Virginia Crash Data] Fetching from: ${detailsUrl.replace(/\?.*/, '?...')}`);
+
         const data = await fetchWithProxies(detailsUrl, {
           expect: "json",
-          headers: CONFIG.virginiaCrashData.apiKey ? { 'X-App-Token': CONFIG.virginiaCrashData.apiKey } : {},
-          timeoutMs: 15000
+          headers: CONFIG.virginiaCrashData.apiKey ? {
+            'X-App-Token': CONFIG.virginiaCrashData.apiKey,
+            'Accept': 'application/json'
+          } : {
+            'Accept': 'application/json'
+          },
+          timeoutMs: 20000
         });
 
         if (Array.isArray(data)) {
@@ -2444,7 +2481,15 @@ function selectItem(id) {
         }
       } catch (e) {
         if (!store._virginiaCrashDataErrorLogged) {
-          console.warn("Virginia Crash Data Details API failed (may need API key or endpoint unavailable):", e.message);
+          console.warn("Virginia Crash Data Details API failed:", e.message);
+          if (e.message.includes('404')) {
+            console.warn("  → The Socrata endpoint may have changed or been removed");
+            console.warn("  → Visit https://data.virginia.gov to check for updated crash data endpoints");
+          } else if (e.message.includes('403')) {
+            console.warn("  → Access denied - the endpoint may require authentication");
+            console.warn("  → Consider obtaining a Socrata App Token from https://data.virginia.gov");
+          }
+          console.warn("  → Ensure proxy server is running: node proxy-server.js");
           store._virginiaCrashDataErrorLogged = true;
         }
       }
