@@ -1,14 +1,14 @@
-// CITY MANAGER — FXBG-PALANTIR toolkit (v14)
-// v14 fixes: Virginia Crash Data API integration, improved RSS feeds, all panels draggable
+// CITY MANAGER — FXBG-PALANTIR toolkit (v15)
+// v15 changes: Virginia Crash Data now shows last 48 hours and loads after RSS feeds
 // Key changes:
-// - Added Virginia Crash Data API endpoints (CrashData Basic, CrashData Details)
+// - Virginia Crash Data now shows last 48 hours (increased from 24 hours)
+// - Crash data loads LAST after RSS feeds and other APIs for optimal performance
+// - All crash data populates map markers and footer category panel
 // - Enhanced 511 Virginia camera locations with better error handling
-// - All popup panels are now draggable and moveable
-// - Fixed RSS feed footer buttons - now show actual feed items with better fallbacks
+// - All popup panels are draggable and moveable
+// - Fixed RSS feed footer buttons - show actual feed items with better fallbacks
 // - Improved crash data ingestion from multiple Virginia sources
-// - Added API key support for Virginia Roads Open Data Portal
 // - Better error messages and console logging for debugging
-// - All panels support drag-and-drop positioning
 // - Enhanced freshness gates with better time filtering
 // - Multiple crash data sources for comprehensive coverage
 
@@ -32,7 +32,7 @@
       // "Current" defaults:
       rssMaxAgeHours: 168,     // newsroom/civic posts: last 7 days (increased from 24h to show low-volume feeds)
       va511MaxAgeHours: 6,     // incidents: last 6 hours
-      crashesMaxAgeHours: 24,  // crashes: last 24 hours (you can tighten to 6 if desired)
+      crashesMaxAgeHours: 48,  // crashes: last 48 hours (loads after RSS and other APIs)
       nwsMaxAgeHours: 24,
       uiListMaxAgeHours: 168   // footer panel list: match RSS max age to show all map items (7 days)
     },
@@ -423,8 +423,8 @@
       outFields: "*",
       // if null, we'll auto-discover via layer metadata
       dateField: null,
-      // limit to last 24 hours by default (matches crashesMaxAgeHours)
-      maxAgeHours: 24,
+      // limit to last 48 hours (matches crashesMaxAgeHours) - loads after RSS and other APIs
+      maxAgeHours: 48,
       // cap how many records we ask for
       recordCap: 250
     },
@@ -2875,15 +2875,17 @@ function selectItem(id) {
     store.seenKeys.clear();
     clusters.clearLayers();
 
-    // Run pulls in parallel where possible
+    // Load RSS feeds and other APIs first (in parallel)
     await Promise.allSettled([
       pollRSS().catch(e => console.warn("RSS refresh partial", e)),
       CONFIG.nws.enabled ? fetchNWS().catch(e => console.warn("NWS refresh partial", e)) : Promise.resolve(),
-      pollArcgisCrashes().catch(e => console.warn("ArcGIS crash refresh partial", e)),
       pollVa511().catch(e => console.warn("511 refresh partial", e)),
       CONFIG.openUV.enabled ? fetchOpenUV().catch(e => console.warn("OpenUV refresh partial", e)) : Promise.resolve(),
       CONFIG.cdc.enabled ? fetchCDC().catch(e => console.warn("CDC refresh partial", e)) : Promise.resolve()
     ]);
+
+    // Load Virginia Crash data LAST after all other APIs complete
+    await pollArcgisCrashes().catch(e => console.warn("ArcGIS crash refresh partial", e));
 
     $("liveText").textContent = "Live";
     setLastUpdate();
