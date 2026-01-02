@@ -41,7 +41,8 @@
       rss: 5 * 60 * 1000,
       nws: 2 * 60 * 1000,
       arcgisCrash: 5 * 60 * 1000,
-      va511: 2 * 60 * 1000
+      va511: 2 * 60 * 1000,
+      vaRoads: 3 * 60 * 1000
     },
 
     // CORS proxy rotation (browser-only)
@@ -109,6 +110,16 @@
         defaultLoc: { lat: 38.2914, lon: -77.4477 },
         tone: "good",
         maxAgeHours: 24
+      },
+      {
+        id: "stafford-sheriff",
+        name: "Stafford Sheriff — News",
+        category: "crime",
+        emoji: "🚨",
+        url: "https://www.staffordsheriff.com/feed/",
+        defaultLoc: { lat: 38.4220, lon: -77.4083 },
+        tone: "warn",
+        maxAgeHours: 24
       }
       // Podcast feed intentionally removed from map (often older episodes) — re-add if you want
     ],
@@ -141,6 +152,13 @@
       incidentsGeojson: "https://www.511virginia.org/data/geojson/icons.incident.geojson",
       constructionGeojson: "https://www.511virginia.org/data/geojson/icons.construction.geojson",
       includeConstructionOnMap: false
+    },
+
+    // Virginia Roads API
+    vaRoads: {
+      enabled: true,
+      searchUrl: "https://www.virginiaroads.org/api/search",
+      eventsUrl: "https://www.virginiaroads.org/api/events"
     }
   };
 
@@ -737,7 +755,7 @@
     itemsById: new Map(),
     seenKeys: new Set(),
     markersById: new Map(),
-    locks: { rss:false, nws:false, arcgis:false, va511:false },
+    locks: { rss:false, nws:false, arcgis:false, va511:false, vaRoads:false },
     lastByCategory: new Map()
   };
 
@@ -1198,16 +1216,48 @@ function selectItem(id) {
     if (!CONFIG.va511.enabled) return { i95Incidents: 0 };
 
     // Cameras (always ok; doesn't bloat too much and is useful)
-    // Cache TTL set to 2 minutes (120000ms) to reduce request frequency
+    // Try direct fetch first (511 Virginia supports CORS), then fallback to proxy
     let camerasLoaded = false;
     try {
-      const cams = await fetchWithProxies(CONFIG.va511.camerasGeojson, {
-        expect: "json",
-        headers: { "X-Cache-TTL-MS": "120000" },
-        timeoutMs: 15000
-      });
+      let cams = null;
+
+      // Try direct fetch first
+      try {
+        const directRes = await fetch(CONFIG.va511.camerasGeojson, {
+          headers: {
+            "Accept": "application/geo+json,application/json,*/*",
+            "Cache-Control": "no-cache"
+          },
+          signal: AbortSignal.timeout(12000)
+        });
+
+        if (directRes.ok) {
+          const contentType = directRes.headers.get('content-type') || '';
+          if (contentType.includes('json')) {
+            cams = await directRes.json();
+            console.log("511 cameras loaded successfully (direct)");
+          }
+        }
+      } catch (directErr) {
+        // Direct fetch failed, will try proxy
+      }
+
+      // If direct fetch failed, try proxy
+      if (!cams) {
+        cams = await fetchWithProxies(CONFIG.va511.camerasGeojson, {
+          expect: "json",
+          headers: {
+            "X-Cache-TTL-MS": "120000",
+            "Accept": "application/geo+json,application/json,*/*"
+          },
+          timeoutMs: 15000
+        });
+        console.log("511 cameras loaded successfully (proxy)");
+      }
+
       ingestVa511Cameras(cams);
       camerasLoaded = true;
+
     } catch (e) {
       // Only log CORS/network errors once per session to avoid console spam
       if (!store._511CamerasErrorLogged) {
@@ -1223,12 +1273,29 @@ function selectItem(id) {
               {
                 type: "Feature",
                 geometry: { type: "Point", coordinates: [-77.4605, 38.3032] },
-                properties: { name: "Sample Camera - Downtown FXBG", https_url: "https://example.com/cam1" }
+                properties: {
+                  name: "Sample Camera - Downtown FXBG",
+                  https_url: "https://www.511virginia.org",
+                  description: "Sample camera marker (proxy/network unavailable)"
+                }
               },
               {
                 type: "Feature",
                 geometry: { type: "Point", coordinates: [-77.4706, 38.3019] },
-                properties: { name: "Sample Camera - I-95 & Route 3", https_url: "https://example.com/cam2" }
+                properties: {
+                  name: "Sample Camera - I-95 & Route 3",
+                  https_url: "https://www.511virginia.org",
+                  description: "Sample camera marker (proxy/network unavailable)"
+                }
+              },
+              {
+                type: "Feature",
+                geometry: { type: "Point", coordinates: [-77.4555, 38.2914] },
+                properties: {
+                  name: "Sample Camera - Route 1 & I-95",
+                  https_url: "https://www.511virginia.org",
+                  description: "Sample camera marker (proxy/network unavailable)"
+                }
               }
             ]
           });
@@ -1238,17 +1305,49 @@ function selectItem(id) {
     }
 
     // Incidents (STRICT time gate)
-    // Cache TTL set to 1 minute (60000ms) for fresher incident data
+    // Try direct fetch first (511 Virginia supports CORS), then fallback to proxy
     let i95Incidents = 0;
     let incidentsLoaded = false;
     try {
-      const inc = await fetchWithProxies(CONFIG.va511.incidentsGeojson, {
-        expect: "json",
-        headers: { "X-Cache-TTL-MS": "60000" },
-        timeoutMs: 15000
-      });
+      let inc = null;
+
+      // Try direct fetch first
+      try {
+        const directRes = await fetch(CONFIG.va511.incidentsGeojson, {
+          headers: {
+            "Accept": "application/geo+json,application/json,*/*",
+            "Cache-Control": "no-cache"
+          },
+          signal: AbortSignal.timeout(12000)
+        });
+
+        if (directRes.ok) {
+          const contentType = directRes.headers.get('content-type') || '';
+          if (contentType.includes('json')) {
+            inc = await directRes.json();
+            console.log("511 incidents loaded successfully (direct)");
+          }
+        }
+      } catch (directErr) {
+        // Direct fetch failed, will try proxy
+      }
+
+      // If direct fetch failed, try proxy
+      if (!inc) {
+        inc = await fetchWithProxies(CONFIG.va511.incidentsGeojson, {
+          expect: "json",
+          headers: {
+            "X-Cache-TTL-MS": "60000",
+            "Accept": "application/geo+json,application/json,*/*"
+          },
+          timeoutMs: 15000
+        });
+        console.log("511 incidents loaded successfully (proxy)");
+      }
+
       i95Incidents = ingestVa511Incidents(inc);
       incidentsLoaded = true;
+
     } catch (e) {
       // Only log CORS/network errors once per session to avoid console spam
       if (!store._511IncidentsErrorLogged) {
@@ -1265,8 +1364,8 @@ function selectItem(id) {
                 type: "Feature",
                 geometry: { type: "Point", coordinates: [-77.4555, 38.3100] },
                 properties: {
-                  title: "Traffic Delay",
-                  description: "Sample incident - Heavy traffic on I-95 North",
+                  title: "Sample: Traffic Delay",
+                  description: "Sample incident - Heavy traffic on I-95 North (proxy/network unavailable)",
                   road: "I-95",
                   updated: new Date().toISOString()
                 }
@@ -1275,9 +1374,19 @@ function selectItem(id) {
                 type: "Feature",
                 geometry: { type: "Point", coordinates: [-77.4650, 38.2950] },
                 properties: {
-                  title: "Road Work",
-                  description: "Sample incident - Construction on Route 3",
+                  title: "Sample: Road Work",
+                  description: "Sample incident - Construction on Route 3 (proxy/network unavailable)",
                   road: "Route 3",
+                  updated: new Date().toISOString()
+                }
+              },
+              {
+                type: "Feature",
+                geometry: { type: "Point", coordinates: [-77.4705, 38.3200] },
+                properties: {
+                  title: "Sample: Accident",
+                  description: "Sample incident - Vehicle accident on I-95 South (proxy/network unavailable)",
+                  road: "I-95",
                   updated: new Date().toISOString()
                 }
               }
@@ -1705,6 +1814,29 @@ function selectItem(id) {
   }
 
   // -----------------------------
+  // Virginia Roads API Integration
+  // -----------------------------
+  async function pollVaRoads() {
+    if (store.locks.vaRoads) return;
+    store.locks.vaRoads = true;
+    try {
+      if (!CONFIG.vaRoads.enabled) return;
+
+      // Virginia Roads API doesn't have a simple public endpoint we can poll directly
+      // Instead we'll use the RSS feeds already configured which cover regional news
+      // This is a placeholder for potential future API integration if they expose public endpoints
+
+      // For now, the RSS feeds (Free Lance-Star, Potomac Local, etc.) provide the news coverage
+      console.log("Virginia Roads API integration placeholder - using RSS feeds for regional coverage");
+
+    } catch (e) {
+      console.warn("Virginia Roads API check failed:", e);
+    } finally {
+      store.locks.vaRoads = false;
+    }
+  }
+
+  // -----------------------------
   // I‑95 indicator
   // -----------------------------
   function setI95Indicator(i95Incidents) {
@@ -1732,11 +1864,14 @@ function selectItem(id) {
     store.seenKeys.clear();
     clusters.clearLayers();
 
-    // Run pulls
-    try { await pollRSS(); } catch (e) { console.warn("RSS refresh partial", e); }
-    try { if (CONFIG.nws.enabled) await fetchNWS(); } catch (e) { console.warn("NWS refresh partial", e); }
-    try { await pollArcgisCrashes(); } catch (e) { console.warn("ArcGIS crash refresh partial", e); }
-    try { await pollVa511(); } catch (e) { console.warn("511 refresh partial", e); }
+    // Run pulls in parallel where possible
+    await Promise.allSettled([
+      pollRSS().catch(e => console.warn("RSS refresh partial", e)),
+      CONFIG.nws.enabled ? fetchNWS().catch(e => console.warn("NWS refresh partial", e)) : Promise.resolve(),
+      pollArcgisCrashes().catch(e => console.warn("ArcGIS crash refresh partial", e)),
+      pollVa511().catch(e => console.warn("511 refresh partial", e)),
+      pollVaRoads().catch(e => console.warn("VA Roads refresh partial", e))
+    ]);
 
     $("liveText").textContent = "Live";
     setLastUpdate();
@@ -1753,4 +1888,5 @@ function selectItem(id) {
   setInterval(fetchNWS, CONFIG.polling.nws);
   setInterval(pollArcgisCrashes, CONFIG.polling.arcgisCrash);
   setInterval(pollVa511, CONFIG.polling.va511);
+  setInterval(pollVaRoads, CONFIG.polling.vaRoads);
 })();
