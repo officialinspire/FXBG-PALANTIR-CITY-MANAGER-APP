@@ -55,8 +55,18 @@
     // CORS proxy rotation (browser-only)
     corsProxies: [],
 
+    // Debug flags
+    debug: {
+      rss: false  // When true, log detailed RSS ingestion stats (fetched bytes, parsed items, normalized items, dropped counts)
+    },
 
-    // RSS sources (each has maxAgeHours to enforce "current only") (each has maxAgeHours to enforce "current only")
+    // Fetch configuration
+    fetch: {
+      cacheSeconds: 900  // Cache TTL for RSS/ATOM feeds (15 minutes to prevent rate limiting)
+    },
+
+
+    // RSS sources (each has maxAgeHours: 168 to show last 7 days of content)
     rss: [
       {
         id: "fxbg-police-alerts",
@@ -66,7 +76,9 @@
         url: "https://www.fredericksburgva.gov/RSSFeed.aspx?CID=Police-9&ModID=63",
         defaultLoc: { lat: 38.3032, lon: -77.4605 },
         tone: "bad",
-        maxAgeHours: 24
+        maxAgeHours: 168,
+        jurisdiction: "Fredericksburg",
+        type: "rss"
       },
       {
         id: "fxbg-transit-alerts",
@@ -76,7 +88,9 @@
         url: "https://www.fredericksburgva.gov/RSSFeed.aspx?CID=Transit-Alerts-4&ModID=63",
         defaultLoc: { lat: 38.3019, lon: -77.4706 },
         tone: "warn",
-        maxAgeHours: 24
+        maxAgeHours: 168,
+        jurisdiction: "Fredericksburg",
+        type: "rss"
       },
       {
         id: "fxbg-police-news",
@@ -86,7 +100,9 @@
         url: "https://www.fredericksburgva.gov/RSSFeed.aspx?CID=Police-Department-News-6&ModID=1",
         defaultLoc: { lat: 38.3027, lon: -77.4600 },
         tone: "warn",
-        maxAgeHours: 24
+        maxAgeHours: 168,
+        jurisdiction: "Fredericksburg",
+        type: "rss"
       },
       {
         id: "spotsy-press",
@@ -96,7 +112,9 @@
         url: "https://www.spotsylvania.va.us/RSSFeed.aspx?CID=Press-Releases-8&ModID=1",
         defaultLoc: { lat: 38.2050, lon: -77.6070 },
         tone: "good",
-        maxAgeHours: 24
+        maxAgeHours: 168,
+        jurisdiction: "Spotsylvania",
+        type: "rss"
       },
       {
         id: "fls-topstory",
@@ -106,7 +124,9 @@
         url: "https://www.fredericksburg.com/search/?f=rss&t=article&l=25&s=start_time&sd=desc",
         defaultLoc: { lat: 38.3032, lon: -77.4605 },
         tone: "good",
-        maxAgeHours: 24
+        maxAgeHours: 168,
+        jurisdiction: "Regional",
+        type: "rss"
       },
       {
         id: "potomaclocal",
@@ -116,7 +136,9 @@
         url: "https://www.potomaclocal.com/feed/feed",
         defaultLoc: { lat: 38.2914, lon: -77.4477 },
         tone: "good",
-        maxAgeHours: 24
+        maxAgeHours: 168,
+        jurisdiction: "Regional",
+        type: "rss"
       },
       {
         id: "stafford-sheriff",
@@ -126,7 +148,9 @@
         url: "https://www.staffordsheriff.com/apps/public/news/rss",
         defaultLoc: { lat: 38.4220, lon: -77.4083 },
         tone: "warn",
-        maxAgeHours: 24
+        maxAgeHours: 168,
+        jurisdiction: "Stafford",
+        type: "rss"
       },
       {
         id: "potomaclocal-stafford",
@@ -136,7 +160,9 @@
         url: "https://www.potomaclocal.com/category/stafford/feed/",
         defaultLoc: { lat: 38.4220, lon: -77.4083 },
         tone: "good",
-        maxAgeHours: 24
+        maxAgeHours: 168,
+        jurisdiction: "Stafford",
+        type: "rss"
       },
       {
         id: "fxbg-freepress-podcast",
@@ -146,7 +172,9 @@
         url: "https://feeds.buzzsprout.com/2557117.rss",
         defaultLoc: { lat: 38.3032, lon: -77.4605 },
         tone: "good",
-        maxAgeHours: 168  // 7 days for podcasts (they update less frequently)
+        maxAgeHours: 168,
+        jurisdiction: "Fredericksburg",
+        type: "rss"
       }
     ],
 
@@ -207,15 +235,22 @@
   // Categories
   // -----------------------------
   const CATEGORIES = {
-    crime:       { label: "Police / Crime", emoji: "🚨" },
-    traffic:     { label: "Traffic", emoji: "🚗" },
-    crash:       { label: "Auto Accident", emoji: "💥" },
-    closure:     { label: "Road Closure", emoji: "⛔" },
-    train:       { label: "Train / Transit", emoji: "🚆" },
-    weather:     { label: "Weather", emoji: "🌧️" },
-    events:      { label: "Local Events / News", emoji: "🎉" },
-    camera:      { label: "Cameras", emoji: "📷" },
-    fire_ems:    { label: "Fire / EMT", emoji: "🔥" }
+    crime:             { label: "Police / Crime", emoji: "🚨" },
+    police_crime:      { label: "Police / Crime", emoji: "🚨" },  // Alias for crime
+    traffic:           { label: "Traffic", emoji: "🚗" },
+    traffic_transit:   { label: "Traffic / Transit", emoji: "🚗" },  // Alias for traffic
+    crash:             { label: "Auto Accident", emoji: "💥" },
+    closure:           { label: "Road Closure", emoji: "⛔" },
+    train:             { label: "Train / Transit", emoji: "🚆" },
+    weather:           { label: "Weather", emoji: "🌧️" },
+    weather_alerts:    { label: "Weather Alerts", emoji: "⚠️" },  // Weather alerts category
+    events:            { label: "Local Events / News", emoji: "🎉" },
+    news:              { label: "Local Events / News", emoji: "📰" },  // Alias for events
+    alerts:            { label: "Alerts", emoji: "⚠️" },
+    camera:            { label: "Cameras", emoji: "📷" },
+    fire_ems:          { label: "Fire / EMT", emoji: "🔥" },
+    school_events:     { label: "School Events", emoji: "🏫" },  // School events category
+    school_closures:   { label: "School Closures", emoji: "❌" }  // School closures category
   };
 
   const KEYWORD_EMOJI = [
@@ -843,8 +878,19 @@
   };
 
   function normalize({ source, raw }) {
+    // Only drop an RSS item if it has no title AND no link
+    if (!raw.title && !raw.url) {
+      if (CONFIG.debug.rss) {
+        console.log(`[RSS Filter] Dropped item from ${source.id}: No title AND no link`);
+      }
+      return null;
+    }
+
     const textForHeuristics = `${raw.title || ""} ${raw.summary || ""}`.trim();
     const picked = pickEmojiCategory(textForHeuristics, source.emoji, source.category, source.tone);
+
+    // ALWAYS use location fallback chain - never drop items due to missing geodata
+    // Priority: 1) raw.loc (from feed), 2) source.defaultLoc (per-feed default), 3) CONFIG.center (global fallback)
     const loc = raw.loc || source.defaultLoc || CONFIG.center;
 
     const publishedDate = toDate(raw.published);
@@ -852,14 +898,24 @@
 
     // Debug logging for filtering decisions
     if (!publishedDate) {
-      console.log(`[RSS Filter] Dropped item from ${source.id}: "${raw.title?.slice(0, 50) || 'untitled'}" - Bad/missing date (${raw.published})`);
+      if (CONFIG.debug.rss) {
+        console.log(`[RSS Filter] Dropped item from ${source.id}: "${raw.title?.slice(0, 50) || 'untitled'}" - Bad/missing date (${raw.published})`);
+      }
       return null;
     }
 
     const age = hoursAgo(publishedDate);
     if (age > maxAge) {
-      console.log(`[RSS Filter] Dropped item from ${source.id}: "${raw.title?.slice(0, 50) || 'untitled'}" - Too old (${age.toFixed(1)}h ago, max: ${maxAge}h)`);
+      if (CONFIG.debug.rss) {
+        console.log(`[RSS Filter] Dropped item from ${source.id}: "${raw.title?.slice(0, 50) || 'untitled'}" - Too old (${age.toFixed(1)}h ago, max: ${maxAge}h)`);
+      }
       return null;
+    }
+
+    // Debug log when using location fallback
+    if (CONFIG.debug.rss && !raw.loc) {
+      const fallbackType = source.defaultLoc ? 'source.defaultLoc' : 'CONFIG.center';
+      console.log(`[RSS Normalize] ${source.id}: "${raw.title?.slice(0, 50) || 'untitled'}" - Using ${fallbackType} for missing geodata`);
     }
 
     const dedupeSeed = `${source.id}|${raw.guid || raw.url || raw.title || ""}|${publishedDate.toISOString()}`;
@@ -1063,10 +1119,106 @@ function selectItem(id) {
   // -----------------------------
   // RSS ingestion (current-only)
   // -----------------------------
+
+  // Discover RSS/ATOM feed URL from HTML page (for html_discover type sources)
+  async function discoverFeedFromHTML(source) {
+    if (CONFIG.debug.rss) {
+      console.log(`[RSS HTML Discover] Fetching HTML page for ${source.id}: ${source.url}`);
+    }
+
+    const htmlText = await fetchWithProxies(source.url, {
+      expect: "text",
+      headers: {
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "X-Cache": `max-age=${CONFIG.fetch.cacheSeconds}`
+      }
+    });
+
+    // Validate we got HTML
+    if (!htmlText || (!htmlText.toLowerCase().includes('<!doctype') && !htmlText.toLowerCase().includes('<html'))) {
+      console.warn(`[RSS HTML Discover] ${source.id}: Response doesn't look like HTML`);
+      return null;
+    }
+
+    if (CONFIG.debug.rss) {
+      console.log(`[RSS HTML Discover] ${source.id}: Received ${htmlText.length} bytes of HTML`);
+    }
+
+    // Parse HTML with DOMParser
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(htmlText, 'text/html');
+
+    // Check for parser errors
+    const parserError = doc.querySelector('parsererror');
+    if (parserError) {
+      console.warn(`[RSS HTML Discover] ${source.id}: HTML parse error`);
+      return null;
+    }
+
+    // Look for RSS/ATOM feed links in <head>
+    // Priority: <link rel="alternate" type="application/rss+xml" or "application/atom+xml">
+    const feedLink = doc.querySelector(
+      'link[rel="alternate"][type="application/rss+xml"], ' +
+      'link[rel="alternate"][type="application/atom+xml"]'
+    );
+
+    if (feedLink && feedLink.getAttribute('href')) {
+      const href = feedLink.getAttribute('href');
+      const absoluteUrl = new URL(href, source.url).toString();
+      if (CONFIG.debug.rss) {
+        console.log(`[RSS HTML Discover] ${source.id}: Found feed link in <head>: ${absoluteUrl}`);
+      }
+      return absoluteUrl;
+    }
+
+    // Fallback: look for links ending in .rss, .xml, or .atom
+    const links = Array.from(doc.querySelectorAll('a[href]'));
+    for (const link of links) {
+      const href = link.getAttribute('href');
+      if (href && /\.(rss|xml|atom)$/i.test(href)) {
+        const absoluteUrl = new URL(href, source.url).toString();
+        if (CONFIG.debug.rss) {
+          console.log(`[RSS HTML Discover] ${source.id}: Found feed link in <a href>: ${absoluteUrl}`);
+        }
+        return absoluteUrl;
+      }
+    }
+
+    console.warn(`[RSS HTML Discover] ${source.id}: No RSS/ATOM feed link found in HTML`);
+    return null;
+  }
+
   async function fetchRSS(source) {
-    // Fetch RSS via proxy, expecting plain text
-    // Cache TTL set to 15 minutes (900000ms) to prevent rate limiting (429 errors)
-    const xmlText = await fetchWithProxies(source.url, { expect: "text", headers: { "X-Cache-TTL-MS": "900000" } });
+    // Handle html_discover type sources
+    if (source.type === "html_discover") {
+      const feedUrl = await discoverFeedFromHTML(source);
+      if (!feedUrl) {
+        console.warn(`[RSS Fetch] ${source.id}: Failed to discover feed URL from HTML page`);
+        return [];
+      }
+      // Update source URL temporarily for this fetch
+      source = { ...source, url: feedUrl, type: "rss" };
+      if (CONFIG.debug.rss) {
+        console.log(`[RSS Fetch] ${source.id}: Discovered feed URL, proceeding with fetch: ${feedUrl}`);
+      }
+    }
+
+    // Fetch RSS/ATOM via proxy, expecting plain text
+    // Include proper Accept headers for RSS/ATOM feeds
+    const headers = {
+      "Accept": "application/rss+xml, application/atom+xml, application/xml, text/xml, */*",
+      "X-Cache": `max-age=${CONFIG.fetch.cacheSeconds}`
+    };
+
+    if (CONFIG.debug.rss) {
+      console.log(`[RSS Fetch] ${source.id}: Fetching ${source.url}`);
+    }
+
+    const xmlText = await fetchWithProxies(source.url, { expect: "text", headers });
+
+    if (CONFIG.debug.rss) {
+      console.log(`[RSS Fetch] ${source.id}: Received ${xmlText?.length || 0} bytes`);
+    }
 
     // Check if we received HTML instead of XML (common proxy error or invalid response)
     if (xmlText && (/^\s*<!DOCTYPE html/i.test(xmlText) || /^\s*<html/i.test(xmlText))) {
@@ -1108,7 +1260,9 @@ function selectItem(id) {
     const entries = Array.from(doc.querySelectorAll("entry"));
     const out = [];
 
-    console.log(`[RSS Parse] ${source.id}: Found ${items.length || entries.length} raw items/entries in feed XML`);
+    if (CONFIG.debug.rss) {
+      console.log(`[RSS Parse] ${source.id}: Found ${items.length || entries.length} raw items/entries in feed XML`);
+    }
 
     const push = (row) => {
       if (out.length < CONFIG.perf.maxPerSource) out.push(row);
@@ -1168,7 +1322,9 @@ function selectItem(id) {
       }
     }
 
-    console.log(`[RSS Parse] ${source.id}: Parsed ${out.length} valid items (with dates) from feed`);
+    if (CONFIG.debug.rss) {
+      console.log(`[RSS Parse] ${source.id}: Parsed ${out.length} valid items (with dates) from feed`);
+    }
     return out;
   }
 
@@ -1179,11 +1335,18 @@ function selectItem(id) {
     let anySucceeded = false;
     let totalAdded = 0;
 
+    if (CONFIG.debug.rss) {
+      console.log(`[RSS Poll] Starting RSS polling for ${CONFIG.rss.length} feeds`);
+    }
+
     for (const source of CONFIG.rss) {
       await sleep((CONFIG.polling && CONFIG.polling.rssStaggerMs) || 300);
       try {
         const items = await fetchRSS(source);
-        console.log(`[RSS Ingest] ${source.id}: Starting ingestion of ${items.length} parsed items (maxAge: ${source.maxAgeHours ?? CONFIG.freshness.rssMaxAgeHours}h)`);
+
+        if (CONFIG.debug.rss) {
+          console.log(`[RSS Ingest] ${source.id}: Starting ingestion of ${items.length} parsed items (maxAge: ${source.maxAgeHours ?? CONFIG.freshness.rssMaxAgeHours}h)`);
+        }
 
         let added = 0;
         let skippedDupe = 0;
@@ -1205,7 +1368,9 @@ function selectItem(id) {
           totalAdded++;
         }
 
-        console.log(`[RSS Ingest] ${source.id}: Added ${added} new items, skipped ${skippedFilter} (filtered), ${skippedDupe} (duplicates)`);
+        if (CONFIG.debug.rss) {
+          console.log(`[RSS Ingest] ${source.id}: Added ${added} new items, skipped ${skippedFilter} (filtered), ${skippedDupe} (duplicates)`);
+        }
         results.push({ source: source.id, ok: true, added });
         anySucceeded = true;
 
@@ -1227,7 +1392,12 @@ function selectItem(id) {
       }
     }
 
-    console.log(`RSS polling complete: ${totalAdded} new items from ${results.filter(r => r.ok).length}/${CONFIG.rss.length} feeds`);
+    if (CONFIG.debug.rss) {
+      console.log(`[RSS Poll] Complete: ${totalAdded} new items from ${results.filter(r => r.ok).length}/${CONFIG.rss.length} feeds`);
+      console.log(`[RSS Poll] Results:`, results);
+    } else {
+      console.log(`RSS polling complete: ${totalAdded} new items from ${results.filter(r => r.ok).length}/${CONFIG.rss.length} feeds`);
+    }
 
     setLastUpdate();
     redraw();
