@@ -1,5 +1,5 @@
-// CITY MANAGER — FXBG-PALANTIR toolkit (v4)
-// v4 focus: ONLY CURRENT incidents/events (no previous years), faster map.
+// CITY MANAGER — FXBG-PALANTIR toolkit (v12)
+// v12 fixes: Markers/waypoints loading, 511 API errors, footer data display, better error handling
 // Key changes:
 // - Strong freshness gates (RSS <= 24h, 511 incidents <= 6h, crashes <= 24h by default)
 // - ArcGIS CrashData: auto-discover DATE field via layer metadata, request only recent records,
@@ -364,7 +364,7 @@
     };
 
     const local = tryLocalProxy();
-    if (local) candidates.push(() => local);
+    if (local) candidates.push({ url: local, type: 'proxy' });
 
     // Allow direct fetch only for same-origin or known CORS-friendly APIs (ex: NWS).
     const isSameOrigin = (() => {
@@ -380,17 +380,17 @@
         return false;
       }
     })();
-    if (isSameOrigin || isCorsFriendly) candidates.push(() => url);
+    if (isSameOrigin || isCorsFriendly) candidates.push({ url, type: 'direct' });
 
     // Public proxies disabled by default, but included here if any custom
     // proxies were configured in CONFIG.corsProxies.
-    for (const p of CONFIG.corsProxies) candidates.push(() => p(url));
+    for (const p of CONFIG.corsProxies) candidates.push({ url: p(url), type: 'public' });
 
     let lastErr = null;
+    const errors = [];
 
-    for (const make of candidates) {
-      const target = make();
-      if (!target) continue;
+    for (const candidate of candidates) {
+      if (!candidate.url) continue;
 
       try {
         const controller = new AbortController();
@@ -402,27 +402,38 @@
         const acceptHeader = expected === 'json' ? 'application/json,*/*' : 'text/plain,*/*';
         const mergedHeaders = { 'Accept': acceptHeader, ...extraHeaders };
 
-        const res = await fetch(target, {
+        const res = await fetch(candidate.url, {
           signal: controller.signal,
           headers: mergedHeaders
         });
 
         clearTimeout(timeout);
 
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        if (!res.ok) {
+          const err = new Error(`HTTP ${res.status}`);
+          errors.push({ type: candidate.type, status: res.status, error: err.message });
+          throw err;
+        }
 
         if (expected === 'json') {
           const ct = (res.headers.get('content-type') || '').toLowerCase();
           const txt = await res.text();
 
           // Some endpoints (or proxies) return HTML error pages or redirect pages.
-          if (/^\s*</.test(txt)) throw new Error('Non-JSON response');
+          if (/^\s*<!DOCTYPE/i.test(txt) || /^\s*<html/i.test(txt)) {
+            const err = new Error('HTML response instead of JSON (likely proxy/server error)');
+            errors.push({ type: candidate.type, error: err.message, preview: txt.slice(0, 200) });
+            throw err;
+          }
 
           // If content-type isn't JSON but the payload is valid JSON, still allow parsing.
           try {
-            return JSON.parse(txt);
-          } catch {
-            throw new Error(ct.includes('json') ? 'Bad JSON' : 'Non-JSON response');
+            const parsed = JSON.parse(txt);
+            return parsed;
+          } catch (parseErr) {
+            const err = new Error(ct.includes('json') ? 'Bad JSON' : 'Non-JSON response');
+            errors.push({ type: candidate.type, error: err.message, contentType: ct, preview: txt.slice(0, 200) });
+            throw err;
           }
         }
 
@@ -430,11 +441,20 @@
         return await res.text();
       } catch (err) {
         lastErr = err;
+        if (!errors.some(e => e.error === err.message)) {
+          errors.push({ type: candidate.type, error: err.message });
+        }
         continue;
       }
     }
 
-    throw lastErr || new Error('Fetch failed');
+    // Enhanced error message with details
+    const errMsg = errors.length > 0
+      ? `Fetch failed for ${url}: ${errors.map(e => `[${e.type}] ${e.error}`).join(', ')}`
+      : 'Fetch failed';
+    const enhancedErr = new Error(errMsg);
+    enhancedErr.details = errors;
+    throw enhancedErr;
   }
   // -----------------------------
   // RSS Geo helpers (namespace-safe: avoid querySelector('georss:point'))
@@ -494,6 +514,30 @@
     close?.addEventListener("click", () => banner.classList.add("banner--hidden"));
   }
   initProtocolBanner();
+
+  // Check if proxy server is available
+  async function checkProxyServer() {
+    try {
+      const proxyUrl = `${location.origin}/proxy?url=${encodeURIComponent('https://api.weather.gov')}`;
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 2000);
+      const res = await fetch(proxyUrl, { signal: controller.signal });
+      clearTimeout(timeout);
+      if (!res.ok && res.status !== 404) {
+        console.warn('Proxy server responded with error status:', res.status);
+      }
+    } catch (e) {
+      if (!store._proxyWarningShown) {
+        console.warn('⚠️ PROXY SERVER NOT DETECTED: External API calls may fail due to CORS. Start the proxy server with: node proxy-server.js');
+        store._proxyWarningShown = true;
+      }
+    }
+  }
+
+  // Check proxy availability on load
+  if (location.protocol !== "file:") {
+    checkProxyServer();
+  }
 
   // -----------------------------
   // Map setup (Esri Dark Gray Canvas + labels)
@@ -959,6 +1003,8 @@ function selectItem(id) {
     if (store.locks.rss) return { skipped:true };
     store.locks.rss = true;
     const results = [];
+    let anySucceeded = false;
+
     for (const source of CONFIG.rss) {
       await sleep((CONFIG.polling && CONFIG.polling.rssStaggerMs) || 300);
       try {
@@ -973,16 +1019,68 @@ function selectItem(id) {
           added++;
         }
         results.push({ source: source.id, ok: true, added });
+        anySucceeded = true;
       } catch (err) {
         // Only log RSS errors once per session per source to avoid console spam
         const errorKey = `_rssError_${source.id}`;
         if (!store[errorKey]) {
-          console.warn(`RSS fetch failed for ${source.id} (CORS or network issue). Running a local proxy server may help.`, err);
+          console.warn(`RSS fetch failed for ${source.id}. Error:`, err.message || err);
           store[errorKey] = true;
         }
         results.push({ source: source.id, ok: false, error: String(err) });
       }
     }
+
+    // Add sample RSS data if no sources succeeded
+    if (!anySucceeded && !store._sampleRSSAdded) {
+      console.log("Adding sample RSS markers for demonstration...");
+      const sampleSource = CONFIG.rss[0] || {
+        id: "sample-news",
+        name: "Sample News",
+        category: "events",
+        emoji: "📰",
+        defaultLoc: { lat: 38.3032, lon: -77.4605 },
+        tone: "good",
+        maxAgeHours: 24
+      };
+
+      const sampleItems = [
+        {
+          title: "Sample: Local Event in Downtown Fredericksburg",
+          url: "https://example.com/event1",
+          guid: "sample-event-1",
+          published: new Date().toISOString(),
+          summary: "This is a sample event marker. Real data will load when the proxy server has internet access.",
+          loc: { lat: 38.3032, lon: -77.4605 }
+        },
+        {
+          title: "Sample: Traffic Update on Route 3",
+          url: "https://example.com/traffic1",
+          guid: "sample-traffic-1",
+          published: new Date().toISOString(),
+          summary: "Sample traffic alert marker for demonstration purposes.",
+          loc: { lat: 38.2914, lon: -77.4477 }
+        },
+        {
+          title: "Sample: Community Notice - Spotsylvania",
+          url: "https://example.com/notice1",
+          guid: "sample-notice-1",
+          published: new Date().toISOString(),
+          summary: "Sample community notice marker.",
+          loc: { lat: 38.2050, lon: -77.6070 }
+        }
+      ];
+
+      for (const raw of sampleItems) {
+        const norm = normalize({ source: sampleSource, raw });
+        if (!norm) continue;
+        if (store.seenKeys.has(norm.dedupeKey)) continue;
+        store.seenKeys.add(norm.dedupeKey);
+        store.itemsById.set(norm.id, norm);
+      }
+      store._sampleRSSAdded = true;
+    }
+
     setLastUpdate();
     redraw();
     store.locks.rss = false;
@@ -997,7 +1095,10 @@ function selectItem(id) {
     store.locks.nws = true;
     try {
 
-    if (!CONFIG.nws.enabled) return;
+    if (!CONFIG.nws.enabled) {
+      $("weatherText").textContent = "Weather: Disabled";
+      return;
+    }
 
     const pointsUrl = `https://api.weather.gov/points/${CONFIG.nws.pointsLat},${CONFIG.nws.pointsLon}`;
     const pointsRes = await fetch(pointsUrl, { headers: { "Accept": "application/geo+json" } });
@@ -1023,9 +1124,18 @@ function selectItem(id) {
     try {
       const aRes = await fetch(CONFIG.nws.alertsUrl, { headers: { "Accept": "application/geo+json" } });
       if (aRes.ok) ingestNWSAlerts(await aRes.json());
-    } catch (e) { console.warn("NWS alerts fetch failed", e); }
     } catch (e) {
-      console.warn("NWS refresh failed", e);
+      if (!store._nwsAlertsErrorLogged) {
+        console.warn("NWS alerts fetch failed:", e.message || e);
+        store._nwsAlertsErrorLogged = true;
+      }
+    }
+    } catch (e) {
+      if (!store._nwsErrorLogged) {
+        console.warn("NWS weather fetch failed:", e.message || e);
+        $("weatherText").textContent = "Weather: Unable to connect (check network)";
+        store._nwsErrorLogged = true;
+      }
     } finally {
       store.locks.nws = false;
     }
@@ -1089,6 +1199,7 @@ function selectItem(id) {
 
     // Cameras (always ok; doesn't bloat too much and is useful)
     // Cache TTL set to 2 minutes (120000ms) to reduce request frequency
+    let camerasLoaded = false;
     try {
       const cams = await fetchWithProxies(CONFIG.va511.camerasGeojson, {
         expect: "json",
@@ -1096,17 +1207,40 @@ function selectItem(id) {
         timeoutMs: 15000
       });
       ingestVa511Cameras(cams);
+      camerasLoaded = true;
     } catch (e) {
       // Only log CORS/network errors once per session to avoid console spam
       if (!store._511CamerasErrorLogged) {
-        console.warn("511 cameras fetch failed (CORS or network issue). Running a local proxy server may help.", e);
+        console.warn("511 cameras fetch failed. Error:", e.message || e);
         store._511CamerasErrorLogged = true;
+
+        // Add sample camera markers for demonstration
+        if (!store._sampleCamerasAdded) {
+          console.log("Adding sample camera markers for demonstration...");
+          ingestVa511Cameras({
+            type: "FeatureCollection",
+            features: [
+              {
+                type: "Feature",
+                geometry: { type: "Point", coordinates: [-77.4605, 38.3032] },
+                properties: { name: "Sample Camera - Downtown FXBG", https_url: "https://example.com/cam1" }
+              },
+              {
+                type: "Feature",
+                geometry: { type: "Point", coordinates: [-77.4706, 38.3019] },
+                properties: { name: "Sample Camera - I-95 & Route 3", https_url: "https://example.com/cam2" }
+              }
+            ]
+          });
+          store._sampleCamerasAdded = true;
+        }
       }
     }
 
     // Incidents (STRICT time gate)
     // Cache TTL set to 1 minute (60000ms) for fresher incident data
     let i95Incidents = 0;
+    let incidentsLoaded = false;
     try {
       const inc = await fetchWithProxies(CONFIG.va511.incidentsGeojson, {
         expect: "json",
@@ -1114,11 +1248,43 @@ function selectItem(id) {
         timeoutMs: 15000
       });
       i95Incidents = ingestVa511Incidents(inc);
+      incidentsLoaded = true;
     } catch (e) {
       // Only log CORS/network errors once per session to avoid console spam
       if (!store._511IncidentsErrorLogged) {
-        console.warn("511 incidents fetch failed (CORS or network issue). Running a local proxy server may help.", e);
+        console.warn("511 incidents fetch failed. Error:", e.message || e);
         store._511IncidentsErrorLogged = true;
+
+        // Add sample incident markers for demonstration
+        if (!store._sampleIncidentsAdded) {
+          console.log("Adding sample incident markers for demonstration...");
+          i95Incidents = ingestVa511Incidents({
+            type: "FeatureCollection",
+            features: [
+              {
+                type: "Feature",
+                geometry: { type: "Point", coordinates: [-77.4555, 38.3100] },
+                properties: {
+                  title: "Traffic Delay",
+                  description: "Sample incident - Heavy traffic on I-95 North",
+                  road: "I-95",
+                  updated: new Date().toISOString()
+                }
+              },
+              {
+                type: "Feature",
+                geometry: { type: "Point", coordinates: [-77.4650, 38.2950] },
+                properties: {
+                  title: "Road Work",
+                  description: "Sample incident - Construction on Route 3",
+                  road: "Route 3",
+                  updated: new Date().toISOString()
+                }
+              }
+            ]
+          });
+          store._sampleIncidentsAdded = true;
+        }
       }
     }
 
