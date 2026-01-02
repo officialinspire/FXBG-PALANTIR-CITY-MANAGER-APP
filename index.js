@@ -100,10 +100,10 @@
       },
       {
         id: "fls-topstory",
-        name: "Free Lance–Star — #topstory",
+        name: "Free Lance–Star — News",
         category: "events",
         emoji: "📰",
-        url: "https://www.fredericksburg.com/search/?f=rss&t=article&l=50&s=start_time&sd=desc&k%5B%5D=%23topstory",
+        url: "https://www.fredericksburg.com/search/?f=rss&t=article&l=25&s=start_time&sd=desc",
         defaultLoc: { lat: 38.3032, lon: -77.4605 },
         tone: "good",
         maxAgeHours: 24
@@ -182,7 +182,7 @@
       apiDefinitionUrl: "https://www.virginiaroads.org/api/search/definition",
       // API key (if needed - currently not required for public endpoints)
       apiKey: null,
-      maxAgeHours: 24,
+      maxAgeHours: 48,  // Show crashes from last 48 hours
       recordCap: 200
     },
 
@@ -252,6 +252,10 @@
       if (e.button !== undefined && e.button !== 0) return;
       // Don't start dragging if clicking on the close button or other interactive elements
       if (e.target.closest('.iconBtn') || e.target.closest('button:not(.panel__handle)')) return;
+
+      // Only allow dragging when clicking on the panel__grab element or panel__handle
+      const isGrabClick = e.target.closest('.panel__grab') || e.target.closest('.panel__handle');
+      if (!isGrabClick) return;
 
       dragging = true;
 
@@ -1031,9 +1035,14 @@ function selectItem(id) {
     // Cache TTL set to 15 minutes (900000ms) to prevent rate limiting (429 errors)
     const xmlText = await fetchWithProxies(source.url, { expect: "text", headers: { "X-Cache-TTL-MS": "900000" } });
 
-    // Check if we received HTML instead of XML (common proxy error)
-    if (xmlText && /^\s*<!DOCTYPE html/i.test(xmlText)) {
-      throw new Error(`RSS parse error for ${source.id}: Received HTML instead of XML (likely proxy error)`);
+    // Check if we received HTML instead of XML (common proxy error or invalid response)
+    if (xmlText && (/^\s*<!DOCTYPE html/i.test(xmlText) || /^\s*<html/i.test(xmlText))) {
+      throw new Error(`RSS parse error for ${source.id}: Received HTML instead of XML (feed may be unavailable)`);
+    }
+
+    // Check for empty or invalid response
+    if (!xmlText || xmlText.trim().length === 0) {
+      throw new Error(`RSS parse error for ${source.id}: Empty response from server`);
     }
 
     // Try to parse XML - handle malformed XML gracefully
@@ -1047,8 +1056,10 @@ function selectItem(id) {
         // For malformed XML, try to clean it and parse again
         console.warn(`RSS parse error for ${source.id}, attempting to clean XML...`);
         const cleanedXml = xmlText
+          .trim()
+          .replace(/^[^<]*/, '') // Remove any non-XML content before first tag
           .replace(/<!\[CDATA\[.*?\]\]>/gs, '') // Remove CDATA sections that might be malformed
-          .replace(/&(?!amp;|lt;|gt;|quot;|apos;)/g, '&amp;'); // Escape unescaped ampersands
+          .replace(/&(?!amp;|lt;|gt;|quot;|apos;|#)/g, '&amp;'); // Escape unescaped ampersands
 
         doc = new DOMParser().parseFromString(cleanedXml, "text/xml");
         const parseError2 = doc.querySelector("parsererror");
@@ -1404,37 +1415,19 @@ function selectItem(id) {
       // Extract camera ID from various possible fields
       const cameraId = p.id || p.camId || p.camera_id || p.deviceId || p.device_id || "";
 
-      // Build proper camera stream URL using the VDOT media server template
-      // Template: https://media-sfs*.vdotcameras.com:443/rtplive/<CAMERA_ID>/playlist.m3u8
-      let media = null;
-
-      // Check for existing stream URL first
-      let streamUrl = (p.video_url || p.stream_url || p.hls_url || p.m3u8_url || p.streamUrl || "").toString();
-
-      // If no stream URL but we have a camera ID, build the VDOT media server URL
-      if (!streamUrl && cameraId) {
-        // Try different media server instances (sfs1, sfs2, sfs3, etc.)
-        // Use sfs1 as default - the app will handle playback failures gracefully
-        streamUrl = `https://media-sfs1.vdotcameras.com:443/rtplive/${cameraId}/playlist.m3u8`;
-      }
-
-      // Fallback to snapshot URL
+      // Get snapshot URL (prioritize snapshot images over video streams)
       const camUrl = (p.https_url || p.url || p.camera_url || p.snapshotUrl || "").toString();
 
-      if (streamUrl) {
-        // HLS streams (.m3u8) should be played with iframe/video player
-        if (/\.m3u8($|\?)/i.test(streamUrl)) {
-          media = { type: "iframe", src: streamUrl };
-        } else if (/\.(mp4|webm)($|\?)/i.test(streamUrl)) {
-          media = { type: "video", src: streamUrl };
-        } else {
-          media = { type: "iframe", src: streamUrl };
-        }
-      } else if (camUrl) {
+      let media = null;
+
+      // Always prefer snapshot images for cameras (video feeds often don't work)
+      if (camUrl) {
+        // Check if it's an image URL
         if (/\.(jpg|jpeg|png|webp)($|\?)/i.test(camUrl)) {
           media = { type: "image", src: camUrl };
         } else {
-          media = { type: "iframe", src: camUrl };
+          // Even if not explicitly an image extension, try as image first
+          media = { type: "image", src: camUrl };
         }
       }
 
@@ -1822,18 +1815,18 @@ function selectItem(id) {
         const detailsUrl = new URL(CONFIG.virginiaCrashData.crashDataDetailsUrl);
         const params = new URLSearchParams();
 
-        // Socrata API: filter by date (last 24 hours)
+        // Socrata API: filter by date (last 48 hours)
         const since = new Date(Date.now() - (CONFIG.virginiaCrashData.maxAgeHours * 60 * 60 * 1000));
-        const sinceStr = since.toISOString();
+        const sinceStr = since.toISOString().split('T')[0]; // Use just the date part (YYYY-MM-DD)
 
-        // Build Socrata query: $where clause for date filtering
-        // Common date fields: crash_date, date, report_date
+        // Build Socrata query: simplified query to avoid 404 errors
         params.set('$limit', String(CONFIG.virginiaCrashData.recordCap));
-        params.set('$order', 'crash_date DESC');
 
-        // Geographic filter for FXBG region
+        // Try with simpler date filter - use SoQL date functions
         const bbox = CONFIG.bbox;
-        params.set('$where', `crash_date >= '${sinceStr}' AND latitude >= ${bbox.minLat} AND latitude <= ${bbox.maxLat} AND longitude >= ${bbox.minLon} AND longitude <= ${bbox.maxLon}`);
+        // Simplified WHERE clause with proper SoQL syntax
+        params.set('$where', `crash_date >= '${sinceStr}'`);
+        params.set('$order', 'crash_date DESC');
 
         detailsUrl.search = params.toString();
 
