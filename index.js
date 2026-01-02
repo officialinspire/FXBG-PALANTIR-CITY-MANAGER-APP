@@ -366,11 +366,20 @@
     const local = tryLocalProxy();
     if (local) candidates.push(() => local);
 
-    // Allow direct fetch only for same-origin or known CORS-friendly APIs (ex: NWS).
+    // Allow direct fetch only for same-origin or known CORS-friendly APIs (ex: NWS, 511 Virginia).
     const isSameOrigin = (() => {
       try { return new URL(url, location.href).origin === location.origin; } catch { return false; }
     })();
-    const isCorsFriendly = (() => false)();
+    const isCorsFriendly = (() => {
+      try {
+        const u = new URL(url, location.href);
+        const host = u.hostname.toLowerCase();
+        // Known CORS-friendly APIs
+        return host.includes('weather.gov') || host.includes('511virginia.org');
+      } catch {
+        return false;
+      }
+    })();
     if (isSameOrigin || isCorsFriendly) candidates.push(() => url);
 
     // Public proxies disabled by default, but included here if any custom
@@ -385,7 +394,7 @@
 
       try {
         const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), timeoutMs);
+        const timeout = setTimeout(() => controller.abort("Request timeout"), timeoutMs);
 
         // Build Accept header based on expected response type. Many upstream
         // endpoints are sensitive to overly strict Accept values, so always
@@ -1062,20 +1071,38 @@ function selectItem(id) {
     try {
       const cams = await fetchWithProxies(CONFIG.va511.camerasGeojson, { expect: "json", headers: { "X-Cache-TTL-MS": "90000" } });
       ingestVa511Cameras(cams);
-    } catch (e) { console.warn("511 cameras fetch failed", e); }
+    } catch (e) {
+      // Only log CORS/network errors once per session to avoid console spam
+      if (!store._511CamerasErrorLogged) {
+        console.warn("511 cameras fetch failed (CORS or network issue). Running a local proxy server may help.", e);
+        store._511CamerasErrorLogged = true;
+      }
+    }
 
     // Incidents (STRICT time gate)
     let i95Incidents = 0;
     try {
       const inc = await fetchWithProxies(CONFIG.va511.incidentsGeojson, { expect: "json" });
       i95Incidents = ingestVa511Incidents(inc);
-    } catch (e) { console.warn("511 incidents fetch failed", e); }
+    } catch (e) {
+      // Only log CORS/network errors once per session to avoid console spam
+      if (!store._511IncidentsErrorLogged) {
+        console.warn("511 incidents fetch failed (CORS or network issue). Running a local proxy server may help.", e);
+        store._511IncidentsErrorLogged = true;
+      }
+    }
 
     if (CONFIG.va511.includeConstructionOnMap) {
       try {
         const con = await fetchWithProxies(CONFIG.va511.constructionGeojson, { expect: "json" });
         ingestVa511Construction(con);
-      } catch (e) { console.warn("511 construction fetch failed", e); }
+      } catch (e) {
+        // Only log CORS/network errors once per session to avoid console spam
+        if (!store._511ConstructionErrorLogged) {
+          console.warn("511 construction fetch failed (CORS or network issue). Running a local proxy server may help.", e);
+          store._511ConstructionErrorLogged = true;
+        }
+      }
     }
 
     setI95Indicator(i95Incidents);
