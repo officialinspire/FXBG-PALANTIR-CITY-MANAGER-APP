@@ -874,7 +874,8 @@ function selectItem(id) {
   // -----------------------------
   async function fetchRSS(source) {
     // Fetch RSS via proxy, expecting plain text
-    const xmlText = await fetchWithProxies(source.url, { expect: "text", headers: { "X-Cache-TTL-MS": "120000" } });
+    // Cache TTL set to 6 minutes (360000ms) to exceed polling interval and prevent rate limiting
+    const xmlText = await fetchWithProxies(source.url, { expect: "text", headers: { "X-Cache-TTL-MS": "360000" } });
     const doc = new DOMParser().parseFromString(xmlText, "text/xml");
     if (doc.querySelector("parsererror")) throw new Error(`RSS parse error for ${source.id}`);
 

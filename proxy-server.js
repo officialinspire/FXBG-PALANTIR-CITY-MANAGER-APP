@@ -66,7 +66,9 @@ function parseTtl(reqUrl, reqHeaders) {
     if (h.includes("api.weather.gov")) return 60 * 1000;
     if (h.includes("511virginia.org")) return 45 * 1000;
     if (h.includes("arcgis.com") || h.includes("virginiaroads.org")) return 90 * 1000;
-    if (p.endsWith(".rss") || p.includes("rss")) return 120 * 1000;
+    // Increased RSS cache TTL to 6 minutes (360s) to exceed the 5-minute polling interval
+    // and prevent upstream 429 rate limit errors
+    if (p.endsWith(".rss") || p.includes("rss")) return 360 * 1000;
   } catch {}
   return 60 * 1000;
 }
