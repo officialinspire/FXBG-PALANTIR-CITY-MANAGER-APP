@@ -1,4 +1,4 @@
-# CITY MANAGER — FXBG-PALANTIR (v12)
+# CITY MANAGER — FXBG-PALANTIR (v14)
 
 Real-time situational awareness dashboard for Fredericksburg, VA metro area.
 
@@ -18,25 +18,35 @@ http://localhost:8000
 
 The proxy server handles all external API requests (RSS feeds, 511 Virginia traffic, NWS weather, ArcGIS crash data) to bypass CORS restrictions.
 
-## 🔧 Recent Fixes (v12)
+## 🔧 Recent Fixes (v14)
 
-### Fixed Issues
+### Latest Fixes (v14)
+- ✅ **Improved RSS feed reliability** - Enhanced error handling and better User-Agent headers
+- ✅ **Fixed 511 Virginia incidents endpoint** - Updated headers to avoid HTML responses
+- ✅ **Better proxy server logging** - Detailed logging for empty responses and errors
+- ✅ **Enhanced User-Agent handling** - Realistic browser headers to avoid blocking
+- ✅ **Smarter Referer headers** - Automatic Referer setting for specific endpoints
+- ✅ **Increased timeouts** - Extended from 12s to 15s for slow endpoints
+- ✅ **Better error messages** - Clear guidance when proxy server isn't running
+
+### Previous Fixes (v12)
 - ✅ **Markers/Waypoints now load correctly** - Fixed data ingestion and display
 - ✅ **511 API errors resolved** - Improved error handling with better logging
 - ✅ **Footer buttons show data** - RSS feeds and API info now display properly
 - ✅ **Better error messages** - Console warnings are now more helpful
 - ✅ **Fallback sample data** - Demo markers appear when APIs are unavailable (for testing)
 
-### What Was Wrong
-1. **Proxy server wasn't running** - External API calls failed due to CORS
-2. **Poor error handling** - Errors weren't caught properly, blocking marker display
-3. **No fallback data** - When APIs failed, nothing was shown
+### What Was Fixed in v14
+1. **RSS feeds returning empty responses** - Improved headers and error detection
+2. **511 Virginia returning HTML instead of JSON** - Better User-Agent and Referer headers
+3. **Unclear error messages** - Added guidance to run proxy server
+4. **Timeouts too short** - Increased default timeout from 12s to 15s
 
-### What's Fixed
-1. **Enhanced `fetchWithProxies` function** - Better error detection and reporting
-2. **Sample/mock data** - Demonstration markers load when APIs are unreachable
-3. **Improved error logging** - Clearer messages with actionable guidance
-4. **Proxy detection** - Console warns if proxy server isn't detected
+### How It's Fixed
+1. **Enhanced `fetchWithProxies` function** - Realistic browser User-Agent, better error guidance
+2. **Improved proxy server headers** - Proper Referer headers for different endpoints
+3. **Better logging** - Detailed warnings for empty responses and HTML errors
+4. **Smarter error handling** - Detects proxy issues and provides actionable guidance
 
 ## 📡 Data Sources
 
@@ -118,6 +128,6 @@ If markers still don't load after following this guide:
 
 ---
 
-**Version**: 12
+**Version**: 14
 **Last Updated**: 2026-01-02
 **Author**: FXBG-PALANTIR Team
