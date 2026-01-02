@@ -61,8 +61,15 @@
     },
 
     // RSS sources (each has maxAgeHours to enforce "current only")
+    // NOTE: Many .gov RSS feeds (fredericksburgva.gov, spotsylvania.va.us) are currently
+    // returning empty responses (0 bytes) or blocking automated requests with 403 Forbidden
+    // (x-deny-reason: host_not_allowed). This appears to be an anti-scraping measure.
+    // The proxy server will cache the last successful response and use stale data when
+    // fresh fetches fail. Check console for WARNING messages about empty/blocked feeds.
     rss: [
       // ---------------- FXBG ----------------
+      // NOTE: fredericksburgva.gov RSS feeds are currently blocking automated requests
+      // returning 403 Forbidden with "x-deny-reason: host_not_allowed"
       {
         id: "fxbg-emergency-alerts",
         name: "Fredericksburg — Emergency Alerts (Alert Center)",
@@ -125,6 +132,8 @@
       },
 
       // ------------- SPOTSY -------------
+      // NOTE: spotsylvania.va.us RSS feeds are currently blocking automated requests
+      // returning 403 Forbidden with "x-deny-reason: host_not_allowed"
       {
         id: "spotsy-emergency-alerts",
         name: "Spotsylvania — Emergency Alerts (Alert Center)",
@@ -277,10 +286,16 @@
 
     // Virginia Crash Data APIs (multiple sources for comprehensive coverage)
     virginiaCrashData: {
-      enabled: true,
+      // DISABLED: The data.virginia.gov Socrata endpoint is returning 404 errors
+      // The dataset ID e9fd3f45-7f33-424b-b472-b531043fa02a appears to have been removed or changed
+      // Alternative endpoints to explore:
+      // - https://www.virginiaroads.org/datasets/crashdata-details-2/api
+      // - https://www.virginiaroads.org/datasets/crashdata-basic-1/api
+      // - ArcGIS FeatureServer endpoints via virginiaroads.org
+      enabled: false,
       // CrashData Basic API from Virginia Roads Open Data Portal
       crashDataBasicUrl: "https://www.virginiaroads.org/datasets/crashdata-basic-1/api",
-      // CrashData Details from data.virginia.gov
+      // CrashData Details from data.virginia.gov (CURRENTLY BROKEN - Returns 404)
       crashDataDetailsUrl: "https://data.virginia.gov/resource/e9fd3f45-7f33-424b-b472-b531043fa02a.json",
       // Virginia Roads API definition endpoint
       apiDefinitionUrl: "https://www.virginiaroads.org/api/search/definition",
@@ -291,12 +306,17 @@
     },
 
     // 511Virginia GeoJSON endpoints
+    // NOTE: Both 511virginia.org and iteriscdn.com endpoints are currently returning HTML
+    // error pages instead of GeoJSON data. The proxy server will attempt to use stale
+    // cached data when available. Monitor console for "WARNING: returned HTML when
+    // structured data expected" messages.
     va511: {
       enabled: true,
       camerasGeojson: "https://511.vdot.virginia.gov/services/map/layers/map/cams",
-      // Updated incidents endpoint - the .org domain now returns HTML, use the CDN directly
+      // Primary incidents endpoint - may return HTML error pages during outages
       incidentsGeojson: "https://www.511virginia.org/data/geojson/icons.incident.geojson",
-      // Fallback to Iteris CDN if main endpoint fails
+      // Fallback to Iteris CDN if main endpoint fails (JSONP format - auto-stripped)
+      // Note: This fallback is also currently returning HTML errors
       incidentsGeojsonFallback: "http://files5.iteriscdn.com/WebApps/VA/SafeTravel/data/local/icons/metadata/icons.incident.geojsonp",
       constructionGeojson: "https://www.511virginia.org/data/geojson/icons.construction.geojson",
       includeConstructionOnMap: false

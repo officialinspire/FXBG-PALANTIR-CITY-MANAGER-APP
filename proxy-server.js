@@ -144,7 +144,9 @@ async function proxyFetch(targetUrl, reqHeaders) {
         headers: upstreamHeaders,
       });
       } catch (e) {
+        console.error(`[proxy] Fetch error for ${targetUrl}:`, e.message || String(e));
         if (staleCandidate) {
+          console.log(`[proxy] Using stale cache for ${targetUrl} (fetch error: ${e.message || 'unknown'})`);
           return {
             ...staleCandidate,
             headers: { ...staleCandidate.headers, "X-Proxy-Stale": "1", "X-Proxy-Error": "fetch_failed" },
