@@ -709,6 +709,159 @@
     return null;
   }
 
+  // -----------------------------
+  // Geocoding Service (extract locations from text and geocode)
+  // -----------------------------
+  const geocodeCache = new Map(); // Cache geocoding results: "location_string" -> { lat, lon, timestamp }
+  const GEOCODE_CACHE_TTL = 7 * 24 * 60 * 60 * 1000; // Cache for 7 days
+  const GEOCODE_RATE_LIMIT_MS = 1000; // 1 request per second for Nominatim
+  let lastGeocodeTime = 0;
+
+  /**
+   * Extract potential location references from text
+   * Looks for common patterns like:
+   * - Street names (e.g., "Route 1", "I-95", "Main Street", "Jefferson Davis Highway")
+   * - Intersections (e.g., "Route 1 and Route 3", "Main St at Lafayette Blvd")
+   * - Addresses (e.g., "123 Main Street")
+   * - Area names (e.g., "Downtown Fredericksburg", "Massaponax")
+   */
+  function extractLocationFromText(text) {
+    if (!text) return null;
+
+    // Common road/street patterns in the region
+    const patterns = [
+      // Specific intersections (more specific = higher priority)
+      /(?:at|near|on|@)\s+([A-Z][A-Za-z\s\.]+?(?:Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd|Highway|Hwy|Drive|Dr|Lane|Ln|Parkway|Pkwy|Route|Rt))\s+(?:and|at|&|near)\s+([A-Z][A-Za-z\s\.]+?(?:Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd|Highway|Hwy|Drive|Dr|Lane|Ln|Parkway|Pkwy|Route|Rt))/i,
+
+      // Interstate highways
+      /(?:on|at|near)\s+(I-?95|I-?295|Interstate\s+95|Interstate\s+295)/i,
+
+      // US Routes
+      /(?:on|at|near)\s+(U\.?S\.?\s+Route\s+\d+|US\s+\d+|Route\s+\d+|Rt\.?\s+\d+)/i,
+
+      // State routes
+      /(?:on|at|near)\s+(State\s+Route\s+\d+|SR\s+\d+|VA\s+\d+|Virginia\s+\d+)/i,
+
+      // Street addresses
+      /\b(\d{1,5}\s+[A-Z][A-Za-z\s\.]+?(?:Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd|Highway|Hwy|Drive|Dr|Lane|Ln|Parkway|Pkwy))/i,
+
+      // Street names without numbers
+      /(?:on|at|near|along)\s+([A-Z][A-Za-z\s\.]+?(?:Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd|Highway|Hwy|Drive|Dr|Lane|Ln|Parkway|Pkwy))/i,
+
+      // Known area names in the region
+      /\b(Downtown\s+Fredericksburg|Historic\s+District|Massaponax|Courthouse\s+Village|Four\s+Mile\s+Fork|Bragg\s+Hill|Celebrate\s+Virginia)/i,
+    ];
+
+    for (const pattern of patterns) {
+      const match = text.match(pattern);
+      if (match) {
+        // Return the captured group(s), joining multiple groups if it's an intersection
+        const location = match.slice(1).filter(Boolean).join(' and ');
+        return location.trim();
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * Geocode a location string using Nominatim (OpenStreetMap)
+   * Returns { lat, lon } or null if geocoding fails
+   */
+  async function geocodeLocation(locationString, jurisdiction) {
+    if (!locationString) return null;
+
+    // Check cache first
+    const cacheKey = `${locationString}|${jurisdiction}`.toLowerCase();
+    const cached = geocodeCache.get(cacheKey);
+    if (cached && (Date.now() - cached.timestamp) < GEOCODE_CACHE_TTL) {
+      if (CONFIG.debug.rss) {
+        console.log(`[Geocode] Cache hit for "${locationString}" in ${jurisdiction}: ${cached.lat}, ${cached.lon}`);
+      }
+      return { lat: cached.lat, lon: cached.lon };
+    }
+
+    // Rate limiting for Nominatim
+    const now = Date.now();
+    const timeSinceLastRequest = now - lastGeocodeTime;
+    if (timeSinceLastRequest < GEOCODE_RATE_LIMIT_MS) {
+      await sleep(GEOCODE_RATE_LIMIT_MS - timeSinceLastRequest);
+    }
+    lastGeocodeTime = Date.now();
+
+    try {
+      // Build query with jurisdiction context for better accuracy
+      const jurisdictionMap = {
+        'Fredericksburg': 'Fredericksburg, Virginia',
+        'Stafford': 'Stafford County, Virginia',
+        'Spotsylvania': 'Spotsylvania County, Virginia',
+        'Regional': 'Fredericksburg, Virginia'
+      };
+      const areaContext = jurisdictionMap[jurisdiction] || 'Fredericksburg, Virginia';
+      const query = `${locationString}, ${areaContext}`;
+
+      if (CONFIG.debug.rss) {
+        console.log(`[Geocode] Querying Nominatim for: "${query}"`);
+      }
+
+      // Use Nominatim API via our proxy
+      const nominatimUrl = `https://nominatim.openstreetmap.org/search?` + new URLSearchParams({
+        q: query,
+        format: 'json',
+        limit: '1',
+        countrycodes: 'us',
+        // Bounded search within Virginia region
+        viewbox: '-77.85,38.10,-77.20,38.52', // bbox around FXBG metro
+        bounded: '0' // Don't require results within viewbox, but prefer them
+      }).toString();
+
+      const response = await fetchWithProxies(nominatimUrl, {
+        expect: 'json',
+        headers: {
+          'Accept': 'application/json',
+          'User-Agent': 'FXBG-Palantir-City-Manager/1.0'
+        }
+      });
+
+      if (response && response.length > 0) {
+        const result = response[0];
+        const lat = parseFloat(result.lat);
+        const lon = parseFloat(result.lon);
+
+        if (isFinite(lat) && isFinite(lon)) {
+          // Validate that the result is within our region bbox
+          if (lat >= CONFIG.bbox.minLat && lat <= CONFIG.bbox.maxLat &&
+              lon >= CONFIG.bbox.minLon && lon <= CONFIG.bbox.maxLon) {
+
+            // Cache the result
+            geocodeCache.set(cacheKey, { lat, lon, timestamp: Date.now() });
+
+            if (CONFIG.debug.rss) {
+              console.log(`[Geocode] Success for "${locationString}": ${lat}, ${lon} (${result.display_name})`);
+            }
+
+            return { lat, lon };
+          } else {
+            if (CONFIG.debug.rss) {
+              console.log(`[Geocode] Result for "${locationString}" outside region bbox: ${lat}, ${lon}`);
+            }
+          }
+        }
+      }
+
+      if (CONFIG.debug.rss) {
+        console.log(`[Geocode] No valid results for "${locationString}"`);
+      }
+      return null;
+
+    } catch (error) {
+      if (CONFIG.debug.rss) {
+        console.warn(`[Geocode] Error geocoding "${locationString}":`, error.message);
+      }
+      return null;
+    }
+  }
+
 
   // -----------------------------
   // file:// banner
@@ -1415,6 +1568,33 @@ function selectItem(id) {
     if (CONFIG.debug.rss) {
       console.log(`[RSS Parse] ${source.id}: Parsed ${out.length} valid items (with dates) from feed`);
     }
+
+    // Geocode items that don't have embedded coordinates
+    // Process geocoding for items without location data
+    for (const item of out) {
+      // Skip if item already has location from GeoRSS
+      if (item.loc) continue;
+
+      // Try to extract location from title and summary
+      const textToSearch = `${item.title || ''} ${item.summary || ''}`;
+      const extractedLocation = extractLocationFromText(textToSearch);
+
+      if (extractedLocation) {
+        if (CONFIG.debug.rss) {
+          console.log(`[Geocode] Extracted location from "${item.title?.slice(0, 60)}...": "${extractedLocation}"`);
+        }
+
+        // Geocode the extracted location
+        const geocoded = await geocodeLocation(extractedLocation, source.jurisdiction);
+        if (geocoded) {
+          item.loc = geocoded;
+          if (CONFIG.debug.rss) {
+            console.log(`[Geocode] Geocoded "${extractedLocation}" -> ${geocoded.lat}, ${geocoded.lon}`);
+          }
+        }
+      }
+    }
+
     return out;
   }
 
