@@ -1421,14 +1421,11 @@ function selectItem(id) {
       let media = null;
 
       // Always prefer snapshot images for cameras (video feeds often don't work)
+      // IMPORTANT: Wrap camera URLs with proxy to avoid CORS issues
       if (camUrl) {
-        // Check if it's an image URL
-        if (/\.(jpg|jpeg|png|webp)($|\?)/i.test(camUrl)) {
-          media = { type: "image", src: camUrl };
-        } else {
-          // Even if not explicitly an image extension, try as image first
-          media = { type: "image", src: camUrl };
-        }
+        // Proxy the image URL to avoid CORS errors
+        const proxiedUrl = `${location.origin}/proxy?url=${encodeURIComponent(camUrl)}`;
+        media = { type: "image", src: proxiedUrl, originalSrc: camUrl };
       }
 
       // Keep dedupe stable
@@ -1812,25 +1809,22 @@ function selectItem(id) {
 
       // Try CrashData Details from data.virginia.gov (Socrata Open Data API)
       try {
-        const detailsUrl = new URL(CONFIG.virginiaCrashData.crashDataDetailsUrl);
-        const params = new URLSearchParams();
-
-        // Socrata API: filter by date (last 48 hours)
+        // Build Socrata query with proper date filtering
+        // Use a more generous time window to ensure we get data
         const since = new Date(Date.now() - (CONFIG.virginiaCrashData.maxAgeHours * 60 * 60 * 1000));
-        const sinceStr = since.toISOString().split('T')[0]; // Use just the date part (YYYY-MM-DD)
+        const sinceStr = since.toISOString().split('T')[0]; // YYYY-MM-DD format
 
-        // Build Socrata query: simplified query to avoid 404 errors
-        params.set('$limit', String(CONFIG.virginiaCrashData.recordCap));
+        // Build URL with Socrata SoQL parameters
+        // Note: Socrata uses $ prefix for query operators
+        const queryParams = [
+          `$limit=${CONFIG.virginiaCrashData.recordCap}`,
+          `$where=crash_date >= '${sinceStr}'`,
+          `$order=crash_date DESC`
+        ];
 
-        // Try with simpler date filter - use SoQL date functions
-        const bbox = CONFIG.bbox;
-        // Simplified WHERE clause with proper SoQL syntax
-        params.set('$where', `crash_date >= '${sinceStr}'`);
-        params.set('$order', 'crash_date DESC');
+        const detailsUrl = `${CONFIG.virginiaCrashData.crashDataDetailsUrl}?${queryParams.join('&')}`;
 
-        detailsUrl.search = params.toString();
-
-        const data = await fetchWithProxies(detailsUrl.toString(), {
+        const data = await fetchWithProxies(detailsUrl, {
           expect: "json",
           headers: CONFIG.virginiaCrashData.apiKey ? { 'X-App-Token': CONFIG.virginiaCrashData.apiKey } : {},
           timeoutMs: 15000

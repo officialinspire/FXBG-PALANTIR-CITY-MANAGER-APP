@@ -64,11 +64,14 @@ function parseTtl(reqUrl, reqHeaders) {
     const h = u.hostname;
     const p = u.pathname.toLowerCase();
     if (h.includes("api.weather.gov")) return 60 * 1000;
-    if (h.includes("511virginia.org")) return 45 * 1000;
+    if (h.includes("511virginia.org") || h.includes("511.vdot.virginia.gov")) return 90 * 1000;
     if (h.includes("arcgis.com") || h.includes("virginiaroads.org")) return 90 * 1000;
+    if (h.includes("data.virginia.gov")) return 120 * 1000; // Socrata APIs - cache longer
     // Increased RSS cache TTL to 6 minutes (360s) to exceed the 5-minute polling interval
     // and prevent upstream 429 rate limit errors
-    if (p.endsWith(".rss") || p.includes("rss")) return 360 * 1000;
+    if (p.endsWith(".rss") || p.includes("rss") || p.includes("feed")) return 360 * 1000;
+    // Camera images should cache for 2 minutes
+    if (p.match(/\.(jpg|jpeg|png|webp|gif)($|\?)/i)) return 120 * 1000;
   } catch {}
   return 60 * 1000;
 }
@@ -135,16 +138,74 @@ async function proxyFetch(targetUrl, reqHeaders) {
         throw e;
       }
 
-      if (staleCandidate && (upstream.status === 429 || upstream.status >= 500)) {
+      // For 429 rate limit or server errors, return stale cache if available
+      if (staleCandidate && (upstream.status === 429 || upstream.status >= 500 || upstream.status === 404)) {
+        console.log(`[proxy] Using stale cache for ${targetUrl} (upstream ${upstream.status})`);
         return {
           ...staleCandidate,
-          headers: { ...staleCandidate.headers, "X-Proxy-Stale": "1", "X-Proxy-Upstream-Status": String(upstream.status) },
+          headers: {
+            ...staleCandidate.headers,
+            "X-Proxy-Stale": "1",
+            "X-Proxy-Upstream-Status": String(upstream.status),
+            "X-Proxy-Cache-Used": "stale"
+          },
           status: 200,
+        };
+      }
+
+      // If we get 404 and have no stale cache, return the error
+      if (upstream.status === 404) {
+        const errorBody = Buffer.from(JSON.stringify({
+          error: "Not Found",
+          url: targetUrl,
+          status: 404,
+          message: "The requested resource was not found. Check the URL and try again."
+        }));
+        return {
+          ts: nowMs(),
+          ttlMs: 5000, // Cache 404s for 5 seconds to avoid hammering
+          status: 404,
+          headers: {
+            "Content-Type": "application/json",
+            "X-Proxy-Error": "upstream_404"
+          },
+          body: errorBody
         };
       }
 
       const buf = Buffer.from(await upstream.arrayBuffer());
       const contentType = upstream.headers.get("content-type") || "application/octet-stream";
+
+      // Validate response content for JSON/XML endpoints
+      // Detect HTML responses when JSON/XML is expected to catch proxy errors
+      const isTextContent = contentType.includes("text/") || contentType.includes("json") || contentType.includes("xml");
+      if (isTextContent && buf.length > 0 && buf.length < 500000) { // Only check reasonable-sized text responses
+        const preview = buf.toString('utf8', 0, Math.min(500, buf.length));
+        const looksLikeHtml = /^\s*<!DOCTYPE html/i.test(preview) || /^\s*<html/i.test(preview);
+
+        // Check if caller expected JSON/XML based on Accept header or content-type
+        const expectsStructuredData = contentType.includes("json") || contentType.includes("xml") ||
+                                       accept.includes("json") || accept.includes("xml") ||
+                                       accept.includes("geojson");
+
+        if (looksLikeHtml && expectsStructuredData) {
+          console.warn(`[proxy] WARNING: ${targetUrl} returned HTML when structured data expected (Accept: ${accept})`);
+          // Return stale cache if available for HTML error pages
+          if (staleCandidate) {
+            console.log(`[proxy] Using stale cache instead of HTML error page`);
+            return {
+              ...staleCandidate,
+              headers: {
+                ...staleCandidate.headers,
+                "X-Proxy-Stale": "1",
+                "X-Proxy-Error": "html_instead_of_data",
+                "X-Proxy-Cache-Used": "stale"
+              },
+              status: 200,
+            };
+          }
+        }
+      }
 
       const entry = {
         ts: nowMs(),
@@ -155,6 +216,7 @@ async function proxyFetch(targetUrl, reqHeaders) {
           "Cache-Control": "no-store",
           "X-Proxy-Cache-TTL": String(ttlMs),
           "X-Proxy-Upstream-Status": String(upstream.status),
+          "X-Proxy-Cache-Fresh": "1",
         },
         body: buf,
       };
@@ -200,14 +262,24 @@ const server = http.createServer(async (req, res) => {
       if (!target) return send(res, 400, "Missing url param");
       if (!/^https?:\/\//i.test(target)) return send(res, 400, "Only http/https URLs are allowed");
 
-      const entry = await proxyFetch(target, req.headers);
-      res.writeHead(entry.status, {
-        "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
-        "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Cache-TTL-MS",
-        ...entry.headers,
-      });
-      return res.end(entry.body);
+      try {
+        const entry = await proxyFetch(target, req.headers);
+        res.writeHead(entry.status, {
+          "Access-Control-Allow-Origin": "*",
+          "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
+          "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Cache-TTL-MS",
+          ...entry.headers,
+        });
+        return res.end(entry.body);
+      } catch (proxyErr) {
+        console.error(`[proxy] Failed to fetch ${target}:`, proxyErr.message);
+        const errorBody = JSON.stringify({
+          error: "Proxy fetch failed",
+          url: target,
+          message: proxyErr.message || String(proxyErr)
+        });
+        return send(res, 502, errorBody, { "Content-Type": "application/json" });
+      }
     }
 
     return serveStatic(req, res);
