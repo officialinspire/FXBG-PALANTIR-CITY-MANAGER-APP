@@ -49,7 +49,9 @@
       arcgisCrash: 5 * 60 * 1000,
       virginiaCrashData: 4 * 60 * 1000,
       va511: 2 * 60 * 1000,
-      vaRoads: 3 * 60 * 1000
+      vaRoads: 3 * 60 * 1000,
+      openUV: 30 * 60 * 1000,      // UV data updates every 30 minutes
+      cdc: 24 * 60 * 60 * 1000     // CDC data updates daily
     },
 
     // CORS proxy rotation (browser-only)
@@ -126,6 +128,150 @@
         jurisdiction: "Fredericksburg",
         url: "https://www.fredericksburgva.gov/RSSFeed.aspx?CID=Special-Events-15",
         emoji: "🎉",
+        tone: "good",
+        defaultLoc: { lat: 38.3032, lon: -77.4605 },
+        maxAgeHours: 168,
+      },
+      {
+        id: "fxbg-police-news",
+        name: "Fredericksburg — Police News & Updates",
+        type: "rss",
+        category: "police_crime",
+        jurisdiction: "Fredericksburg",
+        url: "https://www.fredericksburgva.gov/RSSFeed.aspx?ModID=63&CID=Police-9",
+        emoji: "🚓",
+        tone: "warn",
+        defaultLoc: { lat: 38.3032, lon: -77.4605 },  // City Hall / Police HQ area
+        maxAgeHours: 168,
+      },
+      {
+        id: "fxbg-courts-info",
+        name: "Fredericksburg — Courts Information",
+        type: "rss",
+        category: "legal_courts",
+        jurisdiction: "Fredericksburg",
+        url: "https://www.fredericksburgva.gov/RSSFeed.aspx?ModID=63&CID=Courts-Information-7",
+        emoji: "⚖️",
+        tone: "good",
+        defaultLoc: { lat: 38.3015, lon: -77.4596 },  // Courthouse area
+        maxAgeHours: 168,
+      },
+      {
+        id: "fxbg-city-council",
+        name: "Fredericksburg — City Council Meetings & Agendas",
+        type: "rss",
+        category: "government",
+        jurisdiction: "Fredericksburg",
+        url: "https://www.fredericksburgva.gov/RSSFeed.aspx?ModID=65&CID=City-Council-1",
+        emoji: "🏛️",
+        tone: "good",
+        defaultLoc: { lat: 38.3032, lon: -77.4605 },  // City Hall
+        maxAgeHours: 168,
+      },
+      {
+        id: "fxbg-eda",
+        name: "Fredericksburg — Economic Development Authority",
+        type: "rss",
+        category: "government",
+        jurisdiction: "Fredericksburg",
+        url: "https://www.fredericksburgva.gov/RSSFeed.aspx?ModID=65&CID=Economic-Development-Authority-17",
+        emoji: "💼",
+        tone: "good",
+        defaultLoc: { lat: 38.3032, lon: -77.4605 },  // City Hall / EDA offices
+        maxAgeHours: 168,
+      },
+      {
+        id: "fxbg-riverfront",
+        name: "Fredericksburg — Riverfront Task Force",
+        type: "rss",
+        category: "government",
+        jurisdiction: "Fredericksburg",
+        url: "https://www.fredericksburgva.gov/RSSFeed.aspx?ModID=65&CID=Riverfront-Task-Force-12",
+        emoji: "🌊",
+        tone: "good",
+        defaultLoc: { lat: 38.2985, lon: -77.4689 },  // Riverfront area
+        maxAgeHours: 168,
+      },
+      {
+        id: "fxbg-towing-board",
+        name: "Fredericksburg — Towing and Recovery Board",
+        type: "rss",
+        category: "government",
+        jurisdiction: "Fredericksburg",
+        url: "https://www.fredericksburgva.gov/RSSFeed.aspx?ModID=65&CID=Towing-and-Recovery-Board-13",
+        emoji: "🚛",
+        tone: "good",
+        defaultLoc: { lat: 38.3032, lon: -77.4605 },
+        maxAgeHours: 168,
+      },
+      {
+        id: "fxbg-emergency-alerts-mod63",
+        name: "Fredericksburg — Emergency Alerts (Public Safety)",
+        type: "rss",
+        category: "alerts",
+        jurisdiction: "Fredericksburg",
+        url: "https://www.fredericksburgva.gov/RSSFeed.aspx?ModID=63&CID=Emergency-Alerts-5",
+        emoji: "🚨",
+        tone: "bad",
+        defaultLoc: { lat: 38.3032, lon: -77.4605 },
+        maxAgeHours: 168,
+      },
+      {
+        id: "fxbg-info-alerts",
+        name: "Fredericksburg — Information Alerts",
+        type: "rss",
+        category: "alerts",
+        jurisdiction: "Fredericksburg",
+        url: "https://www.fredericksburgva.gov/RSSFeed.aspx?ModID=63&CID=Information-Alerts-6",
+        emoji: "ℹ️",
+        tone: "warn",
+        defaultLoc: { lat: 38.3032, lon: -77.4605 },
+        maxAgeHours: 168,
+      },
+      {
+        id: "fxbg-fire-dept",
+        name: "Fredericksburg — Fire Department News",
+        type: "rss",
+        category: "fire_ems",
+        jurisdiction: "Fredericksburg",
+        url: "https://www.fredericksburgva.gov/RSSFeed.aspx?ModID=58&CID=Fire-Department-24",
+        emoji: "🔥",
+        tone: "warn",
+        defaultLoc: { lat: 38.3032, lon: -77.4605 },  // Fire Station area
+        maxAgeHours: 168,
+      },
+      {
+        id: "fxbg-fred-transit",
+        name: "Fredericksburg — FRED Regional Transit Updates",
+        type: "rss",
+        category: "traffic_transit",
+        jurisdiction: "Fredericksburg",
+        url: "https://www.fredericksburgva.gov/RSSFeed.aspx?ModID=58&CID=FRED-Regional-Transit-29",
+        emoji: "🚌",
+        tone: "good",
+        defaultLoc: { lat: 38.3032, lon: -77.4605 },  // Transit hub area
+        maxAgeHours: 168,
+      },
+      {
+        id: "fxbg-safety",
+        name: "Fredericksburg — Public Safety Information",
+        type: "rss",
+        category: "alerts",
+        jurisdiction: "Fredericksburg",
+        url: "https://www.fredericksburgva.gov/RSSFeed.aspx?ModID=58&CID=Safety-37",
+        emoji: "🦺",
+        tone: "warn",
+        defaultLoc: { lat: 38.3032, lon: -77.4605 },
+        maxAgeHours: 168,
+      },
+      {
+        id: "fxbg-transit-service",
+        name: "Fredericksburg — Transit Service Updates",
+        type: "rss",
+        category: "traffic_transit",
+        jurisdiction: "Fredericksburg",
+        url: "https://www.fredericksburgva.gov/RSSFeed.aspx?ModID=58&CID=Transit-52",
+        emoji: "🚍",
         tone: "good",
         defaultLoc: { lat: 38.3032, lon: -77.4605 },
         maxAgeHours: 168,
@@ -327,6 +473,23 @@
       enabled: true,
       searchUrl: "https://www.virginiaroads.org/api/search",
       eventsUrl: "https://www.virginiaroads.org/api/events"
+    },
+
+    // OpenUV API - UV Index data for Fredericksburg area
+    openUV: {
+      enabled: true,
+      apiKey: "openuv-42jtmrmjxewbj3-io",  // OpenUV API key
+      lat: 38.3032,
+      lon: -77.4605,
+      baseUrl: "https://api.openuv.io/api/v1/uv"
+    },
+
+    // CDC Data API - Health/disease surveillance data
+    cdc: {
+      enabled: true,
+      // CDC Wonder API - locality-specific health data
+      wonderApiUrl: "https://data.cdc.gov/api/v3/views/psx4-wq38/query.json",
+      maxAgeHours: 168  // Cache for 7 days
     }
   };
 
@@ -343,6 +506,10 @@
     weather_alerts:           { label: "Weather Alerts", emoji: "🌧️" },
     school_events:            { label: "School Events", emoji: "🗓️" },
     school_events_closures:   { label: "School Events / Closures", emoji: "🏫" },
+    government:               { label: "Government / Meetings", emoji: "🏛️" },
+    legal_courts:             { label: "Legal / Courts", emoji: "⚖️" },
+    health:                   { label: "Health / Safety", emoji: "🏥" },
+    uv_index:                 { label: "UV Index", emoji: "☀️" },
     // Legacy categories (for backwards compatibility with existing data sources)
     crime:                    { label: "Police / Crime", emoji: "🚨" },
     traffic:                  { label: "Traffic", emoji: "🚗" },
@@ -771,32 +938,67 @@
    * - Intersections (e.g., "Route 1 and Route 3", "Main St at Lafayette Blvd")
    * - Addresses (e.g., "123 Main Street")
    * - Area names (e.g., "Downtown Fredericksburg", "Massaponax")
+   * - Local landmarks and facilities
    */
   function extractLocationFromText(text) {
     if (!text) return null;
 
+    // FXBG-specific landmarks and facilities (highest priority for exact matches)
+    const landmarks = [
+      // Government buildings
+      /\b(Fredericksburg\s+City\s+Hall|City\s+Hall|Fredericksburg\s+Police\s+(?:Station|Department)|Police\s+(?:Station|HQ|Headquarters)|Circuit\s+Court(?:house)?|General\s+District\s+Court|Juvenile\s+(?:and\s+)?Domestic\s+Relations\s+Court)/i,
+      // Parks and rec
+      /\b(Riverfront\s+Park|Motts\s+Run\s+Reservoir|Old\s+Mill\s+Park|Memorial\s+Park|Alum\s+Spring\s+Park|City\s+Dock|Canal\s+Path)/i,
+      // Schools and institutions
+      /\b(University\s+of\s+Mary\s+Washington|UMW|Germanna\s+Community\s+College|Walker-Grant\s+(?:Middle\s+)?School|Hugh\s+Mercer\s+Elementary|James\s+Monroe\s+High\s+School)/i,
+      // Shopping and commercial
+      /\b(Central\s+Park|Celebrate\s+Virginia|Spotsylvania\s+Towne\s+Centre|Wegmans|Eagles\s+Village|Cosner\s+Corner)/i,
+      // Neighborhoods
+      /\b(Downtown\s+Fredericksburg|Historic\s+District|Fall\s+Hill|Massaponax|Courthouse\s+(?:Village|Area)|Four\s+Mile\s+Fork|Bragg\s+Hill|Chancellor|Shenandoah\s+Crossing|Ferry\s+Farm)/i,
+      // Medical facilities
+      /\b(Mary\s+Washington\s+Hospital|Spotsylvania\s+Regional\s+Medical\s+Center|MWH|SRMC)/i,
+      // Transit hubs
+      /\b(FRED\s+(?:Transit\s+)?(?:Center|Hub|Station)|VRE\s+Station|Fredericksburg\s+Train\s+Station)/i,
+    ];
+
+    // Check landmarks first (most specific)
+    for (const pattern of landmarks) {
+      const match = text.match(pattern);
+      if (match) return match[1].trim();
+    }
+
+    // Major highways and roads in FXBG area (specific names)
+    const majorRoads = [
+      /\b(Jefferson\s+Davis\s+(?:Highway|Hwy)|(?:US|Route)\s+1\s+(?:North|South|N|S)?|Plank\s+Road|(?:State\s+Route|VA|Route)\s+3|Lafayette\s+(?:Boulevard|Blvd)|William\s+Street|Princess\s+Anne\s+Street|Charles\s+Street|Sophia\s+Street|Sunken\s+Road|Blue\s+and\s+Gray\s+(?:Parkway|Pkwy)|Carl\s+D\.?\s+Silver\s+Parkway|Gordon\s+(?:Road|W\.?\s+Shelton\s+(?:Boulevard|Blvd))|Harrison\s+Road|Courthouse\s+Road|Mine\s+Road|Tidewater\s+Trail)/i,
+    ];
+
+    for (const pattern of majorRoads) {
+      const match = text.match(pattern);
+      if (match) return match[1].trim();
+    }
+
     // Common road/street patterns in the region
     const patterns = [
       // Specific intersections (more specific = higher priority)
-      /(?:at|near|on|@)\s+([A-Z][A-Za-z\s\.]+?(?:Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd|Highway|Hwy|Drive|Dr|Lane|Ln|Parkway|Pkwy|Route|Rt))\s+(?:and|at|&|near)\s+([A-Z][A-Za-z\s\.]+?(?:Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd|Highway|Hwy|Drive|Dr|Lane|Ln|Parkway|Pkwy|Route|Rt))/i,
+      /(?:at|near|on|@|intersection\s+of)\s+([A-Z][A-Za-z\s\.]+?(?:Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd|Highway|Hwy|Drive|Dr|Lane|Ln|Parkway|Pkwy|Route|Rt))\s+(?:and|at|&|near|intersection\s+(?:of|with))\s+([A-Z][A-Za-z\s\.]+?(?:Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd|Highway|Hwy|Drive|Dr|Lane|Ln|Parkway|Pkwy|Route|Rt))/i,
 
       // Interstate highways
-      /(?:on|at|near)\s+(I-?95|I-?295|Interstate\s+95|Interstate\s+295)/i,
+      /(?:on|at|near|along|I-?95|I-?295|Interstate\s+(?:95|295))\s*(?:(?:North|South|East|West|N|S|E|W)(?:bound)?)?/i,
 
-      // US Routes
-      /(?:on|at|near)\s+(U\.?S\.?\s+Route\s+\d+|US\s+\d+|Route\s+\d+|Rt\.?\s+\d+)/i,
+      // US Routes (with optional direction)
+      /(?:on|at|near|along)?\s*(U\.?S\.?\s+(?:Route\s+)?\d+|US\s+\d+|Route\s+\d+|Rt\.?\s+\d+)\s*(?:(?:North|South|East|West|N|S|E|W)(?:bound)?)?/i,
 
-      // State routes
-      /(?:on|at|near)\s+(State\s+Route\s+\d+|SR\s+\d+|VA\s+\d+|Virginia\s+\d+)/i,
+      // State routes (VA routes common in area)
+      /(?:on|at|near|along)?\s*((?:State\s+Route|VA|Virginia|Route)\s+\d+)\s*(?:(?:North|South|East|West|N|S|E|W)(?:bound)?)?/i,
 
-      // Street addresses
-      /\b(\d{1,5}\s+[A-Z][A-Za-z\s\.]+?(?:Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd|Highway|Hwy|Drive|Dr|Lane|Ln|Parkway|Pkwy))/i,
+      // Street addresses with house numbers
+      /\b(\d{1,5}\s+(?:North|South|East|West|N|S|E|W\.?)?\s*[A-Z][A-Za-z\s\.]+?(?:Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd|Highway|Hwy|Drive|Dr|Lane|Ln|Parkway|Pkwy|Circle|Cir|Court|Ct|Place|Pl|Way))/i,
 
-      // Street names without numbers
+      // Street names without numbers (lower priority)
       /(?:on|at|near|along)\s+([A-Z][A-Za-z\s\.]+?(?:Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd|Highway|Hwy|Drive|Dr|Lane|Ln|Parkway|Pkwy))/i,
 
-      // Known area names in the region
-      /\b(Downtown\s+Fredericksburg|Historic\s+District|Massaponax|Courthouse\s+Village|Four\s+Mile\s+Fork|Bragg\s+Hill|Celebrate\s+Virginia)/i,
+      // Mile markers on major highways
+      /(?:mile\s+marker|MM|milepost)\s+(\d+(?:\.\d+)?)\s+(?:on|at|near|along)?\s*(I-?95|I-?295|US\s+\d+|Route\s+\d+)?/i,
     ];
 
     for (const pattern of patterns) {
@@ -809,6 +1011,74 @@
     }
 
     return null;
+  }
+
+  /**
+   * Get intelligent default location based on source, category, and content
+   * Returns { lat, lon } with best-guess location for ungeocodeable items
+   */
+  function getDefaultLocationForItem(source, category, text) {
+    const jurisdiction = source.jurisdiction || "Regional";
+
+    // Category and keyword-based defaults
+    const categoryDefaults = {
+      'police_crime': { lat: 38.3032, lon: -77.4605 },     // Police HQ / City Hall
+      'legal_courts': { lat: 38.3015, lon: -77.4596 },     // Courthouse
+      'government': { lat: 38.3032, lon: -77.4605 },       // City Hall
+      'fire_ems': { lat: 38.3032, lon: -77.4605 },         // Fire Station area
+      'traffic_transit': { lat: 38.3032, lon: -77.4605 },  // Transit hub
+      'events': { lat: 38.2985, lon: -77.4689 },           // Riverfront / Downtown events area
+    };
+
+    // Check for specific keywords in text to refine location
+    if (text) {
+      const lowerText = text.toLowerCase();
+
+      // Courthouse/court-related
+      if (lowerText.match(/\b(court|judge|trial|hearing|lawsuit)\b/i)) {
+        return { lat: 38.3015, lon: -77.4596 };  // Courthouse
+      }
+
+      // Police/crime specific locations
+      if (lowerText.match(/\b(police\s+(?:station|hq|headquarters)|city\s+hall)\b/i)) {
+        return { lat: 38.3032, lon: -77.4605 };  // Police HQ
+      }
+
+      // Riverfront events
+      if (lowerText.match(/\b(riverfront|canal\s+path|city\s+dock|downtown)\b/i)) {
+        return { lat: 38.2985, lon: -77.4689 };  // Riverfront
+      }
+
+      // Hospital/medical
+      if (lowerText.match(/\b(hospital|medical|emergency\s+room|er\b|ems)\b/i)) {
+        return { lat: 38.3195, lon: -77.4844 };  // Mary Washington Hospital
+      }
+
+      // University events
+      if (lowerText.match(/\b(university|umw|mary\s+washington|college)\b/i)) {
+        return { lat: 38.2995, lon: -77.4785 };  // UMW campus
+      }
+
+      // Transit/bus
+      if (lowerText.match(/\b(fred\s+transit|bus|transit\s+center)\b/i)) {
+        return { lat: 38.3032, lon: -77.4605 };  // Transit hub
+      }
+    }
+
+    // Try category-based default
+    if (category && categoryDefaults[category]) {
+      return categoryDefaults[category];
+    }
+
+    // Fall back to jurisdiction default or source default
+    const jurisdictionDefaults = {
+      'Fredericksburg': { lat: 38.3032, lon: -77.4605 },
+      'Stafford': { lat: 38.4220, lon: -77.4083 },
+      'Spotsylvania': { lat: 38.1859, lon: -77.6526 },
+      'Regional': { lat: 38.2750, lon: -77.5000 }
+    };
+
+    return source.defaultLoc || jurisdictionDefaults[jurisdiction] || CONFIG.center;
   }
 
   /**
@@ -1015,6 +1285,45 @@
   // -----------------------------
   const activeCategories = new Set(Object.keys(CATEGORIES));
 
+  // Build dynamic legend (avoid legacy duplicates)
+  function buildLegend() {
+    const legendHost = $("legend");
+    if (!legendHost) return;
+
+    legendHost.innerHTML = "";
+
+    // Only show non-legacy categories in the legend
+    const legacyCategories = new Set(['crime', 'traffic', 'crash', 'closure', 'train', 'weather', 'camera']);
+
+    for (const [key, def] of Object.entries(CATEGORIES)) {
+      // Skip legacy categories to avoid duplicates
+      if (legacyCategories.has(key)) continue;
+
+      const item = document.createElement("div");
+      item.className = "legend__item";
+      item.style.cursor = "pointer";
+      item.title = "Click: show alerts • Shift+Click: hide/show category";
+      item.innerHTML = `<span class="legend__emoji">${def.emoji}</span> ${def.label}`;
+
+      // Add click handler (same as filter buttons)
+      item.addEventListener("click", (e) => {
+        if (e.shiftKey) {
+          const on = activeCategories.has(key);
+          if (on) activeCategories.delete(key); else activeCategories.add(key);
+          // Update filter button visual state
+          document.querySelectorAll("#filters .fbtn").forEach(btn => {
+            if ((btn.dataset.cat || "") === key) btn.setAttribute("aria-pressed", String(!on));
+          });
+          redraw();
+          return;
+        }
+        focusCategory(key);
+      });
+
+      legendHost.appendChild(item);
+    }
+  }
+
   function buildFilters() {
     const host = $("filters");
     host.innerHTML = "";
@@ -1040,37 +1349,8 @@
       host.appendChild(btn);
     }
   }
+  buildLegend();
   buildFilters();
-  // Make the footer legend clickable (same behavior as filter buttons)
-  (function wireLegendClicks(){
-    const legend = document.getElementById("legend");
-    if (!legend) return;
-
-    const emojiToCat = {};
-    for (const [k, def] of Object.entries(CATEGORIES)) emojiToCat[def.emoji] = k;
-
-    legend.querySelectorAll(".legend__item").forEach((el) => {
-      el.style.cursor = "pointer";
-      el.title = "Click: show alerts • Shift+Click: hide/show category";
-      el.addEventListener("click", (e) => {
-        const emoji = (el.querySelector(".legend__emoji")?.textContent || "").trim();
-        const cat = emojiToCat[emoji];
-        if (!cat) return;
-        if (e.shiftKey) {
-          // mirror shift+click behavior: toggle category on/off
-          const on = activeCategories.has(cat);
-          if (on) activeCategories.delete(cat); else activeCategories.add(cat);
-          // update filter button visual state
-          document.querySelectorAll("#filters .fbtn").forEach(btn => {
-            if ((btn.dataset.cat || "") === cat) btn.setAttribute("aria-pressed", String(!on));
-          });
-          redraw();
-          return;
-        }
-        focusCategory(cat);
-      });
-    });
-  })();
 
 
   function focusCategory(catKey) {
@@ -1150,7 +1430,7 @@
     itemsById: new Map(),
     seenKeys: new Set(),
     markersById: new Map(),
-    locks: { rss:false, nws:false, arcgis:false, virginiaCrashData:false, va511:false, vaRoads:false },
+    locks: { rss:false, nws:false, arcgis:false, virginiaCrashData:false, va511:false, vaRoads:false, openUV:false, cdc:false },
     lastByCategory: new Map()
   };
 
@@ -1166,9 +1446,10 @@
     const textForHeuristics = `${raw.title || ""} ${raw.summary || ""}`.trim();
     const picked = pickEmojiCategory(textForHeuristics, source.emoji, source.category, source.tone);
 
-    // CRITICAL: Never drop items due to missing geodata - always use defaultLoc fallback
+    // CRITICAL: Never drop items due to missing geodata - always use intelligent default fallback
     // This ensures all RSS items appear on the map even if they have no embedded coordinates
-    const loc = raw.loc || source.defaultLoc || CONFIG.center;
+    // Use intelligent defaults based on category and content keywords
+    const loc = raw.loc || getDefaultLocationForItem(source, picked.category, textForHeuristics);
 
     const publishedDate = toDate(raw.published);
     const maxAge = source.maxAgeHours ?? CONFIG.freshness.rssMaxAgeHours;
@@ -1215,10 +1496,57 @@
   // -----------------------------
   // Marker helpers
   // -----------------------------
-  function makeEmojiIcon(emoji, tone = "warn") {
+  // Source type color mapping for visual differentiation
+  const SOURCE_TYPE_COLORS = {
+    'rss': '#7ef0ff',           // Cyan - RSS feeds
+    'api_traffic': '#ffd86b',   // Yellow - Traffic/511 APIs
+    'api_crash': '#ff6b8a',     // Red - Crash data APIs
+    'api_weather': '#9d8cff',   // Purple - Weather APIs
+    'api_camera': '#44f0a6',    // Green - Camera feeds
+    'api_health': '#ff9a6b',    // Orange - Health/CDC APIs
+    'api_uv': '#ffe66b',        // Light yellow - UV data
+  };
+
+  function getSourceTypeColor(sourceId) {
+    if (!sourceId) return SOURCE_TYPE_COLORS['rss'];
+
+    // RSS feeds
+    if (sourceId.includes('fxbg-') || sourceId.includes('spotsy-') || sourceId.includes('stafford-') || sourceId === 'fxbg-free-press' || sourceId === 'nws-va-alerts') {
+      return SOURCE_TYPE_COLORS['rss'];
+    }
+    // Traffic APIs
+    if (sourceId.includes('va511-incidents') || sourceId.includes('va511-construction') || sourceId.includes('varoads')) {
+      return SOURCE_TYPE_COLORS['api_traffic'];
+    }
+    // Camera feeds
+    if (sourceId.includes('va511-cameras')) {
+      return SOURCE_TYPE_COLORS['api_camera'];
+    }
+    // Crash data APIs
+    if (sourceId.includes('crash') || sourceId.includes('arcgis')) {
+      return SOURCE_TYPE_COLORS['api_crash'];
+    }
+    // Weather APIs
+    if (sourceId.includes('nws') || sourceId.includes('weather')) {
+      return SOURCE_TYPE_COLORS['api_weather'];
+    }
+    // Health/CDC APIs
+    if (sourceId.includes('cdc') || sourceId.includes('health')) {
+      return SOURCE_TYPE_COLORS['api_health'];
+    }
+    // UV APIs
+    if (sourceId.includes('uv')) {
+      return SOURCE_TYPE_COLORS['api_uv'];
+    }
+
+    return SOURCE_TYPE_COLORS['rss'];
+  }
+
+  function makeEmojiIcon(emoji, tone = "warn", sourceId = null) {
+    const sourceColor = getSourceTypeColor(sourceId);
     return L.divIcon({
       className: "",
-      html: `<div class="emojiMarker" data-tone="${tone}">${emoji}</div>`,
+      html: `<div class="emojiMarker" data-tone="${tone}" data-source-type="${sourceId || 'unknown'}" style="--source-color: ${sourceColor}">${emoji}</div>`,
       iconSize: [36, 36],
       iconAnchor: [18, 18],
       popupAnchor: [0, -12]
@@ -1240,7 +1568,7 @@
   }
 
   function attachMarker(item) {
-    const m = L.marker([item.lat, item.lon], { icon: makeEmojiIcon(item.emoji, item.tone) });
+    const m = L.marker([item.lat, item.lon], { icon: makeEmojiIcon(item.emoji, item.tone, item.sourceId) });
     m.on("click", () => selectItem(item.id));
     m.bindPopup(renderPopup(item), { closeButton: false });
     clusters.addLayer(m);
@@ -2549,6 +2877,155 @@ function selectItem(id) {
   }
 
   // -----------------------------
+  // OpenUV API - UV Index data
+  // -----------------------------
+  async function fetchOpenUV() {
+    if (!CONFIG.openUV.enabled) return;
+    if (store.locks.openUV) return;
+    store.locks.openUV = true;
+
+    try {
+      const url = `${CONFIG.openUV.baseUrl}?lat=${CONFIG.openUV.lat}&lng=${CONFIG.openUV.lon}`;
+      const data = await fetchWithProxies(url, {
+        expect: "json",
+        headers: {
+          "x-access-token": CONFIG.openUV.apiKey,
+          "Accept": "application/json"
+        }
+      });
+
+      if (!data || !data.result) {
+        console.warn("[OpenUV] No valid UV data received");
+        return;
+      }
+
+      const uv = data.result;
+      const uvValue = uv.uv || uv.uv_max || 0;
+      const uvTime = uv.uv_time || new Date().toISOString();
+
+      // Determine UV level and appropriate emoji/tone
+      let uvLevel = "Low";
+      let emoji = "☀️";
+      let tone = "good";
+
+      if (uvValue >= 11) { uvLevel = "Extreme"; emoji = "🌞"; tone = "bad"; }
+      else if (uvValue >= 8) { uvLevel = "Very High"; emoji = "🌞"; tone = "bad"; }
+      else if (uvValue >= 6) { uvLevel = "High"; emoji = "☀️"; tone = "warn"; }
+      else if (uvValue >= 3) { uvLevel = "Moderate"; emoji = "🌤️"; tone = "warn"; }
+      else { uvLevel = "Low"; emoji = "🌥️"; tone = "good"; }
+
+      const source = {
+        id: "openuv-index",
+        name: "OpenUV — UV Index",
+        category: "uv_index",
+        emoji: emoji,
+        tone: tone,
+        defaultLoc: { lat: CONFIG.openUV.lat, lon: CONFIG.openUV.lon },
+        maxAgeHours: 2
+      };
+
+      const raw = {
+        title: `UV Index: ${uvValue.toFixed(1)} (${uvLevel})`,
+        url: "https://www.openuv.io",
+        guid: `openuv-${new Date(uvTime).toISOString()}`,
+        published: uvTime,
+        summary: `Current UV Index is ${uvValue.toFixed(1)} (${uvLevel}). ${uvValue >= 6 ? "Sun protection recommended." : "Minimal sun protection needed."}`,
+        message: `UV Index: ${uvValue.toFixed(1)}\nLevel: ${uvLevel}\n\nUV Protection Recommendations:\n${uvValue >= 11 ? "• Avoid sun exposure 10 AM - 4 PM\n• Wear protective clothing\n• Use SPF 30+ sunscreen\n• Seek shade" : uvValue >= 6 ? "• Wear sunscreen SPF 30+\n• Seek shade during midday\n• Wear sunglasses and hat" : "• Minimal protection needed\n• Wear sunglasses on bright days"}`,
+        loc: { lat: CONFIG.openUV.lat, lon: CONFIG.openUV.lon }
+      };
+
+      const normalized = normalize({ source, raw });
+      if (normalized && !store.seenKeys.has(normalized.dedupeKey)) {
+        store.seenKeys.add(normalized.dedupeKey);
+        store.itemsById.set(normalized.id, normalized);
+        console.log(`[OpenUV] UV Index: ${uvValue.toFixed(1)} (${uvLevel})`);
+      }
+
+    } catch (err) {
+      console.error("[OpenUV] Fetch failed:", err.message);
+    } finally {
+      store.locks.openUV = false;
+    }
+  }
+
+  // -----------------------------
+  // CDC API - Health surveillance data
+  // -----------------------------
+  async function fetchCDC() {
+    if (!CONFIG.cdc.enabled) return;
+    if (store.locks.cdc) return;
+    store.locks.cdc = true;
+
+    try {
+      // Fetch CDC health surveillance data (locality-specific)
+      const data = await fetchWithProxies(CONFIG.cdc.wonderApiUrl, {
+        expect: "json",
+        headers: {
+          "Accept": "application/json"
+        }
+      });
+
+      if (!data || !Array.isArray(data)) {
+        console.warn("[CDC] No valid health data received");
+        return;
+      }
+
+      // Filter for Virginia localities in our region (Fredericksburg, Stafford, Spotsylvania)
+      const relevantLocalities = ["fredericksburg", "stafford", "spotsylvania"];
+      const filtered = data.filter(row => {
+        const locality = (row.locality || row.county || row.location || "").toLowerCase();
+        return relevantLocalities.some(rl => locality.includes(rl));
+      }).slice(0, 10);  // Limit to 10 most recent items
+
+      console.log(`[CDC] Found ${filtered.length} relevant health alerts for region`);
+
+      let added = 0;
+      for (const row of filtered) {
+        const title = row.title || row.event || row.alert || "Health Advisory";
+        const description = row.description || row.message || row.summary || "Health information update";
+        const timestamp = row.timestamp || row.date || row.updated || new Date().toISOString();
+
+        const source = {
+          id: "cdc-health-data",
+          name: "CDC — Health Surveillance",
+          category: "health",
+          emoji: "🏥",
+          tone: "warn",
+          jurisdiction: "Regional",
+          defaultLoc: { lat: 38.3032, lon: -77.4605 },
+          maxAgeHours: CONFIG.cdc.maxAgeHours
+        };
+
+        const raw = {
+          title: `Health Alert: ${title}`,
+          url: row.url || row.link || "https://data.cdc.gov",
+          guid: `cdc-${row.id || fnv1a(title + timestamp)}`,
+          published: timestamp,
+          summary: description.slice(0, 400),
+          message: description,
+          loc: null  // Will use intelligent default location
+        };
+
+        const normalized = normalize({ source, raw });
+        if (normalized && !store.seenKeys.has(normalized.dedupeKey)) {
+          store.seenKeys.add(normalized.dedupeKey);
+          store.itemsById.set(normalized.id, normalized);
+          added++;
+        }
+      }
+
+      if (added > 0) {
+        console.log(`[CDC] Added ${added} health alerts to map`);
+      }
+
+    } catch (err) {
+      console.error("[CDC] Fetch failed:", err.message);
+    } finally {
+      store.locks.cdc = false;
+    }
+  }
+
+  // -----------------------------
   // I‑95 indicator
   // -----------------------------
   function setI95Indicator(i95Incidents) {
@@ -2583,7 +3060,9 @@ function selectItem(id) {
       pollArcgisCrashes().catch(e => console.warn("ArcGIS crash refresh partial", e)),
       pollVirginiaCrashData().catch(e => console.warn("Virginia Crash Data refresh partial", e)),
       pollVa511().catch(e => console.warn("511 refresh partial", e)),
-      pollVaRoads().catch(e => console.warn("VA Roads refresh partial", e))
+      pollVaRoads().catch(e => console.warn("VA Roads refresh partial", e)),
+      CONFIG.openUV.enabled ? fetchOpenUV().catch(e => console.warn("OpenUV refresh partial", e)) : Promise.resolve(),
+      CONFIG.cdc.enabled ? fetchCDC().catch(e => console.warn("CDC refresh partial", e)) : Promise.resolve()
     ]);
 
     $("liveText").textContent = "Live";
@@ -2603,4 +3082,6 @@ function selectItem(id) {
   setInterval(pollVirginiaCrashData, CONFIG.polling.virginiaCrashData);
   setInterval(pollVa511, CONFIG.polling.va511);
   setInterval(pollVaRoads, CONFIG.polling.vaRoads);
+  setInterval(fetchOpenUV, CONFIG.polling.openUV);
+  setInterval(fetchCDC, CONFIG.polling.cdc);
 })();

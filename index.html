@@ -3,18 +3,33 @@
 <!--
   CITY MANAGER — FXBG-PALANTIR
 
-  Virginia Crash Data APIs Integrated:
-  • CrashData Basic API: https://www.virginiaroads.org/datasets/crashdata-basic-1/api
-  • CrashData Details: https://data.virginia.gov/resource/e9fd3f45-7f33-424b-b472-b531043fa02a.json
-  • 511 Virginia Cameras: https://www.511virginia.org/data/geojson/icons.cameras.geojson
-  • ArcGIS CrashData FeatureServer: https://services.arcgis.com/p5v98VHDX9Atv3l7/arcgis/rest/services/CrashData_test/FeatureServer/0/query
+  Integrated Data Sources:
+
+  Traffic & Crash Data:
+  • 511 Virginia (Traffic Cameras, Incidents, Construction)
+  • Virginia Crash Data APIs (CrashData Basic, ArcGIS FeatureServer)
+  • Virginia Roads API
+
+  RSS Feeds (17 feeds total):
+  • Fredericksburg City (Police, Courts, Council, EDA, Transit, Fire, Emergency Alerts, etc.)
+  • Spotsylvania County (Emergency Alerts, Fire/EMS, Parks, Press Releases)
+  • Fredericksburg Free Press (Local News)
+  • NWS Weather Alerts (Virginia)
+
+  Health & Environmental:
+  • OpenUV API - UV Index data for Fredericksburg area
+  • CDC Data API - Health surveillance data for Virginia localities
+
+  Features:
+  • Smart location extraction from RSS feeds with geocoding
+  • Color-coded markers by data source type (RSS, Traffic APIs, Crash APIs, Health APIs, etc.)
+  • Dynamic legend and category filters
+  • Intelligent default locations based on content and source
+  • All popup panels are draggable - click and drag the panel header to reposition
 
   API Keys:
-  • Most endpoints are public and do not require API keys
-  • If you have a Socrata API key for data.virginia.gov, set it in index.js: CONFIG.virginiaCrashData.apiKey
-  • If you have a Virginia Roads API key, set it in index.js: CONFIG.vaRoads.apiKey (when available)
-
-  All popup panels are draggable - click and drag the panel header to reposition.
+  • OpenUV API key configured in index.js: CONFIG.openUV.apiKey
+  • Most other endpoints are public and do not require API keys
 -->
 <head>
   <meta charset="utf-8" />
@@ -133,17 +148,8 @@
 
   <footer class="bottombar">
     <div class="bottombar__left">
-      <div class="legend" id="legend">
-        <div class="legend__item"><span class="legend__emoji">🚨</span> Crime/Police</div>
-        <div class="legend__item"><span class="legend__emoji">🚗</span> Traffic</div>
-        <div class="legend__item"><span class="legend__emoji">💥</span> Crash</div>
-        <div class="legend__item"><span class="legend__emoji">🌧️</span> Weather</div>
-        <div class="legend__item"><span class="legend__emoji">🎉</span> Events</div>
-        <div class="legend__item"><span class="legend__emoji">🔥</span> Fire/EMS</div>
-        <div class="legend__item"><span class="legend__emoji">🚆</span> Train</div>
-        <div class="legend__item"><span class="legend__emoji">📷</span> Cameras</div>
-        <div class="legend__item"><span class="legend__emoji">⛔</span> Closures</div>
-      </div>
+      <!-- Legend is now dynamically generated from CATEGORIES in index.js to avoid duplicates -->
+      <div class="legend" id="legend"></div>
     </div>
 
     <div class="bottombar__right">
