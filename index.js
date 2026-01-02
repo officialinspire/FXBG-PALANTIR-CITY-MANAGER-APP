@@ -33,7 +33,8 @@
       rssMaxAgeHours: 168,     // newsroom/civic posts: last 7 days (increased from 24h to show low-volume feeds)
       va511MaxAgeHours: 6,     // incidents: last 6 hours
       crashesMaxAgeHours: 24,  // crashes: last 24 hours (you can tighten to 6 if desired)
-      nwsMaxAgeHours: 24
+      nwsMaxAgeHours: 24,
+      uiListMaxAgeHours: 168   // footer panel list: match RSS max age to show all map items (7 days)
     },
 
     // Performance caps
