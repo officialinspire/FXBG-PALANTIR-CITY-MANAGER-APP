@@ -1634,6 +1634,7 @@
       dedupeKey,
       title: raw.title || "(untitled)",
       timestamp: publishedDate.toISOString(),
+      published: publishedDate.toISOString(),
       lat: loc.lat,
       lon: loc.lon,
       category: picked.category,
@@ -1641,6 +1642,7 @@
       tone: picked.tone || source.tone || "warn",
       sourceName: source.name,
       sourceId: source.id,
+      jurisdiction: source.jurisdiction || "Unknown",
       url: raw.url || source.url,
       summary: raw.summary || "",
       message: raw.message || raw.summary || "",
@@ -1667,7 +1669,7 @@
     if (!sourceId) return SOURCE_TYPE_COLORS['rss'];
 
     // RSS feeds
-    if (sourceId.includes('fxbg-') || sourceId.includes('spotsy-') || sourceId.includes('stafford-') || sourceId === 'fxbg-free-press' || sourceId === 'nws-va-alerts') {
+    if (sourceId.includes('fxbg-') || sourceId.includes('spotsy-') || sourceId.includes('stafford-') || sourceId.includes('caroline-') || sourceId.includes('warrenton-') || sourceId.includes('potomac-local') || sourceId === 'fxbg-free-press' || sourceId === 'nws-va-alerts') {
       return SOURCE_TYPE_COLORS['rss'];
     }
     // Traffic APIs
