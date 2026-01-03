@@ -656,6 +656,42 @@
 
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+  // Sound effects system using Web Audio API
+  const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+
+  function playClickSound(type = 'default') {
+    try {
+      const oscillator = audioContext.createOscillator();
+      const gainNode = audioContext.createGain();
+
+      oscillator.connect(gainNode);
+      gainNode.connect(audioContext.destination);
+
+      // Different sounds for different button types
+      if (type === 'close') {
+        oscillator.frequency.value = 400;
+        gainNode.gain.setValueAtTime(0.08, audioContext.currentTime);
+        gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.15);
+      } else if (type === 'open') {
+        oscillator.frequency.value = 600;
+        gainNode.gain.setValueAtTime(0.08, audioContext.currentTime);
+        gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.15);
+      } else {
+        // Default click
+        oscillator.frequency.value = 500;
+        gainNode.gain.setValueAtTime(0.06, audioContext.currentTime);
+        gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.1);
+      }
+
+      oscillator.type = 'sine';
+      oscillator.start(audioContext.currentTime);
+      oscillator.stop(audioContext.currentTime + 0.15);
+    } catch (e) {
+      // Silently fail if audio context is not available
+      console.debug('Audio playback not available:', e);
+    }
+  }
+
   // Make a panel draggable by its handle (pointer-friendly).
   function makeDraggable(el, handle) {
     if (!el || !handle) return;
@@ -1323,17 +1359,31 @@
   // -----------------------------
   // Map setup (Esri Dark Gray Canvas + labels)
   // -----------------------------
-  const map = L.map("map", { zoomControl: false, preferCanvas: true })
-    .setView([CONFIG.center.lat, CONFIG.center.lon], CONFIG.zoom);
+  const map = L.map("map", {
+    zoomControl: false,
+    preferCanvas: false,
+    maxZoom: 20,
+    minZoom: 7
+  }).setView([CONFIG.center.lat, CONFIG.center.lon], CONFIG.zoom);
 
   L.tileLayer(
     "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}",
-    { maxZoom: 18 }
+    {
+      maxZoom: 20,
+      maxNativeZoom: 18,
+      attribution: 'Map tiles by Esri',
+      errorTileUrl: 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'
+    }
   ).addTo(map);
 
   L.tileLayer(
     "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}",
-    { maxZoom: 18, opacity: 0.95 }
+    {
+      maxZoom: 20,
+      maxNativeZoom: 18,
+      opacity: 0.95,
+      errorTileUrl: 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'
+    }
   ).addTo(map);
 
   L.control.zoom({ position: "bottomright" }).addTo(map);
@@ -1378,6 +1428,7 @@
     e.stopPropagation();
     e.stopImmediatePropagation();
     e.preventDefault();
+    playClickSound('close');
     closePanel();
   });
   document.addEventListener("keydown", (e) => {
@@ -2466,8 +2517,19 @@ function selectItem(id) {
         ""
       ).toString();
 
-      // If we have a camera ID but no page URL, construct the standard 511 Virginia camera URL
-      const finalPageUrl = pageUrl || (cameraId ? `https://511.vdot.virginia.gov/map?camera=${cameraId}` : "https://www.511virginia.org/");
+      // If we have a camera ID but no page URL, construct a 511 Virginia map URL centered on the camera
+      // Using lat/lon with zoom is more reliable than camera ID as 511's URL structure varies
+      let finalPageUrl = pageUrl;
+      if (!finalPageUrl && lat && lon) {
+        // Center the 511 map on this camera's location with high zoom
+        finalPageUrl = `https://511.vdot.virginia.gov/map?lat=${lat.toFixed(5)}&lon=${lon.toFixed(5)}&zoom=15&layers=cameras`;
+      } else if (!finalPageUrl && cameraId) {
+        // Fallback: try camera ID in URL (may not work depending on 511's current API)
+        finalPageUrl = `https://511.vdot.virginia.gov/map/Cameras/${cameraId}`;
+      } else if (!finalPageUrl) {
+        // Last resort: just link to main 511 page
+        finalPageUrl = "https://www.511virginia.org/";
+      }
 
       let media = null;
 
@@ -3256,15 +3318,18 @@ function selectItem(id) {
     const isHidden = panel.classList.contains("newsFlashPanel--hidden");
 
     if (isHidden) {
+      playClickSound('open');
       panel.classList.remove("newsFlashPanel--hidden");
       updateNewsFlash();
     } else {
+      playClickSound('close');
       panel.classList.add("newsFlashPanel--hidden");
     }
   });
 
   // News Flash close button
   $("newsFlashClose").addEventListener("click", () => {
+    playClickSound('close');
     $("newsFlashPanel").classList.add("newsFlashPanel--hidden");
   });
 
@@ -3295,13 +3360,16 @@ function selectItem(id) {
     const isHidden = panel.classList.contains("radioPanel--hidden");
 
     if (isHidden) {
+      playClickSound('open');
       panel.classList.remove("radioPanel--hidden");
     } else {
+      playClickSound('close');
       panel.classList.add("radioPanel--hidden");
     }
   });
 
   $("radioClose").addEventListener("click", () => {
+    playClickSound('close');
     $("radioPanel").classList.add("radioPanel--hidden");
   });
 
