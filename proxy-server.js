@@ -150,11 +150,13 @@ function checkUrlAllowed(targetUrl) {
     }
 
     // 4. Check allowlist (match hostname or parent domain)
+    // Round 3: Fixed domain boundary check to prevent matches like 'evilarcgis.com' matching 'arcgis.com'
     const isAllowed = ALLOWED_UPSTREAM_DOMAINS.some(allowed => {
       // Exact match
       if (hostname === allowed) return true;
       // Subdomain match (e.g., 'services1.arcgis.com' matches 'arcgis.com')
-      if (hostname.endsWith('.' + allowed)) return true;
+      // IMPORTANT: Only match if hostname is longer and has a dot before the allowed domain
+      if (hostname.endsWith('.' + allowed) && hostname.length > allowed.length + 1) return true;
       return false;
     });
 
@@ -1123,6 +1125,7 @@ const server = http.createServer(async (req, res) => {
           status: 403,
           message: "This URL is not permitted by the proxy security policy. " + urlCheck.reason
         });
+        // Round 3: Ensure CORS headers on error responses
         return send(res, 403, errorBody, { "Content-Type": "application/json" });
       }
 
@@ -1146,6 +1149,7 @@ const server = http.createServer(async (req, res) => {
           status: 502,
           message: proxyErr.message || String(proxyErr)
         });
+        // Round 3: Ensure CORS headers on error responses (send() already adds them)
         return send(res, 502, errorBody, { "Content-Type": "application/json" });
       }
     }

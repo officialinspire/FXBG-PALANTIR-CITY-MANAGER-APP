@@ -1079,7 +1079,11 @@
       liveChip.title = health.title;
 
       // Reset stale count after update (it's a transient indicator)
-      setTimeout(() => { this.staleDataCount = 0; }, 2000);
+      // Round 3: Also clear stale age when resetting count
+      setTimeout(() => {
+        this.staleDataCount = 0;
+        this.lastStaleAgeMs = 0;
+      }, 2000);
     }
   };
 
@@ -2386,12 +2390,17 @@ function selectItem(id) {
     // Update News Flash panel if it's open
     const newsPanel = document.getElementById("newsFlashPanel");
     if (newsPanel && !newsPanel.classList.contains("newsFlashPanel--hidden")) {
-      // Defer update to avoid blocking the redraw
-      setTimeout(() => {
-        if (typeof updateNewsFlash === 'function') {
-          updateNewsFlash();
-        }
-      }, 100);
+      // Round 3: Skip expensive list render in degraded mode
+      if (cycleStats.degradedMode && CONFIG.reliability.degradedModeSkipListRender) {
+        console.log(`[DegradedMode] Skipping list render (degraded mode)`);
+      } else {
+        // Defer update to avoid blocking the redraw
+        setTimeout(() => {
+          if (typeof updateNewsFlash === 'function') {
+            updateNewsFlash();
+          }
+        }, 100);
+      }
     }
   }
 
@@ -2670,6 +2679,17 @@ function selectItem(id) {
 
     for (const source of CONFIG.rss) {
       await sleep((CONFIG.polling && CONFIG.polling.rssStaggerMs) || 300);
+
+      // Round 3: Check source backoff before polling
+      const backoffCheck = checkSourceBackoff(`rss-${source.id}`);
+      if (!backoffCheck.allowed) {
+        if (CONFIG.debug.rss) {
+          console.log(`[RSS Backoff] Skipping ${source.id} (backoff: ${Math.round(backoffCheck.delayMs / 1000)}s remaining)`);
+        }
+        results.push({ source: source.id, ok: false, skipped: true, backoff: true });
+        continue;
+      }
+
       try {
         const items = await fetchRSS(source);
         if (CONFIG.debug.rss) {
@@ -2702,11 +2722,19 @@ function selectItem(id) {
         results.push({ source: source.id, ok: true, added });
         anySucceeded = true;
 
+        // Round 3: Record success to clear backoff
+        recordSourceSuccess(`rss-${source.id}`);
+
       } catch (err) {
         // Check if this is a rate limit error (429)
         const isRateLimit = err.message && (err.message.includes('429') || err.message.includes('Too Many Requests'));
         const isEmpty = err.message && err.message.includes('Empty response');
         const isProxyError = err.message && err.message.includes('proxy');
+
+        // Round 3: Record failure and apply backoff
+        const errorType = isRateLimit ? 'rate_limit' : (isEmpty ? 'empty' : (isProxyError ? 'proxy' : 'unknown'));
+        recordSourceFailure(`rss-${source.id}`, errorType);
+        recordFeedError(`rss-${source.id}`);
 
         // Only log RSS errors once per session per source to avoid console spam
         const errorKey = `_rssError_${source.id}`;
@@ -2751,17 +2779,27 @@ function selectItem(id) {
       return;
     }
 
+    // Round 3: Check source backoff before polling
+    const backoffCheck = checkSourceBackoff('nws');
+    if (!backoffCheck.allowed) {
+      console.log(`[NWS Backoff] Skipping (backoff: ${Math.round(backoffCheck.delayMs / 1000)}s remaining)`);
+      $("weatherText").textContent = "Weather: Waiting...";
+      return;
+    }
+
+    // Round 3: Use fetchWithProxies for all NWS requests to participate in cycle budgets
     const pointsUrl = `https://api.weather.gov/points/${CONFIG.nws.pointsLat},${CONFIG.nws.pointsLon}`;
-    const pointsRes = await fetch(pointsUrl, { headers: { "Accept": "application/geo+json" } });
-    if (!pointsRes.ok) throw new Error(`NWS points failed (${pointsRes.status})`);
-    const points = await pointsRes.json();
+    const points = await fetchWithProxies(pointsUrl, {
+      expect: "json",
+      headers: { "Accept": "application/geo+json" }
+    });
 
     const forecastUrl = points.properties?.forecast;
     const forecastHourlyUrl = points.properties?.forecastHourly;
 
     const [forecast, hourly] = await Promise.all([
-      forecastUrl ? fetch(forecastUrl).then(r => r.json()) : Promise.resolve(null),
-      forecastHourlyUrl ? fetch(forecastHourlyUrl).then(r => r.json()) : Promise.resolve(null)
+      forecastUrl ? fetchWithProxies(forecastUrl, { expect: "json" }) : Promise.resolve(null),
+      forecastHourlyUrl ? fetchWithProxies(forecastHourlyUrl, { expect: "json" }) : Promise.resolve(null)
     ]);
 
     const now = hourly?.properties?.periods?.[0];
@@ -2773,20 +2811,35 @@ function selectItem(id) {
 
     // Alerts
     try {
-      const aRes = await fetch(CONFIG.nws.alertsUrl, { headers: { "Accept": "application/geo+json" } });
-      if (aRes.ok) ingestNWSAlerts(await aRes.json());
+      // Round 3: Use fetchWithProxies to participate in cycle budgets and stale tracking
+      const alerts = await fetchWithProxies(CONFIG.nws.alertsUrl, {
+        expect: "json",
+        headers: { "Accept": "application/geo+json" }
+      });
+      if (alerts) ingestNWSAlerts(alerts);
     } catch (e) {
+      // Round 3: Track alerts fetch failures (but don't fail the whole NWS fetch)
+      recordFeedError('nws-alerts');
+
       if (!store._nwsAlertsErrorLogged) {
         console.warn("NWS alerts fetch failed:", e.message || e);
         store._nwsAlertsErrorLogged = true;
       }
     }
+
+    // Round 3: Record success to clear backoff
+    recordSourceSuccess('nws');
+
     } catch (e) {
       if (!store._nwsErrorLogged) {
         console.warn("NWS weather fetch failed:", e.message || e);
         $("weatherText").textContent = "Weather: Unable to connect (check network)";
         store._nwsErrorLogged = true;
       }
+
+      // Round 3: Record failure and apply backoff
+      recordSourceFailure('nws', 'fetch_error');
+      recordFeedError('nws');
     } finally {
       store.locks.nws = false;
     }
@@ -2848,9 +2901,15 @@ function selectItem(id) {
 
     if (!CONFIG.va511.enabled) return { i95Incidents: 0 };
 
+    // Round 3: Check source backoff before polling cameras
+    const camerasBackoffCheck = checkSourceBackoff('va511-cameras');
+
     // Cameras (always ok; doesn't bloat too much and is useful)
     // Use proxy to avoid CORS issues with 511virginia.org redirects
     let camerasLoaded = false;
+    if (!camerasBackoffCheck.allowed) {
+      console.log(`[VA511 Backoff] Skipping cameras (backoff: ${Math.round(camerasBackoffCheck.delayMs / 1000)}s remaining)`);
+    } else {
     try {
       const cams = await fetchWithProxies(CONFIG.va511.camerasGeojson, {
         expect: "json",
@@ -2869,11 +2928,18 @@ function selectItem(id) {
         const result = ingestVa511Cameras(cams);
         console.log(`511 cameras ingested: ${result.added} cameras added from ${result.total} total`);
         camerasLoaded = true;
+
+        // Round 3: Record success to clear backoff
+        recordSourceSuccess('va511-cameras');
       } else {
         throw new Error("Invalid GeoJSON response (missing features)");
       }
 
     } catch (e) {
+      // Round 3: Record failure and apply backoff
+      recordSourceFailure('va511-cameras', 'fetch_error');
+      recordFeedError('va511-cameras');
+
       // Only log CORS/network errors once per session to avoid console spam
       if (!store._511CamerasErrorLogged) {
         console.warn("511 cameras fetch failed. Error:", e.message || e);
@@ -2882,11 +2948,18 @@ function selectItem(id) {
         store._511CamerasErrorLogged = true;
       }
     }
+    } // End backoff check for cameras
 
     // Incidents (STRICT time gate)
     // Use proxy to avoid CORS issues with 511virginia.org redirects
     let i95Incidents = 0;
     let incidentsLoaded = false;
+
+    // Round 3: Check source backoff before polling incidents
+    const incidentsBackoffCheck = checkSourceBackoff('va511-incidents');
+    if (!incidentsBackoffCheck.allowed) {
+      console.log(`[VA511 Backoff] Skipping incidents (backoff: ${Math.round(incidentsBackoffCheck.delayMs / 1000)}s remaining)`);
+    } else {
 
     // Helper to parse JSONP response (strips callback wrapper)
     const parseJsonp = (text) => {
@@ -2930,21 +3003,31 @@ function selectItem(id) {
           console.log(`511 incidents loaded successfully from ${endpoint.name}:`, inc.features?.length || 0, "incidents");
           i95Incidents = ingestVa511Incidents(inc);
           incidentsLoaded = true;
+
+          // Round 3: Record success to clear backoff
+          recordSourceSuccess('va511-incidents');
         } else {
           throw new Error("Invalid GeoJSON response (missing features)");
         }
 
       } catch (e) {
         // Try next endpoint if available
-        if (endpoint.name === 'fallback' && !store._511IncidentsErrorLogged) {
-          console.error("All 511 incidents endpoints failed. Error:", e.message || e);
-          console.error("The 511 incidents service may be down or blocking requests.");
-          console.error("  → Ensure proxy server is running: node proxy-server.js");
-          console.error("  → Tried endpoints:", incidentsEndpoints.map(ep => ep.url).join(', '));
-          store._511IncidentsErrorLogged = true;
+        if (endpoint.name === 'fallback') {
+          // Round 3: Record failure only if all endpoints failed
+          recordSourceFailure('va511-incidents', 'fetch_error');
+          recordFeedError('va511-incidents');
+
+          if (!store._511IncidentsErrorLogged) {
+            console.error("All 511 incidents endpoints failed. Error:", e.message || e);
+            console.error("The 511 incidents service may be down or blocking requests.");
+            console.error("  → Ensure proxy server is running: node proxy-server.js");
+            console.error("  → Tried endpoints:", incidentsEndpoints.map(ep => ep.url).join(', '));
+            store._511IncidentsErrorLogged = true;
+          }
         }
       }
     }
+    } // End backoff check for incidents
 
     if (CONFIG.va511.includeConstructionOnMap) {
       try {
@@ -2955,6 +3038,9 @@ function selectItem(id) {
         });
         ingestVa511Construction(con);
       } catch (e) {
+        // Round 3: Track construction fetch failures (but don't fail the whole VA511 fetch)
+        recordFeedError('va511-construction');
+
         // Only log CORS/network errors once per session to avoid console spam
         if (!store._511ConstructionErrorLogged) {
           console.warn("511 construction fetch failed (CORS or network issue). Running a local proxy server may help.", e);
@@ -2969,6 +3055,11 @@ function selectItem(id) {
     return { i95Incidents };
     } catch (e) {
       console.warn("511 refresh failed", e);
+
+      // Round 3: Track outer VA511 failures (catastrophic failure)
+      recordSourceFailure('va511', 'catastrophic_error');
+      recordFeedError('va511');
+
       return { i95Incidents: 0 };
     } finally {
       store.locks.va511 = false;
@@ -3173,6 +3264,15 @@ function selectItem(id) {
 
       if (!norm) continue;
       if (store.seenKeys.has(norm.dedupeKey)) continue;
+
+      // Round 3: Check for near-duplicates before adding
+      if (isNearDuplicate(norm)) {
+        if (CONFIG.debug.rss) {
+          console.log(`[VA511 Dedupe] Skipping near-duplicate incident: ${norm.title}`);
+        }
+        continue;
+      }
+
       store.seenKeys.add(norm.dedupeKey);
       store.itemsById.set(norm.id, norm);
       pushed++;
@@ -3312,6 +3412,13 @@ function selectItem(id) {
 
     if (!CONFIG.arcgisCrash.enabled) return 0;
 
+    // Round 3: Check source backoff before polling
+    const backoffCheck = checkSourceBackoff('arcgis-crashes');
+    if (!backoffCheck.allowed) {
+      console.log(`[ArcGIS Backoff] Skipping (backoff: ${Math.round(backoffCheck.delayMs / 1000)}s remaining)`);
+      return 0;
+    }
+
     const dateField = await discoverArcgisDateField();
     const url = buildArcgisCrashUrl(dateField);
 
@@ -3395,6 +3502,15 @@ function selectItem(id) {
 
       if (!norm) continue;
       if (store.seenKeys.has(norm.dedupeKey)) continue;
+
+      // Round 3: Check for near-duplicates before adding
+      if (isNearDuplicate(norm)) {
+        if (CONFIG.debug.rss) {
+          console.log(`[ArcGIS Dedupe] Skipping near-duplicate crash: ${norm.title}`);
+        }
+        continue;
+      }
+
       store.seenKeys.add(norm.dedupeKey);
       store.itemsById.set(norm.id, norm);
       added++;
@@ -3403,9 +3519,18 @@ function selectItem(id) {
 
     setLastUpdate();
     redraw();
+
+    // Round 3: Record success to clear backoff
+    recordSourceSuccess('arcgis-crashes');
+
     return added;
     } catch (e) {
       console.warn("ArcGIS crash refresh failed", e);
+
+      // Round 3: Record failure and apply backoff
+      recordSourceFailure('arcgis-crashes', 'fetch_error');
+      recordFeedError('arcgis-crashes');
+
       return 0;
     } finally {
       store.locks.arcgis = false;
@@ -3441,6 +3566,13 @@ function selectItem(id) {
     store.locks.virginiaCrashData = true;
     try {
       if (!CONFIG.virginiaCrashData.enabled) return { added: 0 };
+
+      // Round 3: Check source backoff before polling
+      const backoffCheck = checkSourceBackoff('virginia-crash-data');
+      if (!backoffCheck.allowed) {
+        console.log(`[Virginia Crash Data Backoff] Skipping (backoff: ${Math.round(backoffCheck.delayMs / 1000)}s remaining)`);
+        return { added: 0 };
+      }
 
       let totalAdded = 0;
       const source = {
@@ -3517,6 +3649,15 @@ function selectItem(id) {
             });
 
             if (!norm || store.seenKeys.has(norm.dedupeKey)) continue;
+
+            // Round 3: Check for near-duplicates before adding
+            if (isNearDuplicate(norm)) {
+              if (CONFIG.debug.rss) {
+                console.log(`[Virginia Crash Data Dedupe] Skipping near-duplicate crash: ${norm.title}`);
+              }
+              continue;
+            }
+
             store.seenKeys.add(norm.dedupeKey);
             store.itemsById.set(norm.id, norm);
             added++;
@@ -3543,9 +3684,18 @@ function selectItem(id) {
 
       setLastUpdate();
       redraw();
+
+      // Round 3: Record success to clear backoff
+      recordSourceSuccess('virginia-crash-data');
+
       return { added: totalAdded };
     } catch (e) {
       console.warn("[Virginia Crash Data] Refresh failed:", e);
+
+      // Round 3: Record failure and apply backoff
+      recordSourceFailure('virginia-crash-data', 'fetch_error');
+      recordFeedError('virginia-crash-data');
+
       return { added: 0 };
     } finally {
       store.locks.virginiaCrashData = false;
@@ -3559,6 +3709,14 @@ function selectItem(id) {
     if (!CONFIG.openUV.enabled) return;
     if (store.locks.openUV) return;
     store.locks.openUV = true;
+
+    // Round 3: Check source backoff before polling
+    const backoffCheck = checkSourceBackoff('openuv');
+    if (!backoffCheck.allowed) {
+      console.log(`[OpenUV Backoff] Skipping (backoff: ${Math.round(backoffCheck.delayMs / 1000)}s remaining)`);
+      store.locks.openUV = false;
+      return;
+    }
 
     try {
       const url = `${CONFIG.openUV.baseUrl}?lat=${CONFIG.openUV.lat}&lng=${CONFIG.openUV.lon}`;
@@ -3617,8 +3775,15 @@ function selectItem(id) {
         console.log(`[OpenUV] UV Index: ${uvValue.toFixed(1)} (${uvLevel})`);
       }
 
+      // Round 3: Record success to clear backoff
+      recordSourceSuccess('openuv');
+
     } catch (err) {
       console.error("[OpenUV] Fetch failed:", err.message);
+
+      // Round 3: Record failure and apply backoff
+      recordSourceFailure('openuv', 'fetch_error');
+      recordFeedError('openuv');
     } finally {
       store.locks.openUV = false;
     }
@@ -3631,6 +3796,14 @@ function selectItem(id) {
     if (!CONFIG.cdc.enabled) return;
     if (store.locks.cdc) return;
     store.locks.cdc = true;
+
+    // Round 3: Check source backoff before polling
+    const backoffCheck = checkSourceBackoff('cdc');
+    if (!backoffCheck.allowed) {
+      console.log(`[CDC Backoff] Skipping (backoff: ${Math.round(backoffCheck.delayMs / 1000)}s remaining)`);
+      store.locks.cdc = false;
+      return;
+    }
 
     try {
       // Fetch CDC health surveillance data (locality-specific)
@@ -3694,8 +3867,15 @@ function selectItem(id) {
         console.log(`[CDC] Added ${added} health alerts to map`);
       }
 
+      // Round 3: Record success to clear backoff
+      recordSourceSuccess('cdc');
+
     } catch (err) {
       console.error("[CDC] Fetch failed:", err.message);
+
+      // Round 3: Record failure and apply backoff
+      recordSourceFailure('cdc', 'fetch_error');
+      recordFeedError('cdc');
     } finally {
       store.locks.cdc = false;
     }
