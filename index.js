@@ -574,89 +574,16 @@
     },
 
     // 511Virginia GeoJSON endpoints
-    // NOTE: These endpoints may be blocked in some environments (403 Forbidden, x-deny-reason: host_not_allowed)
-    // due to VDOT's anti-scraping measures. The proxy server will use stale cached data when available.
-    // The endpoints work fine from normal browsers and servers - blocking typically only occurs from
-    // cloud/bot IP ranges. Manual fallback camera data is provided below for Fredericksburg area.
     va511: {
-      enabled: true,  // Re-enabled with fallback support - will use manual data if API is blocked
+      enabled: true,
       camerasGeojson: "https://511.vdot.virginia.gov/services/map/layers/map/cams",
-      // Alternative camera endpoint (older format, may have better availability)
-      camerasGeojsonAlt: "http://www.511virginia.org/data/icons.cameras.geojson",
-      // Primary incidents endpoint
+      // Primary incidents endpoint - may return HTML error pages during outages
       incidentsGeojson: "https://www.511virginia.org/data/geojson/icons.incident.geojson",
       // Fallback to Iteris CDN if main endpoint fails (JSONP format - auto-stripped)
+      // Note: This fallback is also currently returning HTML errors
       incidentsGeojsonFallback: "http://files5.iteriscdn.com/WebApps/VA/SafeTravel/data/local/icons/metadata/icons.incident.geojsonp",
       constructionGeojson: "https://www.511virginia.org/data/geojson/icons.construction.geojson",
-      includeConstructionOnMap: false,
-      // Manual fallback camera data for Fredericksburg area (I-95 corridor)
-      // These cameras will be used if the API is unavailable
-      manualCameras: [
-        {
-          id: "95_001_MM122SB",
-          name: "I-95 SB at MM 122 (Fredericksburg)",
-          lat: 38.25,
-          lon: -77.48,
-          url: "https://511.vdot.virginia.gov/map?lat=38.25&lon=-77.48&zoom=15&layers=cameras",
-          imageUrl: "https://snapshot.vdotcameras.com/thumbs/95_001_MM122SB.flv.png"
-        },
-        {
-          id: "95_001_MM130.8SB",
-          name: "I-95 SB at MM 130.8 (Fredericksburg North)",
-          lat: 38.35,
-          lon: -77.49,
-          url: "https://511.vdot.virginia.gov/map?lat=38.35&lon=-77.49&zoom=15&layers=cameras",
-          imageUrl: "https://snapshot.vdotcameras.com/thumbs/95_001_MM130.8SB.flv.png"
-        },
-        {
-          id: "95_001_MM131.5NB",
-          name: "I-95 NB at MM 131.5 (Fredericksburg North)",
-          lat: 38.36,
-          lon: -77.49,
-          url: "https://511.vdot.virginia.gov/map?lat=38.36&lon=-77.49&zoom=15&layers=cameras",
-          imageUrl: "https://snapshot.vdotcameras.com/thumbs/95_001_MM131.5NB.flv.png"
-        },
-        {
-          id: "95_001_MM132SB",
-          name: "I-95 SB at MM 132 (Fredericksburg North)",
-          lat: 38.37,
-          lon: -77.49,
-          url: "https://511.vdot.virginia.gov/map?lat=38.37&lon=-77.49&zoom=15&layers=cameras",
-          imageUrl: "https://snapshot.vdotcameras.com/thumbs/95_001_MM132SB.flv.png"
-        },
-        {
-          id: "95_001_MM126NB",
-          name: "I-95 NB at MM 126 (Fredericksburg Central)",
-          lat: 38.29,
-          lon: -77.48,
-          url: "https://511.vdot.virginia.gov/map?lat=38.29&lon=-77.48&zoom=15&layers=cameras",
-          imageUrl: "https://snapshot.vdotcameras.com/thumbs/95_001_MM126NB.flv.png"
-        },
-        {
-          id: "95_001_MM118SB",
-          name: "I-95 SB at MM 118 (Thornburg)",
-          lat: 38.21,
-          lon: -77.48,
-          url: "https://511.vdot.virginia.gov/map?lat=38.21&lon=-77.48&zoom=15&layers=cameras",
-          imageUrl: "https://snapshot.vdotcameras.com/thumbs/95_001_MM118SB.flv.png"
-        },
-        {
-          id: "95_001_MM140NB",
-          name: "I-95 NB at MM 140 (Stafford)",
-          lat: 38.46,
-          lon: -77.47,
-          url: "https://511.vdot.virginia.gov/map?lat=38.46&lon=-77.47&zoom=15&layers=cameras",
-          imageUrl: "https://snapshot.vdotcameras.com/thumbs/95_001_MM140NB.flv.png"
-        },
-        {
-          id: "95_001_MM143SB",
-          name: "I-95 SB at MM 143 (Stafford North)",
-          lat: 38.49,
-          lon: -77.46,
-          url: "https://511.vdot.virginia.gov/map?lat=38.49&lon=-77.46&zoom=15&layers=cameras",
-          imageUrl: "https://snapshot.vdotcameras.com/thumbs/95_001_MM143SB.flv.png"
-        }
-      ]
+      includeConstructionOnMap: false
     },
 
 
@@ -2403,8 +2330,6 @@ function selectItem(id) {
     // Cameras (always ok; doesn't bloat too much and is useful)
     // Use proxy to avoid CORS issues with 511virginia.org redirects
     let camerasLoaded = false;
-
-    // Try primary endpoint first
     try {
       const cams = await fetchWithProxies(CONFIG.va511.camerasGeojson, {
         expect: "json",
@@ -2428,44 +2353,11 @@ function selectItem(id) {
       }
 
     } catch (e) {
-      // Try alternative endpoint if primary fails
-      if (!camerasLoaded && CONFIG.va511.camerasGeojsonAlt) {
-        try {
-          console.log("Primary camera endpoint failed, trying alternative endpoint...");
-          const camsAlt = await fetchWithProxies(CONFIG.va511.camerasGeojsonAlt, {
-            expect: "json",
-            headers: {
-              "X-Cache-TTL-MS": "120000",
-              "Accept": "application/geo+json,application/json,*/*"
-            },
-            timeoutMs: 25000
-          });
-
-          if (camsAlt && (camsAlt.type === "FeatureCollection" || Array.isArray(camsAlt.features))) {
-            console.log("Alternative camera endpoint loaded:", camsAlt.features?.length || 0, "cameras");
-            const result = ingestVa511Cameras(camsAlt);
-            console.log(`511 cameras ingested from alternative: ${result.added} cameras added`);
-            camerasLoaded = true;
-          }
-        } catch (altError) {
-          console.warn("Alternative camera endpoint also failed:", altError.message);
-        }
-      }
-
-      // If all API endpoints fail, use manual fallback camera data
-      if (!camerasLoaded && CONFIG.va511.manualCameras && CONFIG.va511.manualCameras.length > 0) {
-        console.log("📷 API endpoints unavailable - using manual fallback camera data for Fredericksburg area");
-        const result = ingestManualCameras(CONFIG.va511.manualCameras);
-        console.log(`📷 Manual cameras loaded: ${result.added} cameras added to map`);
-        camerasLoaded = true;
-      }
-
-      // Only log errors if we couldn't load cameras from any source
-      if (!camerasLoaded && !store._511CamerasErrorLogged) {
-        console.warn("⚠️ 511 cameras unavailable. Error:", e.message || e);
+      // Only log CORS/network errors once per session to avoid console spam
+      if (!store._511CamerasErrorLogged) {
+        console.warn("511 cameras fetch failed. Error:", e.message || e);
         console.warn("The 511 cameras endpoint may be down or blocking requests.");
         console.warn("  → Ensure proxy server is running: node proxy-server.js");
-        console.warn("  → Manual fallback cameras will be displayed if configured");
         store._511CamerasErrorLogged = true;
       }
     }
@@ -2692,56 +2584,6 @@ function selectItem(id) {
     }
 
     return { added, total: feats.length };
-  }
-
-
-  // Ingest manual camera data (fallback when 511 API is unavailable)
-  function ingestManualCameras(cameras) {
-    let added = 0;
-
-    for (const cam of cameras) {
-      const { id, name, lat, lon, url, imageUrl } = cam;
-
-      if (!lat || !lon || !Number.isFinite(lat) || !Number.isFinite(lon)) {
-        console.warn(`Skipping manual camera "${name}" - invalid coordinates`);
-        continue;
-      }
-
-      let media = null;
-      if (imageUrl) {
-        // Proxy the image URL to avoid CORS issues
-        const proxiedUrl = `${location.origin}/proxy?url=${encodeURIComponent(imageUrl)}`;
-        media = { type: "image", src: proxiedUrl, originalSrc: imageUrl, alt: name };
-      }
-
-      const key = `va511_cam_manual::${id}::${lat.toFixed(5)},${lon.toFixed(5)}`;
-      if (store.seenKeys.has(key)) continue;
-      store.seenKeys.add(key);
-
-      const item = {
-        id: key,
-        category: "camera",
-        title: name,
-        summary: "Live traffic camera for I-95 corridor (manual data)",
-        sourceName: "511 Virginia (Manual)",
-        sourceId: "va511-cameras-manual",
-        url: url || "https://511.vdot.virginia.gov/",
-        timestamp: new Date().toISOString(),
-        lat,
-        lon,
-        emoji: "📷",
-        tone: "good",
-        media,
-        dedupeKey: key,
-        message: "Live traffic camera for I-95 corridor",
-        panelHtml: ""
-      };
-
-      store.itemsById.set(item.id, item);
-      added++;
-    }
-
-    return { added, total: cameras.length };
   }
 
 
