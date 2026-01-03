@@ -143,6 +143,23 @@ body{
   background: rgba(126,240,255,.10);
   border-color: rgba(126,240,255,.22);
 }
+.chip--partial{
+  background: rgba(255,193,7,.10);
+  border-color: rgba(255,193,7,.30);
+}
+.chip--partial .dot{
+  background: rgba(255,193,7,.90);
+  box-shadow: 0 0 12px rgba(255,193,7,.7);
+}
+.chip--degraded{
+  background: rgba(255,107,138,.10);
+  border-color: rgba(255,107,138,.30);
+}
+.chip--degraded .dot{
+  background: rgba(255,107,138,.90);
+  box-shadow: 0 0 12px rgba(255,107,138,.7);
+}
+/* Legacy stale class (now uses partial) */
 .chip--stale{
   background: rgba(255,193,7,.10);
   border-color: rgba(255,193,7,.30);

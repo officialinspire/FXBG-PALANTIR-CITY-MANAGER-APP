@@ -275,15 +275,28 @@ class CacheManager {
   _cleanup() {
     const now = Date.now();
     let removed = 0;
+    let survivedPastMaxTTL = 0;
+    const MAX_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours - absolute max for any entry
 
     for (const [key, entry] of this.cache.entries()) {
       const age = now - entry.ts;
-      if (age > entry.ttlMs) {
+
+      // Warn if entry survived past its expected TTL significantly
+      if (age > entry.ttlMs * 2 && entry.ttlMs > 0) {
+        survivedPastMaxTTL++;
+      }
+
+      // Remove if expired or absurdly old (safety check)
+      if (age > entry.ttlMs || age > MAX_TTL_MS) {
         const size = (entry.body?.length || 0) + 500;
         this.currentBytes = Math.max(0, this.currentBytes - size);
         this.cache.delete(key);
         removed++;
       }
+    }
+
+    if (survivedPastMaxTTL > 0) {
+      console.warn(`[CacheManager] WARNING: ${survivedPastMaxTTL} entries survived past 2x their TTL (possible cleanup lag)`);
     }
 
     if (removed > 0) {
@@ -295,6 +308,18 @@ class CacheManager {
     // Check entry count limit
     if (this.cache.size <= this.maxEntries && this.currentBytes <= this.maxBytes) {
       return; // Within limits
+    }
+
+    // WARN if approaching or exceeding hard limits
+    const entryOverage = this.cache.size - this.maxEntries;
+    const byteOverage = this.currentBytes - this.maxBytes;
+
+    if (entryOverage > this.maxEntries * 0.1) {
+      console.warn(`[CacheManager] WARNING: Cache size significantly exceeds limit (${this.cache.size} > ${this.maxEntries}, overage: ${entryOverage})`);
+    }
+
+    if (byteOverage > this.maxBytes * 0.1) {
+      console.warn(`[CacheManager] WARNING: Cache bytes significantly exceed limit (${this.currentBytes} > ${this.maxBytes}, overage: ${Math.round(byteOverage / 1024 / 1024)} MB)`);
     }
 
     // Evict oldest accessed entries until within limits
@@ -608,18 +633,39 @@ async function waitForSlot(host) {
   }
 }
 
+/**
+ * Generate short random request ID for tracing
+ * Format: 8 alphanumeric characters (e.g., "a3f9b2c1")
+ */
+function generateRequestId() {
+  return Math.random().toString(36).substring(2, 10);
+}
+
 async function proxyFetch(targetUrl, reqHeaders) {
   const accept = String(reqHeaders["accept"] || "");
   const key = cacheKey(targetUrl, accept);
+  const requestId = generateRequestId();
+  const startTime = Date.now();
 
   const cached = cache.get(key);
   const isFresh = cached && (nowMs() - cached.ts) < cached.ttlMs;
   if (isFresh) {
     // Add QQMS headers to fresh cache hit
     const qqmsHeaders = qqms.generateHeaders(targetUrl, cached, false);
+    const elapsed = Date.now() - startTime;
+    let upstreamHost = '';
+    try { upstreamHost = new URL(targetUrl).hostname; } catch {}
+
     return {
       ...cached,
-      headers: { ...cached.headers, ...qqmsHeaders }
+      headers: {
+        ...cached.headers,
+        ...qqmsHeaders,
+        'X-Proxy-Request-ID': requestId,
+        'X-Proxy-Upstream-Host': upstreamHost,
+        'X-Proxy-Cache-State': 'hit',
+        'X-Proxy-Elapsed-MS': String(elapsed)
+      }
     };
   }
   const staleCandidate = cached || null;
@@ -631,6 +677,8 @@ async function proxyFetch(targetUrl, reqHeaders) {
   const prom = (async () => {
     let u;
     try { u = new URL(targetUrl); } catch { throw new Error("Invalid URL"); }
+
+    const upstreamHost = u.hostname;
 
     await waitForSlot(u.hostname);
     activeFetches++;
@@ -707,6 +755,7 @@ async function proxyFetch(targetUrl, reqHeaders) {
         if (staleCandidate) {
           console.log(`[proxy] Using stale cache for ${targetUrl} (fetch error: ${e.message || 'unknown'})`);
           const qqmsHeaders = qqms.generateHeaders(targetUrl, staleCandidate, true);
+          const elapsed = Date.now() - startTime;
           return {
             ...staleCandidate,
             headers: {
@@ -714,6 +763,10 @@ async function proxyFetch(targetUrl, reqHeaders) {
               "X-Proxy-Stale": "1",
               "X-Proxy-Cache-Used": "stale",
               "X-Proxy-Error": "fetch_failed",
+              'X-Proxy-Request-ID': requestId,
+              'X-Proxy-Upstream-Host': upstreamHost,
+              'X-Proxy-Cache-State': 'stale',
+              'X-Proxy-Elapsed-MS': String(elapsed),
               ...qqmsHeaders
             },
             ts: staleCandidate.ts,
@@ -730,6 +783,7 @@ async function proxyFetch(targetUrl, reqHeaders) {
         recordHostError(u.hostname);
         qqms.recordError(targetUrl);
         const qqmsHeaders = qqms.generateHeaders(targetUrl, staleCandidate, true);
+        const elapsed = Date.now() - startTime;
         return {
           ...staleCandidate,
           headers: {
@@ -737,6 +791,10 @@ async function proxyFetch(targetUrl, reqHeaders) {
             "X-Proxy-Stale": "1",
             "X-Proxy-Upstream-Status": String(upstream.status),
             "X-Proxy-Cache-Used": "stale",
+            'X-Proxy-Request-ID': requestId,
+            'X-Proxy-Upstream-Host': upstreamHost,
+            'X-Proxy-Cache-State': 'stale',
+            'X-Proxy-Elapsed-MS': String(elapsed),
             ...qqmsHeaders
           },
           status: 200,
@@ -757,9 +815,11 @@ async function proxyFetch(targetUrl, reqHeaders) {
       if (upstream.status === 404) {
         recordHostError(u.hostname);
         qqms.recordError(targetUrl);
+        const elapsed = Date.now() - startTime;
         const errorBody = Buffer.from(JSON.stringify({
+          ok: false,
           error: "Not Found",
-          url: targetUrl,
+          upstream: upstreamHost,
           status: 404,
           message: "The requested resource was not found. Check the URL and try again."
         }));
@@ -769,7 +829,11 @@ async function proxyFetch(targetUrl, reqHeaders) {
           status: 404,
           headers: {
             "Content-Type": "application/json",
-            "X-Proxy-Error": "upstream_404"
+            "X-Proxy-Error": "upstream_404",
+            'X-Proxy-Request-ID': requestId,
+            'X-Proxy-Upstream-Host': upstreamHost,
+            'X-Proxy-Cache-State': 'miss',
+            'X-Proxy-Elapsed-MS': String(elapsed)
           },
           body: errorBody
         };
@@ -809,6 +873,7 @@ async function proxyFetch(targetUrl, reqHeaders) {
             recordHostError(u.hostname);
             qqms.recordError(targetUrl);
             const qqmsHeaders = qqms.generateHeaders(targetUrl, staleCandidate, true);
+            const elapsed = Date.now() - startTime;
             return {
               ...staleCandidate,
               headers: {
@@ -817,6 +882,10 @@ async function proxyFetch(targetUrl, reqHeaders) {
                 "X-Proxy-Error": "html_instead_of_data",
                 "X-Proxy-Cache-Used": "stale",
                 "X-Proxy-Upstream-Status": String(upstream.status),
+                'X-Proxy-Request-ID': requestId,
+                'X-Proxy-Upstream-Host': upstreamHost,
+                'X-Proxy-Cache-State': 'stale',
+                'X-Proxy-Elapsed-MS': String(elapsed),
                 ...qqmsHeaders
               },
               status: 200,
@@ -826,9 +895,11 @@ async function proxyFetch(targetUrl, reqHeaders) {
             console.error(`[proxy] No stale cache available, returning error JSON for HTML response`);
             recordHostError(u.hostname);
             qqms.recordError(targetUrl);
+            const elapsed = Date.now() - startTime;
             const errorBody = Buffer.from(JSON.stringify({
+              ok: false,
               error: "html_instead_of_data",
-              url: targetUrl,
+              upstream: upstreamHost,
               status: upstream.status,
               message: "Upstream returned HTML when structured data (JSON/XML) was expected. This usually indicates a block page, error page, or misconfigured endpoint.",
               hint: "Check if the API endpoint requires authentication or has changed URLs."
@@ -840,7 +911,11 @@ async function proxyFetch(targetUrl, reqHeaders) {
               headers: {
                 "Content-Type": "application/json",
                 "X-Proxy-Error": "html_instead_of_data",
-                "X-Proxy-Upstream-Status": String(upstream.status)
+                "X-Proxy-Upstream-Status": String(upstream.status),
+                'X-Proxy-Request-ID': requestId,
+                'X-Proxy-Upstream-Host': upstreamHost,
+                'X-Proxy-Cache-State': 'miss',
+                'X-Proxy-Elapsed-MS': String(elapsed)
               },
               body: errorBody
             };
@@ -851,6 +926,7 @@ async function proxyFetch(targetUrl, reqHeaders) {
         }
       }
 
+      const elapsed = Date.now() - startTime;
       const entry = {
         ts: nowMs(),
         ttlMs: upstream.status === 429 ? Math.min(ttlMs, 15_000) : ttlMs,
@@ -861,6 +937,10 @@ async function proxyFetch(targetUrl, reqHeaders) {
           "X-Proxy-Cache-TTL": String(ttlMs),
           "X-Proxy-Upstream-Status": String(upstream.status),
           "X-Proxy-Cache-Fresh": "1",
+          'X-Proxy-Request-ID': requestId,
+          'X-Proxy-Upstream-Host': upstreamHost,
+          'X-Proxy-Cache-State': 'fresh',
+          'X-Proxy-Elapsed-MS': String(elapsed)
         },
         body: buf,
       };
@@ -965,6 +1045,66 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, JSON.stringify(stats, null, 2), { "Content-Type": "application/json" });
     }
 
+    // Debug memory endpoint (dev-only, disabled in production)
+    if (urlObj.pathname === "/debug/memory") {
+      // Check if production mode (disable in production)
+      const isProduction = process.env.NODE_ENV === 'production';
+      if (isProduction) {
+        return send(res, 403, JSON.stringify({
+          error: "forbidden",
+          message: "/debug/memory endpoint is disabled in production mode"
+        }), { "Content-Type": "application/json" });
+      }
+
+      const mem = process.memoryUsage();
+      const cacheStats = cacheManager.stats();
+
+      // Count active items in caches
+      let activeItems = 0;
+      for (const [_, entry] of cacheManager.cache.entries()) {
+        const age = Date.now() - entry.ts;
+        if (age < entry.ttlMs) activeItems++;
+      }
+
+      const debugInfo = {
+        timestamp: new Date().toISOString(),
+        uptime: {
+          ms: Date.now() - SERVER_START_TIME,
+          human: `${Math.floor((Date.now() - SERVER_START_TIME) / 1000 / 60)} minutes`
+        },
+        process: {
+          memoryUsage: {
+            rss: `${Math.round(mem.rss / 1024 / 1024)} MB`,
+            heapTotal: `${Math.round(mem.heapTotal / 1024 / 1024)} MB`,
+            heapUsed: `${Math.round(mem.heapUsed / 1024 / 1024)} MB`,
+            external: `${Math.round(mem.external / 1024 / 1024)} MB`
+          },
+          pid: process.pid,
+          nodeVersion: process.version
+        },
+        cache: {
+          entries: cacheStats.entries,
+          maxEntries: cacheStats.maxEntries,
+          activeItems: activeItems,
+          bytesUsed: cacheStats.bytes,
+          maxBytes: cacheStats.maxBytes,
+          utilizationPct: Math.round((cacheStats.bytes / cacheStats.maxBytes) * 100)
+        },
+        maps: {
+          inflight: inflight.size,
+          hostLast: hostLast.size,
+          hostBackoff: hostBackoff.size,
+          qqmsErrors: qqms.errorCounts.size
+        },
+        connections: {
+          activeFetches: activeFetches,
+          maxConcurrent: MAX_CONCURRENT
+        }
+      };
+
+      return send(res, 200, JSON.stringify(debugInfo, null, 2), { "Content-Type": "application/json" });
+    }
+
     if (urlObj.pathname === "/proxy") {
       const target = urlObj.searchParams.get("url");
       if (!target) return send(res, 400, "Missing url param");
@@ -974,11 +1114,14 @@ const server = http.createServer(async (req, res) => {
       const urlCheck = checkUrlAllowed(target);
       if (!urlCheck.allowed) {
         console.warn(`[proxy] Blocked request to ${target}: ${urlCheck.reason}`);
+        let upstreamHost = '';
+        try { upstreamHost = new URL(target).hostname; } catch {}
         const errorBody = JSON.stringify({
+          ok: false,
           error: "blocked_target",
-          url: target,
-          reason: urlCheck.reason,
-          message: "This URL is not permitted by the proxy security policy"
+          upstream: upstreamHost,
+          status: 403,
+          message: "This URL is not permitted by the proxy security policy. " + urlCheck.reason
         });
         return send(res, 403, errorBody, { "Content-Type": "application/json" });
       }
@@ -994,9 +1137,13 @@ const server = http.createServer(async (req, res) => {
         return res.end(entry.body);
       } catch (proxyErr) {
         console.error(`[proxy] Failed to fetch ${target}:`, proxyErr.message);
+        let upstreamHost = '';
+        try { upstreamHost = new URL(target).hostname; } catch {}
         const errorBody = JSON.stringify({
-          error: "Proxy fetch failed",
-          url: target,
+          ok: false,
+          error: "proxy_fetch_failed",
+          upstream: upstreamHost,
+          status: 502,
           message: proxyErr.message || String(proxyErr)
         });
         return send(res, 502, errorBody, { "Content-Type": "application/json" });
