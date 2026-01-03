@@ -855,6 +855,46 @@
   // -----------------------------
   // CORS fetch with proxy rotation
   // -----------------------------
+
+  /**
+   * Client-side response cache to prevent rapid re-fetch storms during polling.
+   * Short TTL (10s) to reduce upstream load without affecting data freshness.
+   */
+  const clientCache = new Map(); // key -> { response, ts }
+  const clientCacheTTL = 10000; // 10 seconds
+  const clientCacheMaxSize = 100; // Bounded to prevent memory leaks
+
+  function getClientCacheKey(url, opts) {
+    // Simple key: url + expect type
+    const expect = opts?.expect || 'auto';
+    return `${expect}::${url}`;
+  }
+
+  function cleanupClientCache() {
+    const now = Date.now();
+    const keysToDelete = [];
+    for (const [key, entry] of clientCache.entries()) {
+      if ((now - entry.ts) > clientCacheTTL) {
+        keysToDelete.push(key);
+      }
+    }
+    for (const key of keysToDelete) {
+      clientCache.delete(key);
+    }
+    // Also enforce size limit (LRU-like: remove oldest entries)
+    if (clientCache.size > clientCacheMaxSize) {
+      const entries = Array.from(clientCache.entries())
+        .sort((a, b) => a[1].ts - b[1].ts); // Oldest first
+      const toRemove = entries.slice(0, clientCache.size - clientCacheMaxSize);
+      for (const [key] of toRemove) {
+        clientCache.delete(key);
+      }
+    }
+  }
+
+  // Periodic cleanup every 30 seconds
+  setInterval(cleanupClientCache, 30000);
+
   async function fetchWithProxies(url, opts = {}, responseType = 'auto') {
     /**
      * Perform a fetch to the given URL, using a local proxy when possible to
@@ -863,6 +903,13 @@
      * types are "json" and "text". Any additional headers supplied in
      * opts.headers will be merged into the request.
      */
+
+    // Check client-side cache first (short-lived to prevent re-render storms)
+    const cacheKey = getClientCacheKey(url, opts);
+    const cached = clientCache.get(cacheKey);
+    if (cached && (Date.now() - cached.ts) < clientCacheTTL) {
+      return cached.response;
+    }
 
     // Determine the desired response type: opts.expect takes precedence over the
     // legacy responseType argument. Defaults to "auto", which behaves like
@@ -975,6 +1022,8 @@
           // If content-type isn't JSON but the payload is valid JSON, still allow parsing.
           try {
             const parsed = JSON.parse(txt);
+            // Cache successful response
+            clientCache.set(cacheKey, { response: parsed, ts: Date.now() });
             return parsed;
           } catch (parseErr) {
             const err = new Error(ct.includes('json') ? 'Bad JSON' : 'Non-JSON response');
@@ -991,6 +1040,8 @@
           console.warn(`[fetchWithProxies] Empty response from ${url} via ${candidate.type}`);
         }
 
+        // Cache successful response
+        clientCache.set(cacheKey, { response: textResponse, ts: Date.now() });
         return textResponse;
       } catch (err) {
         lastErr = err;
