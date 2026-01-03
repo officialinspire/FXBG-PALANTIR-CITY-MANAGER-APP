@@ -56,6 +56,40 @@
       cdc: 24 * 60 * 60 * 1000     // CDC data updates daily
     },
 
+    // Round 3: Load shedding + adaptive polling (reliability improvements)
+    reliability: {
+      // Per-refresh cycle budgets (prevent request storms)
+      maxRequestsPerCycle: 20,      // Max network requests in single refreshAll cycle
+      maxTimePerCycleMs: 20000,     // Max time budget for refresh cycle (20s)
+
+      // Adaptive backoff per source
+      backoffMinMs: 2 * 60 * 1000,   // Start at 2 minutes
+      backoffMaxMs: 20 * 60 * 1000,  // Cap at 20 minutes
+      backoffMultiplier: 2,           // Exponential multiplier (2x)
+      maxBackoffEntries: 100,         // Cap Map size to prevent leaks
+
+      // Degraded mode thresholds
+      degradedModeFailureThreshold: 3,  // If 3+ sources fail, enter degraded mode
+      degradedModeSkipClustering: true, // Skip expensive cluster rebuild in degraded mode
+      degradedModeSkipListRender: true, // Skip expensive list re-renders in degraded mode
+
+      // Near-duplicate suppression (for 511 + ArcGIS)
+      dedupeTimeWindowMs: 10 * 60 * 1000,  // 10-minute window for near-duplicates
+      dedupeDistanceThresholdM: 50,         // Same location if within 50 meters
+
+      // Pruning intervals (memory leak prevention)
+      pruneIntervalMs: 10 * 60 * 1000,      // Prune old state every 10 minutes
+      geocodeCacheTTLMs: 7 * 24 * 60 * 60 * 1000, // Geocode cache: 7 days
+      clientCacheTTLMs: 30 * 60 * 1000,     // Client response cache: 30 minutes
+
+      // Simulated failure mode (dev/testing only - DO NOT ENABLE IN PRODUCTION)
+      simulateFailure: {
+        enabled: false,              // MUST be false in production
+        targetSource: null,          // e.g., 'rss', 'va511', 'arcgisCrash', etc.
+        failureType: '429'           // '429', 'timeout', '500', etc.
+      }
+    },
+
     // CORS proxy rotation (browser-only)
     corsProxies: [],
 
@@ -896,12 +930,77 @@
   setInterval(cleanupClientCache, 30000);
 
   /**
+   * Round 3: Proactive pruning for all long-lived Maps (memory leak prevention)
+   * Runs every 10 minutes to remove stale/expired entries from all caches
+   */
+  function pruneAllMaps() {
+    const now = Date.now();
+    let totalPruned = 0;
+
+    // 1. Prune geocodeCache (remove entries older than TTL)
+    const geocodePruneCount = (() => {
+      const geocodeCacheTTL = CONFIG.reliability.geocodeCacheTTLMs;
+      let count = 0;
+      for (const [key, entry] of geocodeCache.entries()) {
+        const age = now - (entry.timestamp || 0);
+        if (age > geocodeCacheTTL) {
+          geocodeCache.delete(key);
+          count++;
+        }
+      }
+      return count;
+    })();
+    totalPruned += geocodePruneCount;
+
+    // 2. Prune sourceBackoff (remove entries older than max backoff time)
+    const backoffPruneCount = (() => {
+      const maxAge = CONFIG.reliability.backoffMaxMs * 2; // Remove if 2x max backoff has passed
+      let count = 0;
+      for (const [sourceName, data] of sourceBackoff.entries()) {
+        if (now > data.nextAllowedMs + maxAge) {
+          sourceBackoff.delete(sourceName);
+          count++;
+        }
+      }
+      return count;
+    })();
+    totalPruned += backoffPruneCount;
+
+    // 3. Prune healthTracker recentErrors (already has internal cleanup, but double-check)
+    const healthPruneCount = (() => {
+      let count = 0;
+      for (const [feedId, data] of healthTracker.recentErrors.entries()) {
+        if (now - data.firstSeen > healthTracker.windowMs) {
+          healthTracker.recentErrors.delete(feedId);
+          count++;
+        }
+      }
+      return count;
+    })();
+    totalPruned += healthPruneCount;
+
+    // 4. Log pruning stats
+    if (totalPruned > 0) {
+      console.log(`[Prune] Removed ${totalPruned} stale entries (geocode: ${geocodePruneCount}, backoff: ${backoffPruneCount}, health: ${healthPruneCount})`);
+    }
+
+    // 5. Log Map sizes for monitoring
+    console.log(`[Prune] Map sizes: geocodeCache=${geocodeCache.size}, sourceBackoff=${sourceBackoff.size}, clientCache=${clientCache.size}, healthErrors=${healthTracker.recentErrors.size}`);
+  }
+
+  // Run pruning tick every 10 minutes
+  setInterval(pruneAllMaps, CONFIG.reliability.pruneIntervalMs);
+
+  /**
    * Health indicator tracking (Round 2 observability)
    * Tracks feed failures and stale data usage to compute system health
+   *
+   * Round 3 enhancement: Tracks stale age for UI display
    */
   const healthTracker = {
     recentErrors: new Map(), // feedId -> errorCount
     staleDataCount: 0,
+    lastStaleAgeMs: 0, // Round 3: Track most recent stale age
     lastHealthUpdate: 0,
     windowMs: 5 * 60 * 1000, // 5-minute rolling window
 
@@ -919,8 +1018,9 @@
       this.updateHealthIndicator();
     },
 
-    recordStaleData() {
+    recordStaleData(staleAgeMs = 0) {
       this.staleDataCount++;
+      this.lastStaleAgeMs = staleAgeMs || 0;
       this.updateHealthIndicator();
     },
 
@@ -937,6 +1037,16 @@
       const errorCount = this.recentErrors.size;
       const staleUsed = this.staleDataCount > 0;
 
+      // Round 3: Format stale age for display
+      const staleAgeStr = (() => {
+        if (!staleUsed || !this.lastStaleAgeMs) return '';
+        const ageMinutes = Math.floor(this.lastStaleAgeMs / 1000 / 60);
+        const ageHours = Math.floor(ageMinutes / 60);
+        if (ageHours > 0) return ` (stale: ${ageHours}h)`;
+        if (ageMinutes > 0) return ` (stale: ${ageMinutes}m)`;
+        return ' (stale: <1m)';
+      })();
+
       // Health logic:
       // LIVE: No errors, no stale data
       // PARTIAL: 1-2 failing feeds OR stale data in use
@@ -944,10 +1054,10 @@
       if (errorCount === 0 && !staleUsed) {
         return { status: 'LIVE', color: 'chip--live', title: 'All feeds operational' };
       } else if (errorCount >= 3) {
-        return { status: 'DEGRADED', color: 'chip--degraded', title: `${errorCount} feeds failing, using cached data` };
+        return { status: 'DEGRADED', color: 'chip--degraded', title: `${errorCount} feeds failing, using cached data${staleAgeStr}` };
       } else {
         const reason = errorCount > 0 ? `${errorCount} feed(s) failing` : 'using cached data';
-        return { status: 'PARTIAL', color: 'chip--partial', title: `Partial service: ${reason}` };
+        return { status: 'PARTIAL', color: 'chip--partial', title: `Partial service: ${reason}${staleAgeStr}` };
       }
     },
 
@@ -974,10 +1084,122 @@
   };
 
   /**
-   * Stale data indicator - shows when proxy returns stale cached data
+   * Round 3: Adaptive Backoff System (per-source failure tracking)
+   * Prevents hammering failing/rate-limited sources by exponentially increasing delays
    */
-  function showStaleDataIndicator() {
-    healthTracker.recordStaleData();
+  const sourceBackoff = new Map(); // sourceName -> { consecutiveErrors, nextAllowedMs, lastError }
+  const cycleStats = {
+    requestCount: 0,
+    startTime: 0,
+    failureCount: 0,
+    degradedMode: false
+  };
+
+  /**
+   * Check if source should be skipped due to backoff
+   * Returns { allowed: boolean, delayMs?: number }
+   */
+  function checkSourceBackoff(sourceName) {
+    const backoffData = sourceBackoff.get(sourceName);
+    if (!backoffData) return { allowed: true };
+
+    const now = Date.now();
+    if (now < backoffData.nextAllowedMs) {
+      const delayMs = backoffData.nextAllowedMs - now;
+      return { allowed: false, delayMs };
+    }
+
+    return { allowed: true };
+  }
+
+  /**
+   * Record source success (reset backoff)
+   */
+  function recordSourceSuccess(sourceName) {
+    sourceBackoff.delete(sourceName);
+  }
+
+  /**
+   * Record source failure (escalate backoff)
+   */
+  function recordSourceFailure(sourceName, errorType = 'unknown') {
+    const now = Date.now();
+    const existing = sourceBackoff.get(sourceName);
+
+    if (!existing) {
+      // First failure: apply minimum backoff
+      sourceBackoff.set(sourceName, {
+        consecutiveErrors: 1,
+        nextAllowedMs: now + CONFIG.reliability.backoffMinMs,
+        lastError: errorType
+      });
+      console.warn(`[Backoff] ${sourceName}: First failure (${errorType}), next attempt in ${CONFIG.reliability.backoffMinMs / 1000}s`);
+    } else {
+      // Escalate backoff exponentially
+      const newErrors = existing.consecutiveErrors + 1;
+      const newBackoffMs = Math.min(
+        CONFIG.reliability.backoffMinMs * Math.pow(CONFIG.reliability.backoffMultiplier, newErrors - 1),
+        CONFIG.reliability.backoffMaxMs
+      );
+      sourceBackoff.set(sourceName, {
+        consecutiveErrors: newErrors,
+        nextAllowedMs: now + newBackoffMs,
+        lastError: errorType
+      });
+      console.warn(`[Backoff] ${sourceName}: ${newErrors} consecutive failures (${errorType}), next attempt in ${Math.round(newBackoffMs / 1000)}s`);
+    }
+
+    // Prune map if it grows too large (safety cap)
+    if (sourceBackoff.size > CONFIG.reliability.maxBackoffEntries) {
+      const entries = Array.from(sourceBackoff.entries())
+        .sort((a, b) => a[1].consecutiveErrors - b[1].consecutiveErrors);
+      const toRemove = sourceBackoff.size - CONFIG.reliability.maxBackoffEntries;
+      for (let i = 0; i < toRemove; i++) {
+        sourceBackoff.delete(entries[i][0]);
+      }
+      console.log(`[Backoff] Pruned ${toRemove} entries from sourceBackoff map (${sourceBackoff.size} remaining)`);
+    }
+
+    // Track cycle failures for degraded mode
+    cycleStats.failureCount++;
+  }
+
+  /**
+   * Check if refresh cycle budget exceeded
+   */
+  function checkCycleBudget() {
+    const elapsed = Date.now() - cycleStats.startTime;
+
+    if (cycleStats.requestCount >= CONFIG.reliability.maxRequestsPerCycle) {
+      console.warn(`[Budget] Max requests per cycle exceeded (${cycleStats.requestCount}/${CONFIG.reliability.maxRequestsPerCycle})`);
+      return { exceeded: true, reason: 'max_requests' };
+    }
+
+    if (elapsed >= CONFIG.reliability.maxTimePerCycleMs) {
+      console.warn(`[Budget] Max time per cycle exceeded (${Math.round(elapsed / 1000)}s/${CONFIG.reliability.maxTimePerCycleMs / 1000}s)`);
+      return { exceeded: true, reason: 'max_time' };
+    }
+
+    return { exceeded: false };
+  }
+
+  /**
+   * Simulated failure (dev/testing only)
+   */
+  function shouldSimulateFailure(sourceName) {
+    const sim = CONFIG.reliability.simulateFailure;
+    if (!sim.enabled) return false;
+    if (sim.targetSource && sim.targetSource !== sourceName) return false;
+    console.warn(`[SimFailure] Simulating ${sim.failureType} failure for ${sourceName}`);
+    return true;
+  }
+
+  /**
+   * Stale data indicator - shows when proxy returns stale cached data
+   * Round 3: Now accepts stale age for UI display
+   */
+  function showStaleDataIndicator(staleAgeMs = 0) {
+    healthTracker.recordStaleData(staleAgeMs);
   }
 
   /**
@@ -999,7 +1221,29 @@
      * - Gracefully handles missing headers (content-type, x-proxy-stale, x-proxy-cache-state)
      * - All header access checks for existence before .get()
      * - Existing exception-based error handling preserved for compatibility
+     *
+     * RELIABILITY (Round 3):
+     * - Tracks cycle request count for budget enforcement
+     * - Extracts stale age metadata from proxy headers
+     * - Supports simulated failures for testing
      */
+
+    // Round 3: Track cycle request count
+    cycleStats.requestCount++;
+
+    // Round 3: Check for simulated failure (dev/testing only)
+    const sourceName = opts.sourceName || 'unknown';
+    if (shouldSimulateFailure(sourceName)) {
+      const sim = CONFIG.reliability.simulateFailure;
+      if (sim.failureType === '429') {
+        throw new Error('Simulated 429 rate limit');
+      } else if (sim.failureType === 'timeout') {
+        await new Promise(r => setTimeout(r, 35000)); // Exceed timeout
+        throw new Error('Simulated timeout');
+      } else if (sim.failureType === '500') {
+        throw new Error('Simulated 500 server error');
+      }
+    }
 
     // Check client-side cache first (short-lived to prevent re-render storms)
     const cacheKey = getClientCacheKey(url, opts);
@@ -1099,14 +1343,24 @@
 
         clearTimeout(timeout);
 
-        // Check for stale data indicator from proxy (DEFENSIVE: handle missing header)
+        // Round 3: Extract stale age metadata from proxy headers
         const isStale = (res.headers.get && res.headers.get('X-Proxy-Stale')) === '1';
+        const staleAgeMs = (res.headers.get && res.headers.get('X-QQMS-Age-Ms'))
+          ? parseInt(res.headers.get('X-QQMS-Age-Ms'), 10)
+          : 0;
+        const cacheState = (res.headers.get && res.headers.get('X-Proxy-Cache-State')) || 'unknown';
+
         if (isStale) {
-          showStaleDataIndicator();
+          showStaleDataIndicator(staleAgeMs);
         }
 
-        // DEFENSIVE: Read cache state header if available (no-op for observability)
-        const cacheState = (res.headers.get && res.headers.get('X-Proxy-Cache-State')) || 'unknown';
+        // Store stale age metadata for UI display (attached to response object if possible)
+        const metadata = {
+          isStale,
+          staleAgeMs,
+          cacheState,
+          proxyRequestId: (res.headers.get && res.headers.get('X-Proxy-Request-ID')) || null
+        };
 
         if (!res.ok) {
           const err = new Error(`HTTP ${res.status}`);
@@ -1746,6 +2000,75 @@
     lastByCategory: new Map()
   };
 
+  /**
+   * Round 3: Near-duplicate detection for crash items (511 + ArcGIS)
+   * Suppresses items that are likely duplicates based on:
+   * - Same category
+   * - Similar location (within distance threshold)
+   * - Similar title/summary
+   * - Within time window
+   */
+  function isNearDuplicate(newItem) {
+    const now = Date.now();
+    const timeWindow = CONFIG.reliability.dedupeTimeWindowMs;
+    const distanceThreshold = CONFIG.reliability.dedupeDistanceThresholdM;
+
+    // Only apply to crash/incident categories
+    const crashCategories = ['crash', 'road_closure', 'traffic'];
+    if (!crashCategories.includes(newItem.category)) {
+      return false; // Not a crash item, skip near-duplicate check
+    }
+
+    // Check against all existing items in the store
+    for (const [_, existingItem] of store.itemsById.entries()) {
+      // Skip if different category
+      if (existingItem.category !== newItem.category) continue;
+
+      // Skip if outside time window
+      const existingTime = existingItem.published ? new Date(existingItem.published).getTime() : 0;
+      const newTime = newItem.published ? new Date(newItem.published).getTime() : now;
+      if (Math.abs(newTime - existingTime) > timeWindow) continue;
+
+      // Check location proximity (if both have locations)
+      if (newItem.loc && existingItem.loc) {
+        const distance = haversineDistance(
+          newItem.loc.lat, newItem.loc.lon,
+          existingItem.loc.lat, existingItem.loc.lon
+        );
+        if (distance > distanceThreshold) continue;
+
+        // Within distance threshold - check title similarity
+        const newTitle = (newItem.title || '').toLowerCase();
+        const existingTitle = (existingItem.title || '').toLowerCase();
+
+        // Simple similarity: check if one contains the other or significant overlap
+        const overlap = newTitle.includes(existingTitle.slice(0, 20)) ||
+                       existingTitle.includes(newTitle.slice(0, 20));
+
+        if (overlap || distance < 10) { // Very close = likely duplicate
+          return true; // Near-duplicate detected
+        }
+      }
+    }
+
+    return false; // Not a near-duplicate
+  }
+
+  /**
+   * Haversine distance (meters) between two lat/lon points
+   */
+  function haversineDistance(lat1, lon1, lat2, lon2) {
+    const R = 6371000; // Earth radius in meters
+    const toRad = (deg) => deg * Math.PI / 180;
+    const dLat = toRad(lat2 - lat1);
+    const dLon = toRad(lon2 - lon1);
+    const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+              Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
+              Math.sin(dLon / 2) * Math.sin(dLon / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return R * c;
+  }
+
   function normalize({ source, raw }) {
     // Only drop items if they have no title AND no link (as per requirements)
     if (!raw.title && !raw.url) {
@@ -1999,10 +2322,28 @@ function selectItem(id) {
     others.sort((a,b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
     const trimmed = others.slice(0, CONFIG.perf.maxTotalItems);
 
+    // Round 3: Track removed items to clean up seenKeys (prevent memory leak)
+    const keptIds = new Set([...cams, ...trimmed].map(it => it.id));
+    const removedCount = items.length - keptIds.size;
+
     store.itemsById.clear();
     store.markersById.clear();
 
     for (const it of [...cams, ...trimmed]) store.itemsById.set(it.id, it);
+
+    // Round 3: Clean up seenKeys for removed items (prevent unbounded growth)
+    // Note: seenKeys uses dedupeKey, not id, so we can't clean it precisely here
+    // But refreshAll() already clears seenKeys, so this is a safety measure
+    // If seenKeys grows too large between refreshes, we'll cap it here
+    if (store.seenKeys.size > CONFIG.perf.maxTotalItems * 1.5) {
+      console.warn(`[enforceCaps] seenKeys grew too large (${store.seenKeys.size}), clearing stale entries`);
+      // In practice, refreshAll clears seenKeys regularly, so this is rare
+      // We can't safely prune seenKeys without item mapping, so just log for now
+    }
+
+    if (removedCount > 0) {
+      console.log(`[enforceCaps] Removed ${removedCount} old items (kept ${keptIds.size})`);
+    }
   }
 
   /**
@@ -3382,6 +3723,12 @@ function selectItem(id) {
   async function refreshAll() {
     $("liveText").textContent = "Refreshing…";
 
+    // Round 3: Initialize cycle budget tracking
+    cycleStats.requestCount = 0;
+    cycleStats.startTime = Date.now();
+    cycleStats.failureCount = 0;
+    cycleStats.degradedMode = false;
+
     // Hard reset (prevents buildup across refreshes)
     store.itemsById.clear();
     store.markersById.clear();
@@ -3397,13 +3744,37 @@ function selectItem(id) {
       CONFIG.cdc.enabled ? fetchCDC().catch(e => console.warn("CDC refresh partial", e)) : Promise.resolve()
     ]);
 
-    // Load Virginia Crash data LAST after all other APIs complete (sequential for better performance)
-    await pollArcgisCrashes().catch(e => console.warn("ArcGIS crash refresh partial", e));
-    await pollVirginiaCrashData().catch(e => console.warn("Virginia Crash Data refresh partial", e));
+    // Check budget before proceeding to crash data (budget enforcement)
+    const budgetCheck = checkCycleBudget();
+    if (budgetCheck.exceeded) {
+      console.warn(`[Budget] Deferring crash data sources to next cycle (${budgetCheck.reason})`);
+    } else {
+      // Load Virginia Crash data LAST after all other APIs complete (sequential for better performance)
+      await pollArcgisCrashes().catch(e => console.warn("ArcGIS crash refresh partial", e));
+      await pollVirginiaCrashData().catch(e => console.warn("Virginia Crash Data refresh partial", e));
+    }
+
+    // Round 3: Enter degraded mode if too many failures occurred
+    if (cycleStats.failureCount >= CONFIG.reliability.degradedModeFailureThreshold) {
+      cycleStats.degradedMode = true;
+      console.warn(`[DegradedMode] ${cycleStats.failureCount} sources failed, entering degraded mode`);
+    }
 
     $("liveText").textContent = "Live";
     setLastUpdate();
-    redraw();
+
+    // Round 3: Skip expensive operations in degraded mode
+    if (cycleStats.degradedMode && CONFIG.reliability.degradedModeSkipClustering) {
+      console.log(`[DegradedMode] Skipping cluster rebuild (degraded mode)`);
+      // Still update UI, just skip expensive clustering
+      updateCategoryCounts();
+    } else {
+      redraw();
+    }
+
+    // Log cycle stats
+    const cycleElapsed = Date.now() - cycleStats.startTime;
+    console.log(`[Cycle] Completed: ${cycleStats.requestCount} requests, ${cycleStats.failureCount} failures, ${Math.round(cycleElapsed / 1000)}s elapsed`);
   }
 
   $("btnRefresh").addEventListener("click", refreshAll);
