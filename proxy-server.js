@@ -34,11 +34,153 @@ const MIME = {
   ".txt": "text/plain; charset=utf-8",
 };
 
+/**
+ * Security: Allowlist of permitted upstream domains
+ * Prevents open relay / SSRF attacks by restricting proxy targets
+ */
+const ALLOWED_UPSTREAM_DOMAINS = [
+  // Weather
+  'api.weather.gov',
+  'weather.gov',
+  'openuv.io',
+  'api.openuv.io',
+
+  // Traffic & Incidents
+  '511virginia.org',
+  'www.511virginia.org',
+  '511.vdot.virginia.gov',
+  'virginiaroads.org',
+  'www.virginiaroads.org',
+
+  // Virginia Crash Data
+  'data.virginia.gov',
+  'services1.arcgis.com',
+  'services.arcgis.com',
+  'gis.virginiadot.org',
+  'utility.arcgis.com',
+  'arcgis.com', // ArcGIS services (various subdomains)
+
+  // Virginia Gov RSS Feeds
+  'fredericksburgva.gov',
+  'www.fredericksburgva.gov',
+  'spotsylvania.va.us',
+  'www.spotsylvania.va.us',
+  'staffordcountyva.gov',
+  'www.staffordcountyva.gov',
+  'co.caroline.va.us',
+  'warrentonva.gov',
+  'www.warrentonva.gov',
+
+  // Local News
+  'potomaclocal.com',
+  'www.potomaclocal.com',
+  'fredericksburgfreepress.com',
+  'www.fredericksburgfreepress.com',
+
+  // Health Data
+  'data.cdc.gov',
+  'cdc.gov',
+
+  // Geocoding
+  'nominatim.openstreetmap.org',
+
+  // Testing/Dev (remove in production if needed)
+  'httpbin.org',
+  'www.httpbin.org',
+];
+
+/**
+ * Private IP ranges to block (RFC 1918 + loopback + link-local)
+ */
+const PRIVATE_IP_PATTERNS = [
+  /^127\./,           // 127.0.0.0/8 (loopback)
+  /^10\./,            // 10.0.0.0/8 (private)
+  /^172\.(1[6-9]|2[0-9]|3[0-1])\./,  // 172.16.0.0/12 (private)
+  /^192\.168\./,      // 192.168.0.0/16 (private)
+  /^169\.254\./,      // 169.254.0.0/16 (link-local)
+  /^::1$/,            // IPv6 loopback
+  /^fe80:/i,          // IPv6 link-local
+  /^fc00:/i,          // IPv6 unique local
+  /^fd00:/i,          // IPv6 unique local
+];
+
+/**
+ * Blocked hostnames (case-insensitive)
+ */
+const BLOCKED_HOSTNAMES = [
+  'localhost',
+  '0.0.0.0',
+  '127.0.0.1',
+  '::1',
+];
+
+/**
+ * Check if target URL is allowed by security policy
+ * Returns { allowed: boolean, reason?: string }
+ */
+function checkUrlAllowed(targetUrl) {
+  try {
+    const url = new URL(targetUrl);
+    const hostname = url.hostname.toLowerCase();
+
+    // 1. Block non-http(s) protocols
+    if (!['http:', 'https:'].includes(url.protocol)) {
+      return {
+        allowed: false,
+        reason: `Protocol '${url.protocol}' not allowed (only http/https permitted)`
+      };
+    }
+
+    // 2. Block localhost and special hostnames
+    if (BLOCKED_HOSTNAMES.includes(hostname)) {
+      return {
+        allowed: false,
+        reason: `Hostname '${hostname}' is blocked (localhost/loopback not permitted)`
+      };
+    }
+
+    // 3. Block private IP ranges
+    for (const pattern of PRIVATE_IP_PATTERNS) {
+      if (pattern.test(hostname)) {
+        return {
+          allowed: false,
+          reason: `IP address '${hostname}' is in private/reserved range`
+        };
+      }
+    }
+
+    // 4. Check allowlist (match hostname or parent domain)
+    const isAllowed = ALLOWED_UPSTREAM_DOMAINS.some(allowed => {
+      // Exact match
+      if (hostname === allowed) return true;
+      // Subdomain match (e.g., 'services1.arcgis.com' matches 'arcgis.com')
+      if (hostname.endsWith('.' + allowed)) return true;
+      return false;
+    });
+
+    if (!isAllowed) {
+      return {
+        allowed: false,
+        reason: `Domain '${hostname}' not in allowlist (see DEV_NOTES.md for permitted domains)`
+      };
+    }
+
+    // All checks passed
+    return { allowed: true };
+
+  } catch (err) {
+    return {
+      allowed: false,
+      reason: `Invalid URL: ${err.message}`
+    };
+  }
+}
+
 function send(res, status, body, headers = {}) {
   res.writeHead(status, {
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Cache-TTL-MS",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Cache-TTL-MS, X-Timeout-MS, X-Access-Token, X-Api-Key, X-Requested-With, Accept",
     ...headers,
   });
   res.end(body);
@@ -200,9 +342,29 @@ let activeFetches = 0;
 const MAX_CONCURRENT = 3;
 const MIN_INTERVAL_PER_HOST_MS = 600; // spacing per host to reduce 429 bursts
 const DEFAULT_TIMEOUT_MS = 30000; // 30 second default timeout
+const MAX_BACKOFF_ENTRIES = 200; // Cap hostBackoff map size to prevent unbounded growth
 
 function nowMs() { return Date.now(); }
 function cacheKey(url, accept) { return `${accept || ""}::${url}`; }
+
+/**
+ * Prune hostBackoff map if it grows too large
+ * Removes entries with lowest error counts (least problematic hosts)
+ */
+function pruneHostBackoff() {
+  if (hostBackoff.size <= MAX_BACKOFF_ENTRIES) return;
+
+  // Sort by consecutive errors (ascending) and remove lowest-error entries
+  const entries = Array.from(hostBackoff.entries())
+    .sort((a, b) => a[1].consecutiveErrors - b[1].consecutiveErrors);
+
+  const toRemove = hostBackoff.size - MAX_BACKOFF_ENTRIES;
+  for (let i = 0; i < toRemove; i++) {
+    hostBackoff.delete(entries[i][0]);
+  }
+
+  console.log(`[proxy] Pruned ${toRemove} entries from hostBackoff map (${hostBackoff.size} remaining)`);
+}
 
 /**
  * TTL Configuration Map (centralized policy)
@@ -426,6 +588,9 @@ function recordHostError(host) {
   hostBackoff.set(host, { consecutiveErrors: newErrors, backoffMs: newBackoff });
 
   console.log(`[proxy] Host ${host} backoff: ${newErrors} errors, ${newBackoff}ms delay`);
+
+  // Prune map if it grows too large (safety cap)
+  pruneHostBackoff();
 }
 
 async function waitForSlot(host) {
@@ -547,6 +712,7 @@ async function proxyFetch(targetUrl, reqHeaders) {
             headers: {
               ...staleCandidate.headers,
               "X-Proxy-Stale": "1",
+              "X-Proxy-Cache-Used": "stale",
               "X-Proxy-Error": "fetch_failed",
               ...qqmsHeaders
             },
@@ -650,10 +816,37 @@ async function proxyFetch(targetUrl, reqHeaders) {
                 "X-Proxy-Stale": "1",
                 "X-Proxy-Error": "html_instead_of_data",
                 "X-Proxy-Cache-Used": "stale",
+                "X-Proxy-Upstream-Status": String(upstream.status),
                 ...qqmsHeaders
               },
               status: 200,
             };
+          } else {
+            // No stale cache available - return structured error JSON instead of HTML
+            console.error(`[proxy] No stale cache available, returning error JSON for HTML response`);
+            recordHostError(u.hostname);
+            qqms.recordError(targetUrl);
+            const errorBody = Buffer.from(JSON.stringify({
+              error: "html_instead_of_data",
+              url: targetUrl,
+              status: upstream.status,
+              message: "Upstream returned HTML when structured data (JSON/XML) was expected. This usually indicates a block page, error page, or misconfigured endpoint.",
+              hint: "Check if the API endpoint requires authentication or has changed URLs."
+            }));
+            const errorEntry = {
+              ts: nowMs(),
+              ttlMs: 5000, // Cache error for 5 seconds to avoid hammering
+              status: 502,
+              headers: {
+                "Content-Type": "application/json",
+                "X-Proxy-Error": "html_instead_of_data",
+                "X-Proxy-Upstream-Status": String(upstream.status)
+              },
+              body: errorBody
+            };
+            const qqmsHeaders = qqms.generateHeaders(targetUrl, errorEntry, false);
+            errorEntry.headers = { ...errorEntry.headers, ...qqmsHeaders };
+            return errorEntry;
           }
         }
       }
@@ -777,12 +970,25 @@ const server = http.createServer(async (req, res) => {
       if (!target) return send(res, 400, "Missing url param");
       if (!/^https?:\/\//i.test(target)) return send(res, 400, "Only http/https URLs are allowed");
 
+      // Security: Check if target URL is allowed
+      const urlCheck = checkUrlAllowed(target);
+      if (!urlCheck.allowed) {
+        console.warn(`[proxy] Blocked request to ${target}: ${urlCheck.reason}`);
+        const errorBody = JSON.stringify({
+          error: "blocked_target",
+          url: target,
+          reason: urlCheck.reason,
+          message: "This URL is not permitted by the proxy security policy"
+        });
+        return send(res, 403, errorBody, { "Content-Type": "application/json" });
+      }
+
       try {
         const entry = await proxyFetch(target, req.headers);
         res.writeHead(entry.status, {
           "Access-Control-Allow-Origin": "*",
           "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
-          "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Cache-TTL-MS, X-Timeout-MS",
+          "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Cache-TTL-MS, X-Timeout-MS, X-Access-Token, X-Api-Key, X-Requested-With, Accept",
           ...entry.headers,
         });
         return res.end(entry.body);

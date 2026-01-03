@@ -895,6 +895,31 @@
   // Periodic cleanup every 30 seconds
   setInterval(cleanupClientCache, 30000);
 
+  /**
+   * Stale data indicator - shows when proxy returns stale cached data
+   */
+  let staleDataTimeout = null;
+  function showStaleDataIndicator() {
+    const liveChip = document.getElementById('chipLive');
+    const liveText = document.getElementById('liveText');
+    if (!liveChip || !liveText) return;
+
+    // Show stale indicator
+    liveChip.classList.add('chip--stale');
+    liveChip.classList.remove('chip--live');
+    liveText.textContent = 'Stale Data';
+    liveChip.title = 'Some data is from cached responses due to upstream errors';
+
+    // Auto-hide after 30 seconds (or until next refresh)
+    if (staleDataTimeout) clearTimeout(staleDataTimeout);
+    staleDataTimeout = setTimeout(() => {
+      liveChip.classList.remove('chip--stale');
+      liveChip.classList.add('chip--live');
+      liveText.textContent = 'Live';
+      liveChip.title = '';
+    }, 30000);
+  }
+
   async function fetchWithProxies(url, opts = {}, responseType = 'auto') {
     /**
      * Perform a fetch to the given URL, using a local proxy when possible to
@@ -1001,6 +1026,12 @@
         });
 
         clearTimeout(timeout);
+
+        // Check for stale data indicator from proxy
+        const isStale = res.headers.get('X-Proxy-Stale') === '1';
+        if (isStale) {
+          showStaleDataIndicator();
+        }
 
         if (!res.ok) {
           const err = new Error(`HTTP ${res.status}`);
@@ -1898,7 +1929,21 @@ function selectItem(id) {
     for (const it of [...cams, ...trimmed]) store.itemsById.set(it.id, it);
   }
 
-  function redraw() {
+  /**
+   * Throttled redraw to prevent render storms on mobile
+   * Coalesces rapid redraw calls into a single RAF update
+   */
+  let redrawScheduled = false;
+  function redrawThrottled() {
+    if (redrawScheduled) return;
+    redrawScheduled = true;
+    requestAnimationFrame(() => {
+      redrawScheduled = false;
+      redrawImmediate();
+    });
+  }
+
+  function redrawImmediate() {
     enforceCaps();
     clusters.clearLayers();
     store.markersById.clear();
@@ -1931,6 +1976,14 @@ function selectItem(id) {
         }
       }, 100);
     }
+  }
+
+  /**
+   * Public redraw API - uses throttled version to prevent render storms
+   * On mobile, this coalesces rapid calls into a single RAF update
+   */
+  function redraw() {
+    redrawThrottled();
   }
 
   // -----------------------------
