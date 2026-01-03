@@ -896,28 +896,95 @@
   setInterval(cleanupClientCache, 30000);
 
   /**
+   * Health indicator tracking (Round 2 observability)
+   * Tracks feed failures and stale data usage to compute system health
+   */
+  const healthTracker = {
+    recentErrors: new Map(), // feedId -> errorCount
+    staleDataCount: 0,
+    lastHealthUpdate: 0,
+    windowMs: 5 * 60 * 1000, // 5-minute rolling window
+
+    recordError(feedId) {
+      const now = Date.now();
+      const existing = this.recentErrors.get(feedId) || { count: 0, firstSeen: now };
+
+      // Reset if outside window
+      if (now - existing.firstSeen > this.windowMs) {
+        this.recentErrors.set(feedId, { count: 1, firstSeen: now });
+      } else {
+        existing.count++;
+      }
+
+      this.updateHealthIndicator();
+    },
+
+    recordStaleData() {
+      this.staleDataCount++;
+      this.updateHealthIndicator();
+    },
+
+    computeHealth() {
+      const now = Date.now();
+
+      // Clean up old entries
+      for (const [feedId, data] of this.recentErrors.entries()) {
+        if (now - data.firstSeen > this.windowMs) {
+          this.recentErrors.delete(feedId);
+        }
+      }
+
+      const errorCount = this.recentErrors.size;
+      const staleUsed = this.staleDataCount > 0;
+
+      // Health logic:
+      // LIVE: No errors, no stale data
+      // PARTIAL: 1-2 failing feeds OR stale data in use
+      // DEGRADED: 3+ failing feeds
+      if (errorCount === 0 && !staleUsed) {
+        return { status: 'LIVE', color: 'chip--live', title: 'All feeds operational' };
+      } else if (errorCount >= 3) {
+        return { status: 'DEGRADED', color: 'chip--degraded', title: `${errorCount} feeds failing, using cached data` };
+      } else {
+        const reason = errorCount > 0 ? `${errorCount} feed(s) failing` : 'using cached data';
+        return { status: 'PARTIAL', color: 'chip--partial', title: `Partial service: ${reason}` };
+      }
+    },
+
+    updateHealthIndicator() {
+      const now = Date.now();
+      // Throttle updates to once per second
+      if (now - this.lastHealthUpdate < 1000) return;
+      this.lastHealthUpdate = now;
+
+      const liveChip = document.getElementById('chipLive');
+      const liveText = document.getElementById('liveText');
+      if (!liveChip || !liveText) return;
+
+      const health = this.computeHealth();
+
+      // Update UI
+      liveChip.className = `chip ${health.color}`;
+      liveText.textContent = health.status;
+      liveChip.title = health.title;
+
+      // Reset stale count after update (it's a transient indicator)
+      setTimeout(() => { this.staleDataCount = 0; }, 2000);
+    }
+  };
+
+  /**
    * Stale data indicator - shows when proxy returns stale cached data
    */
-  let staleDataTimeout = null;
   function showStaleDataIndicator() {
-    const liveChip = document.getElementById('chipLive');
-    const liveText = document.getElementById('liveText');
-    if (!liveChip || !liveText) return;
+    healthTracker.recordStaleData();
+  }
 
-    // Show stale indicator
-    liveChip.classList.add('chip--stale');
-    liveChip.classList.remove('chip--live');
-    liveText.textContent = 'Stale Data';
-    liveChip.title = 'Some data is from cached responses due to upstream errors';
-
-    // Auto-hide after 30 seconds (or until next refresh)
-    if (staleDataTimeout) clearTimeout(staleDataTimeout);
-    staleDataTimeout = setTimeout(() => {
-      liveChip.classList.remove('chip--stale');
-      liveChip.classList.add('chip--live');
-      liveText.textContent = 'Live';
-      liveChip.title = '';
-    }, 30000);
+  /**
+   * Record feed error for health tracking
+   */
+  function recordFeedError(feedId) {
+    healthTracker.recordError(feedId);
   }
 
   async function fetchWithProxies(url, opts = {}, responseType = 'auto') {
@@ -927,6 +994,11 @@
      * opts.expect (preferred) or the third `responseType` argument. Supported
      * types are "json" and "text". Any additional headers supplied in
      * opts.headers will be merged into the request.
+     *
+     * DEFENSIVE HARDENING (Round 2):
+     * - Gracefully handles missing headers (content-type, x-proxy-stale, x-proxy-cache-state)
+     * - All header access checks for existence before .get()
+     * - Existing exception-based error handling preserved for compatibility
      */
 
     // Check client-side cache first (short-lived to prevent re-render storms)
@@ -1027,11 +1099,14 @@
 
         clearTimeout(timeout);
 
-        // Check for stale data indicator from proxy
-        const isStale = res.headers.get('X-Proxy-Stale') === '1';
+        // Check for stale data indicator from proxy (DEFENSIVE: handle missing header)
+        const isStale = (res.headers.get && res.headers.get('X-Proxy-Stale')) === '1';
         if (isStale) {
           showStaleDataIndicator();
         }
+
+        // DEFENSIVE: Read cache state header if available (no-op for observability)
+        const cacheState = (res.headers.get && res.headers.get('X-Proxy-Cache-State')) || 'unknown';
 
         if (!res.ok) {
           const err = new Error(`HTTP ${res.status}`);
@@ -1040,7 +1115,8 @@
         }
 
         if (expected === 'json') {
-          const ct = (res.headers.get('content-type') || '').toLowerCase();
+          // DEFENSIVE: Handle missing content-type header gracefully
+          const ct = (res.headers.get && res.headers.get('content-type') || '').toLowerCase();
           const txt = await res.text();
 
           // Some endpoints (or proxies) return HTML error pages or redirect pages.
