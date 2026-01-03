@@ -2198,10 +2198,28 @@
     const cat = CATEGORIES[item.category]?.label || item.category;
     const safeTitle = escapeHtml(item.title);
     const safeSummary = item.summary ? escapeHtml(item.summary) : "";
+
+    // For cameras, include a thumbnail preview of the snapshot
+    const cameraPreview = (item.category === "camera" && item.media && item.media.type === "image" && item.media.src)
+      ? `<div style="margin: 10px 0; border-radius: 6px; overflow: hidden; background: #1a1a1a; position: relative;">
+           <img src="${escapeAttr(item.media.src)}"
+                alt="${escapeAttr(item.media.alt || item.title)}"
+                style="width: 100%; height: auto; display: block; cursor: pointer;"
+                onerror="this.parentElement.innerHTML='<div style=\\'padding: 20px; text-align: center; color: rgba(255,255,255,0.5);\\'>📷<br><small>Snapshot unavailable</small></div>';" />
+           <div style="position: absolute; bottom: 4px; right: 4px; background: rgba(0,0,0,0.7); color: white; padding: 2px 6px; border-radius: 3px; font-size: 10px; font-weight: 600;">
+             LIVE
+           </div>
+         </div>
+         <div style="font-size: 11px; color: rgba(126,240,255,0.8); margin-bottom: 8px; text-align: center; font-weight: 600;">
+           👆 Click marker to view full snapshot
+         </div>`
+      : "";
+
     return `
-      <div style="min-width:220px">
+      <div style="min-width:220px; max-width:280px">
         <div style="font-weight:900; font-size:13px; margin-bottom:6px">${item.emoji} ${safeTitle}</div>
         <div style="color:rgba(255,255,255,.70); font-size:12px; margin-bottom:8px">${cat} • ${fmtTime(item.timestamp)}</div>
+        ${cameraPreview}
         ${safeSummary ? `<div style="font-size:12px; line-height:1.35; color:rgba(255,255,255,.82); margin-bottom:10px">${safeSummary}</div>` : ""}
         <a href="${item.url}" target="_blank" rel="noreferrer noopener" style="color:#7ef0ff; font-weight:800; text-decoration:none">Open source ↗</a>
       </div>
@@ -2282,9 +2300,13 @@ function selectItem(id) {
       // Add error handling and loading state for better UX
       const imgAlt = escapeAttr(item.media.alt || item.title || "Traffic camera snapshot");
       const imgSrc = escapeAttr(item.media.src);
+      const isCamera = item.category === "camera";
 
       // Log camera image URL for debugging
       console.log(`Loading camera image: ${item.media.originalSrc || item.media.src}`);
+
+      // Add cache-busting timestamp to force fresh snapshot
+      const cacheBustingSrc = imgSrc + (imgSrc.includes('?') ? '&' : '?') + '_t=' + Date.now();
 
       mediaEl.innerHTML = `
         <div class="panelMedia__wrapper" style="position: relative; min-height: 200px; background: #1a1a1a; border-radius: 8px; overflow: hidden;">
@@ -2292,11 +2314,24 @@ function selectItem(id) {
             <span>📷 Loading camera snapshot...</span>
           </div>
           <img class="panelMedia__img"
-               src="${imgSrc}"
+               src="${cacheBustingSrc}"
                alt="${imgAlt}"
                style="display: none; width: 100%; height: auto; position: relative; z-index: 1;"
                onload="this.style.display='block'; this.parentElement.querySelector('.panelMedia__loading').style.display='none';"
                onerror="this.style.display='none'; const loading = this.parentElement.querySelector('.panelMedia__loading'); loading.innerHTML = '<div style=\\'text-align: center; padding: 20px;\\'><div style=\\'font-size: 32px; margin-bottom: 8px;\\'>📷</div><div style=\\'color: rgba(255,255,255,0.7);\\'>Camera snapshot unavailable</div><div style=\\'font-size: 12px; color: rgba(255,255,255,0.5); margin-top: 4px;\\'>The camera feed may be offline or temporarily unavailable</div></div>'; loading.style.display='flex';" />
+          ${isCamera ? `<button class="panelMedia__refresh" onclick="(function() {
+              const img = this.parentElement.querySelector('.panelMedia__img');
+              const loading = this.parentElement.querySelector('.panelMedia__loading');
+              const baseSrc = '${imgSrc}';
+              img.style.display = 'none';
+              loading.style.display = 'flex';
+              loading.innerHTML = '<span>📷 Refreshing snapshot...</span>';
+              img.src = baseSrc + (baseSrc.includes('?') ? '&' : '?') + '_t=' + Date.now();
+            }).call(this)"
+            style="position: absolute; top: 8px; right: 8px; background: rgba(0,0,0,0.8); color: white; border: 1px solid rgba(255,255,255,0.3); padding: 6px 12px; border-radius: 4px; font-size: 12px; font-weight: 600; cursor: pointer; z-index: 10; display: flex; align-items: center; gap: 4px;"
+            title="Refresh to get latest snapshot from live camera feed">
+            🔄 Refresh
+          </button>` : ''}
         </div>
       `;
     } else if (item.media && item.media.type === "iframe" && item.media.src) {
