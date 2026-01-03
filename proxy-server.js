@@ -51,6 +51,9 @@ const ALLOWED_UPSTREAM_DOMAINS = [
   '511.vdot.virginia.gov',
   'virginiaroads.org',
   'www.virginiaroads.org',
+  'iteriscdn.com',
+  'files4.iteriscdn.com',
+  'files5.iteriscdn.com',
 
   // Virginia Crash Data
   'data.virginia.gov',

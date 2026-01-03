@@ -94,15 +94,19 @@ x-deny-reason: host_not_allowed
 - Alternative Cameras: http://www.511virginia.org/data/icons.cameras.geojson
 - Construction: https://www.511virginia.org/data/geojson/icons.construction.geojson
 
-**Status:** ✅ RE-ENABLED with fallback support (January 2026)
+**Status:** ✅ RE-ENABLED with fallback support (January 2026) - **ENHANCED with multiple fallback endpoints**
 
 **Current Solution:**
 - ✅ Feature is **re-enabled** in `index.js` (CONFIG.va511.enabled = true)
-- ✅ Multiple API endpoint fallbacks configured (primary + alternative endpoints)
-- ✅ **Manual camera data** provided for Fredericksburg/I-95 area (8 cameras)
-- ✅ Manual cameras automatically load when API endpoints are blocked
+- ✅ **NEW: Multiple API endpoint fallbacks configured** - cameras now try 3 different endpoints:
+  - Primary: `https://511.vdot.virginia.gov/services/map/layers/map/cams`
+  - Fallback 1: `http://www.511virginia.org/data/icons.cameras.geojson`
+  - Fallback 2: `http://files4.iteriscdn.com/WebApps/VA/SafeTravel/data/local/icons/metadata/icons.cameras_inactive.geojsonp` (Iteris CDN)
+- ✅ **NEW: Iteris CDN domains added to proxy allowlist** (`iteriscdn.com`, `files4.iteriscdn.com`, `files5.iteriscdn.com`)
+- ✅ **Manual camera data** provided for Fredericksburg/I-95 area (8 cameras) as final fallback
+- ✅ Manual cameras automatically load when all API endpoints are blocked
 - ✅ Proxy server's stale cache serves last successful data when endpoints are temporarily unavailable
-- 📷 **Traffic cameras will populate** from manual data even if API is blocked
+- 📷 **Traffic cameras will populate** from any working endpoint or manual data if all APIs fail
 
 **Manual Camera Coverage (I-95 Fredericksburg Area):**
 - I-95 SB at MM 122 (Fredericksburg)
