@@ -175,8 +175,8 @@ async function proxyFetch(targetUrl, reqHeaders) {
         throw e;
       }
 
-      // For 429 rate limit or server errors, return stale cache if available
-      if (staleCandidate && (upstream.status === 429 || upstream.status >= 500 || upstream.status === 404)) {
+      // For 403 Forbidden, 429 rate limit, or server errors, return stale cache if available
+      if (staleCandidate && (upstream.status === 403 || upstream.status === 429 || upstream.status >= 500 || upstream.status === 404)) {
         console.log(`[proxy] Using stale cache for ${targetUrl} (upstream ${upstream.status})`);
         return {
           ...staleCandidate,
