@@ -47,7 +47,7 @@
 
     // Polling (milliseconds)
     polling: {
-      rss: 5 * 60 * 1000,
+      rss: 20 * 60 * 1000,         // RSS feeds update every 20 minutes (15-30 minute range)
       nws: 2 * 60 * 1000,
       arcgisCrash: 5 * 60 * 1000,
       virginiaCrashData: 4 * 60 * 1000,
@@ -354,8 +354,132 @@
         defaultLoc: { lat: 38.1859, lon: -77.6526 },
         maxAgeHours: 168,
       },
+      {
+        id: "spotsy-emergency-alerts-mod63",
+        name: "Spotsylvania — Emergency Alerts (Public Safety Module)",
+        type: "rss",
+        category: "alerts",
+        jurisdiction: "Spotsylvania",
+        url: "https://www.spotsylvania.va.us/RSSFeed.aspx?ModID=63&CID=Emergency-Alerts-6",
+        emoji: "🚨",
+        tone: "bad",
+        defaultLoc: { lat: 38.1859, lon: -77.6526 },
+        maxAgeHours: 168,
+      },
+      {
+        id: "spotsy-fire-rescue-mod1",
+        name: "Spotsylvania — Fire Rescue & Emergency Management (News Flash)",
+        type: "rss",
+        category: "fire_ems",
+        jurisdiction: "Spotsylvania",
+        url: "https://www.spotsylvania.va.us/RSSFeed.aspx?ModID=1&CID=FIRE-RESCUE-EMERGENCY-MGT-30",
+        emoji: "🚒",
+        tone: "warn",
+        defaultLoc: { lat: 38.1859, lon: -77.6526 },
+        maxAgeHours: 168,
+      },
+      {
+        id: "spotsy-notices-mod63",
+        name: "Spotsylvania — Notices (Public Safety Module)",
+        type: "rss",
+        category: "alerts",
+        jurisdiction: "Spotsylvania",
+        url: "https://www.spotsylvania.va.us/RSSFeed.aspx?ModID=63&CID=Notices-7",
+        emoji: "📢",
+        tone: "warn",
+        defaultLoc: { lat: 38.1859, lon: -77.6526 },
+        maxAgeHours: 168,
+      },
+
+      // ---------- CAROLINE COUNTY ----------
+      {
+        id: "caroline-all-alerts",
+        name: "Caroline County — All Alerts & News",
+        type: "rss",
+        category: "alerts",
+        jurisdiction: "Caroline",
+        url: "https://co.caroline.va.us/RSSFeed.aspx?ModID=63&CID=All-0",
+        emoji: "📰",
+        tone: "warn",
+        defaultLoc: { lat: 38.0527, lon: -77.2697 },
+        maxAgeHours: 168,
+      },
+      {
+        id: "caroline-calendar",
+        name: "Caroline County — Events Calendar",
+        type: "rss",
+        category: "events",
+        jurisdiction: "Caroline",
+        url: "https://co.caroline.va.us/RSSFeed.aspx?ModID=58&CID=All-calendar.xml",
+        emoji: "📅",
+        tone: "good",
+        defaultLoc: { lat: 38.0527, lon: -77.2697 },
+        maxAgeHours: 168,
+      },
+      {
+        id: "caroline-newsflash",
+        name: "Caroline County — News Flash",
+        type: "rss",
+        category: "news",
+        jurisdiction: "Caroline",
+        url: "https://co.caroline.va.us/RSSFeed.aspx?ModID=1&CID=All-newsflash.xml",
+        emoji: "📰",
+        tone: "good",
+        defaultLoc: { lat: 38.0527, lon: -77.2697 },
+        maxAgeHours: 168,
+      },
+
+      // ---------- WARRENTON (FAUQUIER) ----------
+      {
+        id: "warrenton-all-alerts",
+        name: "Warrenton — All Alerts & News",
+        type: "rss",
+        category: "alerts",
+        jurisdiction: "Warrenton",
+        url: "https://www.warrentonva.gov/RSSFeed.aspx?ModID=63&CID=All-0",
+        emoji: "📰",
+        tone: "warn",
+        defaultLoc: { lat: 38.7134, lon: -77.7953 },
+        maxAgeHours: 168,
+      },
+      {
+        id: "warrenton-calendar",
+        name: "Warrenton — Events Calendar",
+        type: "rss",
+        category: "events",
+        jurisdiction: "Warrenton",
+        url: "https://www.warrentonva.gov/RSSFeed.aspx?ModID=58&CID=All-calendar.xml",
+        emoji: "📅",
+        tone: "good",
+        defaultLoc: { lat: 38.7134, lon: -77.7953 },
+        maxAgeHours: 168,
+      },
+      {
+        id: "warrenton-newsflash",
+        name: "Warrenton — News Flash",
+        type: "rss",
+        category: "news",
+        jurisdiction: "Warrenton",
+        url: "https://www.warrentonva.gov/RSSFeed.aspx?ModID=1&CID=All-newsflash.xml",
+        emoji: "📰",
+        tone: "good",
+        defaultLoc: { lat: 38.7134, lon: -77.7953 },
+        maxAgeHours: 168,
+      },
 
       // ---------- REGIONAL / MEDIA ----------
+      {
+        id: "potomac-local-fxbg",
+        name: "Potomac Local — Fredericksburg News",
+        type: "rss",
+        category: "news",
+        jurisdiction: "Regional",
+        url: "http://www.potomaclocal.com/fredericksburg/feed/",
+        emoji: "📰",
+        tone: "good",
+        defaultLoc: { lat: 38.3032, lon: -77.4605 },
+        maxAgeHours: 168,
+      },
       {
         id: "fxbg-free-press",
         name: "Fredericksburg Free Press — All Local News",
@@ -1694,6 +1818,17 @@ function selectItem(id) {
     }
 
     console.log(`Redraw complete: ${markerCount} markers visible (${store.itemsById.size} total items, ${filtered.category} filtered by category, ${filtered.bbox} outside bbox)`);
+
+    // Update News Flash panel if it's open
+    const newsPanel = document.getElementById("newsFlashPanel");
+    if (newsPanel && !newsPanel.classList.contains("newsFlashPanel--hidden")) {
+      // Defer update to avoid blocking the redraw
+      setTimeout(() => {
+        if (typeof updateNewsFlash === 'function') {
+          updateNewsFlash();
+        }
+      }, 100);
+    }
   }
 
   // -----------------------------
@@ -3030,6 +3165,145 @@ function selectItem(id) {
   }
 
   $("btnRefresh").addEventListener("click", refreshAll);
+
+  // -----------------------------
+  // News Flash Dashboard
+  // -----------------------------
+  let newsFlashFilter = "all";
+  let newsFlashJurisdiction = "all";
+
+  function updateNewsFlash() {
+    const panel = $("newsFlashPanel");
+    const body = $("newsFlashBody");
+
+    // Get all items from the store
+    const allItems = Array.from(store.itemsById.values());
+
+    // Filter items based on category and jurisdiction
+    let filtered = allItems.filter(item => {
+      // Apply category filter
+      if (newsFlashFilter !== "all" && item.category !== newsFlashFilter) return false;
+
+      // Apply jurisdiction filter
+      if (newsFlashJurisdiction !== "all" && item.jurisdiction !== newsFlashJurisdiction) return false;
+
+      // Only show RSS/news items (not traffic incidents, crashes, etc.)
+      return item.category === "news" || item.category === "alerts" ||
+             item.category === "events" || item.category === "fire_ems" ||
+             item.category === "traffic_transit" || item.category === "police_crime" ||
+             item.category === "government";
+    });
+
+    // Sort by published date (newest first)
+    filtered.sort((a, b) => {
+      const dateA = new Date(a.published || 0);
+      const dateB = new Date(b.published || 0);
+      return dateB - dateA;
+    });
+
+    // Take top 50 items
+    filtered = filtered.slice(0, 50);
+
+    // Render items
+    if (filtered.length === 0) {
+      body.innerHTML = '<div class="newsFlashPanel__loading">No news items match the selected filters.</div>';
+      return;
+    }
+
+    body.innerHTML = filtered.map(item => {
+      const emoji = item.emoji || "📰";
+      const title = escapeHtml(item.title || "Untitled");
+      const summary = escapeHtml((item.summary || item.message || "No description").slice(0, 200));
+      const jurisdiction = escapeHtml(item.jurisdiction || "Unknown");
+      const category = escapeHtml(CATEGORIES[item.category]?.label || item.category || "News");
+      const time = formatTime(item.published);
+
+      return `
+        <div class="newsItem" data-item-id="${escapeAttr(item.id)}">
+          <div class="newsItem__header">
+            <span class="newsItem__emoji">${emoji}</span>
+            <div class="newsItem__title">${title}</div>
+          </div>
+          <div class="newsItem__meta">
+            <span class="newsItem__jurisdiction">${jurisdiction}</span>
+            <span class="newsItem__category">${category}</span>
+            <span class="newsItem__time">${time}</span>
+          </div>
+          <div class="newsItem__summary">${summary}</div>
+        </div>
+      `;
+    }).join('');
+
+    // Add click handlers to news items
+    body.querySelectorAll('.newsItem').forEach(el => {
+      el.addEventListener('click', () => {
+        const itemId = el.getAttribute('data-item-id');
+        const item = store.itemsById.get(itemId);
+        if (item) {
+          showMarkerPopup(item);
+          // Also zoom to the item on the map
+          if (item.loc) {
+            map.setView([item.loc.lat, item.loc.lon], 14);
+          }
+        }
+      });
+    });
+  }
+
+  // News Flash panel toggle
+  $("btnNewsFlash").addEventListener("click", () => {
+    const panel = $("newsFlashPanel");
+    const isHidden = panel.classList.contains("newsFlashPanel--hidden");
+
+    if (isHidden) {
+      panel.classList.remove("newsFlashPanel--hidden");
+      updateNewsFlash();
+    } else {
+      panel.classList.add("newsFlashPanel--hidden");
+    }
+  });
+
+  // News Flash close button
+  $("newsFlashClose").addEventListener("click", () => {
+    $("newsFlashPanel").classList.add("newsFlashPanel--hidden");
+  });
+
+  // News Flash filter buttons
+  document.querySelectorAll('.filterBtn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      // Remove active class from all buttons
+      document.querySelectorAll('.filterBtn').forEach(b => b.classList.remove('filterBtn--active'));
+      // Add active class to clicked button
+      btn.classList.add('filterBtn--active');
+      // Update filter
+      newsFlashFilter = btn.getAttribute('data-filter');
+      updateNewsFlash();
+    });
+  });
+
+  // News Flash jurisdiction selector
+  $("newsFlashJurisdiction").addEventListener('change', (e) => {
+    newsFlashJurisdiction = e.target.value;
+    updateNewsFlash();
+  });
+
+  // -----------------------------
+  // Radio Scanner Panel
+  // -----------------------------
+  $("btnRadioScanner").addEventListener("click", () => {
+    const panel = $("radioPanel");
+    const isHidden = panel.classList.contains("radioPanel--hidden");
+
+    if (isHidden) {
+      panel.classList.remove("radioPanel--hidden");
+    } else {
+      panel.classList.add("radioPanel--hidden");
+    }
+  });
+
+  $("radioClose").addEventListener("click", () => {
+    $("radioPanel").classList.add("radioPanel--hidden");
+  });
 
   // -----------------------------
   // Boot + timers

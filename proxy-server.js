@@ -83,9 +83,9 @@ function parseTtl(reqUrl, reqHeaders) {
     // Nominatim geocoding - cache for 7 days (addresses don't change)
     if (h.includes("nominatim.openstreetmap.org")) return 7 * 24 * 60 * 60 * 1000;
 
-    // RSS feeds - increased cache TTL to 6 minutes (360s) to exceed the 5-minute polling interval
+    // RSS feeds - cache for 20 minutes (1200s) to match 15-30 minute polling interval
     // and prevent upstream 429 rate limit errors
-    if (p.endsWith(".rss") || p.includes("rss") || p.includes("feed")) return 360 * 1000;
+    if (p.endsWith(".rss") || p.includes("rss") || p.includes("feed")) return 1200 * 1000;
 
     // Camera images should cache for 2 minutes
     if (p.match(/\.(jpg|jpeg|png|webp|gif)($|\?)/i)) return 120 * 1000;
@@ -140,6 +140,21 @@ async function proxyFetch(targetUrl, reqHeaders) {
         "Accept": accept || "*/*",
       };
 
+      // Forward important custom headers from the client
+      // This is critical for APIs that require authentication headers (OpenUV, etc.)
+      const headersToForward = [
+        "x-access-token",      // OpenUV API authentication
+        "x-api-key",           // Generic API key header
+        "authorization",       // Standard auth header
+        "x-requested-with",    // AJAX indicator
+      ];
+
+      for (const headerName of headersToForward) {
+        if (reqHeaders[headerName]) {
+          upstreamHeaders[headerName] = reqHeaders[headerName];
+        }
+      }
+
       // Add Referer if provided by client
       if (reqHeaders["referer"]) {
         upstreamHeaders["Referer"] = reqHeaders["referer"];
@@ -150,6 +165,9 @@ async function proxyFetch(targetUrl, reqHeaders) {
           if (targetHost.includes("511virginia.org") || targetHost.includes("511.vdot.virginia.gov")) {
             upstreamHeaders["Referer"] = "https://www.511virginia.org/";
           } else if (targetHost.includes("fredericksburgva.gov") || targetHost.includes("spotsylvania.va.us")) {
+            upstreamHeaders["Referer"] = `https://${targetHost}/`;
+          } else if (targetHost.includes("openuv.io") || targetHost.includes("data.cdc.gov")) {
+            // Set referer for health/UV APIs to look more legitimate
             upstreamHeaders["Referer"] = `https://${targetHost}/`;
           }
         } catch {}
