@@ -558,7 +558,9 @@
 
     // Virginia Crash Data APIs (multiple sources for comprehensive coverage)
     virginiaCrashData: {
-      enabled: true,
+      // DISABLED: Socrata endpoint (e9fd3f45-7f33-424b-b472-b531043fa02a) returns 404 - dataset removed/changed
+      // Use arcgisCrash endpoint instead, which provides the same crash data and is working
+      enabled: false,
       // CrashData Basic API from Virginia Roads Open Data Portal
       crashDataBasicUrl: "https://www.virginiaroads.org/datasets/crashdata-basic-1/api",
       // CrashData Details from data.virginia.gov (Socrata Open Data)
@@ -572,17 +574,17 @@
     },
 
     // 511Virginia GeoJSON endpoints
-    // NOTE: Both 511virginia.org and iteriscdn.com endpoints are currently returning HTML
-    // error pages instead of GeoJSON data. The proxy server will attempt to use stale
-    // cached data when available. Monitor console for "WARNING: returned HTML when
-    // structured data expected" messages.
+    // NOTE: VDOT has implemented host blocking (403 Forbidden, x-deny-reason: host_not_allowed)
+    // on their 511 endpoints to prevent automated scraping. The proxy server will use stale
+    // cached data when available. This is expected behavior due to VDOT's anti-scraping measures.
+    // Incident data will be unavailable until VDOT provides official API access or whitelists access.
     va511: {
-      enabled: true,
+      enabled: false,  // DISABLED: Endpoints return 403 Forbidden (host_not_allowed) - VDOT blocking automated access
       camerasGeojson: "https://511.vdot.virginia.gov/services/map/layers/map/cams",
-      // Primary incidents endpoint - may return HTML error pages during outages
+      // Primary incidents endpoint - blocked by VDOT (403 Forbidden)
       incidentsGeojson: "https://www.511virginia.org/data/geojson/icons.incident.geojson",
       // Fallback to Iteris CDN if main endpoint fails (JSONP format - auto-stripped)
-      // Note: This fallback is also currently returning HTML errors
+      // Note: This fallback is also blocked
       incidentsGeojsonFallback: "http://files5.iteriscdn.com/WebApps/VA/SafeTravel/data/local/icons/metadata/icons.incident.geojsonp",
       constructionGeojson: "https://www.511virginia.org/data/geojson/icons.construction.geojson",
       includeConstructionOnMap: false
