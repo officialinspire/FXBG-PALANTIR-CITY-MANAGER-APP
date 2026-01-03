@@ -87,6 +87,14 @@
     </div>
 
     <div class="topbar__right">
+      <button class="btn" id="btnNewsFlash" title="Regional News Flash Dashboard">
+        <span class="btn__icon">📰</span>
+        <span class="btn__label">News Flash</span>
+      </button>
+      <button class="btn" id="btnRadioScanner" title="Radio Scanner">
+        <span class="btn__icon">📻</span>
+        <span class="btn__label">Radio</span>
+      </button>
       <button class="btn" id="btnRefresh" title="Refresh now">
         <span class="btn__icon">🔄</span>
         <span class="btn__label">Refresh</span>
@@ -141,6 +149,109 @@
             <a class="linkBtn" id="panelLink" href="#" target="_blank" rel="noreferrer noopener">
               Open source ↗
             </a>
+          </div>
+        </div>
+      </aside>
+
+      <!-- News Flash Dashboard Panel -->
+      <aside class="newsFlashPanel newsFlashPanel--hidden" id="newsFlashPanel" aria-label="News Flash Dashboard">
+        <div class="newsFlashPanel__header">
+          <div class="newsFlashPanel__title">
+            <span class="newsFlashPanel__emoji">📰</span>
+            <span>Regional News Flash</span>
+          </div>
+          <button class="iconBtn" id="newsFlashClose" title="Close">✖️</button>
+        </div>
+        <div class="newsFlashPanel__filters">
+          <button class="filterBtn filterBtn--active" data-filter="all">All</button>
+          <button class="filterBtn" data-filter="alerts">Emergency Alerts</button>
+          <button class="filterBtn" data-filter="traffic_transit">Traffic Alerts</button>
+          <button class="filterBtn" data-filter="events">Community Events</button>
+          <button class="filterBtn" data-filter="news">News</button>
+          <button class="filterBtn" data-filter="fire_ems">Fire/EMS</button>
+        </div>
+        <div class="newsFlashPanel__jurisdiction">
+          <select id="newsFlashJurisdiction">
+            <option value="all">All Jurisdictions</option>
+            <option value="Fredericksburg">Fredericksburg</option>
+            <option value="Spotsylvania">Spotsylvania</option>
+            <option value="Caroline">Caroline</option>
+            <option value="Warrenton">Warrenton</option>
+            <option value="Regional">Regional News</option>
+          </select>
+        </div>
+        <div class="newsFlashPanel__body" id="newsFlashBody">
+          <div class="newsFlashPanel__loading">Loading news...</div>
+        </div>
+      </aside>
+
+      <!-- Radio Scanner Panel -->
+      <aside class="radioPanel radioPanel--hidden" id="radioPanel" aria-label="Radio Scanner">
+        <div class="radioPanel__header">
+          <div class="radioPanel__title">
+            <span class="radioPanel__emoji">📻</span>
+            <span>Regional Radio Scanners</span>
+          </div>
+          <button class="iconBtn" id="radioClose" title="Close">✖️</button>
+        </div>
+        <div class="radioPanel__body">
+          <!-- Traffic Incident Scanner Alerts -->
+          <div class="radioSection">
+            <h2 class="radioSection__title">🚨 Traffic Incident Scanner Alerts</h2>
+            <div class="radioLinks">
+              <a href="https://www.broadcastify.com/listen/ctid/2930" target="_blank" rel="noopener noreferrer" class="radioLink">
+                <span class="radioLink__icon">🔴</span>
+                <span class="radioLink__text">Fredericksburg Area Traffic Alerts</span>
+                <span class="radioLink__arrow">→</span>
+              </a>
+              <a href="https://www.broadcastify.com/listen/ctid/2937" target="_blank" rel="noopener noreferrer" class="radioLink">
+                <span class="radioLink__icon">🔴</span>
+                <span class="radioLink__text">Spotsylvania County Traffic Alerts</span>
+                <span class="radioLink__arrow">→</span>
+              </a>
+              <a href="https://www.broadcastify.com/listen/ctid/2843" target="_blank" rel="noopener noreferrer" class="radioLink">
+                <span class="radioLink__icon">🔴</span>
+                <span class="radioLink__text">Regional Traffic Incidents</span>
+                <span class="radioLink__arrow">→</span>
+              </a>
+            </div>
+          </div>
+
+          <!-- Live Radio Players -->
+          <div class="radioSection">
+            <h2 class="radioSection__title">📡 Live Radio Scanners</h2>
+            <div class="radioPlayer">
+              <h3>Fredericksburg City & Spotsylvania County Fire</h3>
+              <iframe src="https://www.broadcastify.com/webPlayer/527" frameborder="0" allowfullscreen></iframe>
+            </div>
+            <div class="radioPlayer">
+              <h3>Spotsylvania County Fire and Rescue</h3>
+              <iframe src="https://www.broadcastify.com/webPlayer/592" frameborder="0" allowfullscreen></iframe>
+            </div>
+            <div class="radioPlayer">
+              <h3>Prince William County Police and Fire</h3>
+              <iframe src="https://www.broadcastify.com/webPlayer/27136" frameborder="0" allowfullscreen></iframe>
+            </div>
+            <div class="radioPlayer">
+              <h3>King George County Fire and EMS</h3>
+              <iframe src="https://www.broadcastify.com/webPlayer/5250" frameborder="0" allowfullscreen></iframe>
+            </div>
+            <div class="radioPlayer">
+              <h3>Culpeper County Public Safety</h3>
+              <iframe src="https://www.broadcastify.com/webPlayer/26919" frameborder="0" allowfullscreen></iframe>
+            </div>
+            <div class="radioPlayer">
+              <h3>Culpeper County Sheriff</h3>
+              <iframe src="https://www.broadcastify.com/webPlayer/37506" frameborder="0" allowfullscreen></iframe>
+            </div>
+            <div class="radioPlayer">
+              <h3>Culpeper Town Police</h3>
+              <iframe src="https://www.broadcastify.com/webPlayer/37505" frameborder="0" allowfullscreen></iframe>
+            </div>
+            <div class="radioPlayer">
+              <h3>Orange County Fire and EMS</h3>
+              <iframe src="https://www.broadcastify.com/webPlayer/42002" frameborder="0" allowfullscreen></iframe>
+            </div>
           </div>
         </div>
       </aside>
