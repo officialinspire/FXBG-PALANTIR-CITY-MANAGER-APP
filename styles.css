@@ -143,6 +143,14 @@ body{
   background: rgba(126,240,255,.10);
   border-color: rgba(126,240,255,.22);
 }
+.chip--stale{
+  background: rgba(255,193,7,.10);
+  border-color: rgba(255,193,7,.30);
+}
+.chip--stale .dot{
+  background: rgba(255,193,7,.90);
+  box-shadow: 0 0 12px rgba(255,193,7,.7);
+}
 .dot{
   width: 8px; height: 8px; border-radius: 99px;
   background: var(--good);
