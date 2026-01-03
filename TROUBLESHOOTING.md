@@ -76,7 +76,7 @@ This document describes known issues with external data sources and how to addre
 
 ### 3. 511 Virginia & Iteris - Host Blocking (403 Forbidden)
 
-**Issue:** Traffic incident endpoints return 403 Forbidden with host blocking headers.
+**Issue:** Traffic incident endpoints may return 403 Forbidden with host blocking headers in some environments (cloud/Docker IPs).
 
 ```
 HTTP/1.1 403 Forbidden
@@ -85,20 +85,34 @@ x-deny-reason: host_not_allowed
 [proxy] WARNING: http://files5.iteriscdn.com/WebApps/VA/SafeTravel/data/local/icons/metadata/icons.incident.geojsonp returned HTML when structured data expected
 ```
 
-**Root Cause:** VDOT has implemented host-based access control (`x-deny-reason: host_not_allowed`) on their 511 GeoJSON endpoints to prevent automated scraping and unauthorized API access. This is an intentional anti-scraping security measure.
+**Root Cause:** VDOT has implemented host-based access control (`x-deny-reason: host_not_allowed`) on their 511 GeoJSON endpoints to prevent automated scraping from cloud/bot IP ranges. This typically **only affects cloud environments** - the endpoints work fine from normal browsers and residential/business servers.
 
 **Affected Endpoints:**
 - Primary: https://www.511virginia.org/data/geojson/icons.incident.geojson
 - Fallback: http://files5.iteriscdn.com/WebApps/VA/SafeTravel/data/local/icons/metadata/icons.incident.geojsonp
 - Cameras: https://511.vdot.virginia.gov/services/map/layers/map/cams
+- Alternative Cameras: http://www.511virginia.org/data/icons.cameras.geojson
 - Construction: https://www.511virginia.org/data/geojson/icons.construction.geojson
 
-**Status:** ⚠️ BLOCKED - Disabled in `index.js` (CONFIG.va511.enabled = false) as of January 2026
+**Status:** ✅ RE-ENABLED with fallback support (January 2026)
 
-**Current Mitigation:**
-- The feature is disabled to prevent console errors
-- The proxy server's caching mechanism can serve stale data if re-enabled
-- No incident data will be shown until VDOT provides API access
+**Current Solution:**
+- ✅ Feature is **re-enabled** in `index.js` (CONFIG.va511.enabled = true)
+- ✅ Multiple API endpoint fallbacks configured (primary + alternative endpoints)
+- ✅ **Manual camera data** provided for Fredericksburg/I-95 area (8 cameras)
+- ✅ Manual cameras automatically load when API endpoints are blocked
+- ✅ Proxy server's stale cache serves last successful data when endpoints are temporarily unavailable
+- 📷 **Traffic cameras will populate** from manual data even if API is blocked
+
+**Manual Camera Coverage (I-95 Fredericksburg Area):**
+- I-95 SB at MM 122 (Fredericksburg)
+- I-95 SB at MM 130.8 (Fredericksburg North)
+- I-95 NB at MM 131.5 (Fredericksburg North)
+- I-95 SB at MM 132 (Fredericksburg North)
+- I-95 NB at MM 126 (Fredericksburg Central)
+- I-95 SB at MM 118 (Thornburg)
+- I-95 NB at MM 140 (Stafford)
+- I-95 SB at MM 143 (Stafford North)
 
 **Potential Solutions:**
 1. **Official API Access** - Contact VDOT to request:
