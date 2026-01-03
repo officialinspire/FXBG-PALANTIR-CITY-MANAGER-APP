@@ -716,22 +716,32 @@ async function proxyFetch(targetUrl, reqHeaders) {
         }
       }
 
-      // Add Referer if provided by client
-      if (reqHeaders["referer"]) {
-        upstreamHeaders["Referer"] = reqHeaders["referer"];
+      // VA511 camera snapshot fix: Override Referer/Origin for VA511 hosts to prevent 403
+      // VA511 enforces anti-hotlinking and rejects requests with localhost referer
+      const targetHost = new URL(targetUrl).hostname;
+      const isVa511Host = targetHost.includes("511virginia.org") ||
+                          targetHost.includes("511.vdot.virginia.gov");
+
+      if (isVa511Host) {
+        // Force approved VA511 referrer/origin (overrides client's localhost referer)
+        upstreamHeaders["Referer"] = "https://511.vdot.virginia.gov/";
+        upstreamHeaders["Origin"] = "https://511.vdot.virginia.gov";
       } else {
-        // Set appropriate referer based on target URL
-        try {
-          const targetHost = new URL(targetUrl).hostname;
-          if (targetHost.includes("511virginia.org") || targetHost.includes("511.vdot.virginia.gov")) {
-            upstreamHeaders["Referer"] = "https://www.511virginia.org/";
-          } else if (targetHost.includes("fredericksburgva.gov") || targetHost.includes("spotsylvania.va.us")) {
-            upstreamHeaders["Referer"] = `https://${targetHost}/`;
-          } else if (targetHost.includes("openuv.io") || targetHost.includes("data.cdc.gov")) {
-            // Set referer for health/UV APIs to look more legitimate
-            upstreamHeaders["Referer"] = `https://${targetHost}/`;
-          }
-        } catch {}
+        // For non-VA511 hosts, use existing referer logic
+        // Add Referer if provided by client
+        if (reqHeaders["referer"]) {
+          upstreamHeaders["Referer"] = reqHeaders["referer"];
+        } else {
+          // Set appropriate referer based on target URL
+          try {
+            if (targetHost.includes("fredericksburgva.gov") || targetHost.includes("spotsylvania.va.us")) {
+              upstreamHeaders["Referer"] = `https://${targetHost}/`;
+            } else if (targetHost.includes("openuv.io") || targetHost.includes("data.cdc.gov")) {
+              // Set referer for health/UV APIs to look more legitimate
+              upstreamHeaders["Referer"] = `https://${targetHost}/`;
+            }
+          } catch {}
+        }
       }
 
       // Add timeout support via AbortController
@@ -782,6 +792,18 @@ async function proxyFetch(targetUrl, reqHeaders) {
       // For 403 Forbidden, 429 rate limit, or server errors, return stale cache if available
       if (staleCandidate && (upstream.status === 403 || upstream.status === 429 || upstream.status >= 500 || upstream.status === 404)) {
         console.log(`[proxy] Using stale cache for ${targetUrl} (upstream ${upstream.status})`);
+
+        // Enhanced debug output for 403 responses (anti-hotlinking detection)
+        if (upstream.status === 403) {
+          const upstreamContentType = upstream.headers.get("content-type") || "unknown";
+          const bodyPreview = await upstream.text().catch(() => "");
+          const preview = bodyPreview.slice(0, 100);
+          console.warn(`[proxy] 403 FORBIDDEN DEBUG:`);
+          console.warn(`  Host: ${upstreamHost}`);
+          console.warn(`  Content-Type: ${upstreamContentType}`);
+          console.warn(`  Body preview: ${preview}`);
+        }
+
         recordHostError(u.hostname);
         qqms.recordError(targetUrl);
         const qqmsHeaders = qqms.generateHeaders(targetUrl, staleCandidate, true);
@@ -808,9 +830,19 @@ async function proxyFetch(targetUrl, reqHeaders) {
         recordHostSuccess(u.hostname);
       }
 
-      // Log non-200 responses for debugging
+      // Enhanced debug logging for non-200 responses
       if (upstream.status !== 200) {
-        console.warn(`[proxy] ${targetUrl} returned HTTP ${upstream.status}`);
+        const upstreamContentType = upstream.headers.get("content-type") || "unknown";
+        console.warn(`[proxy] ${upstreamHost} returned HTTP ${upstream.status} (Content-Type: ${upstreamContentType})`);
+
+        // For 403s without stale cache, log additional debug info
+        if (upstream.status === 403) {
+          const bodyPreview = Buffer.from(await upstream.clone().arrayBuffer()).toString('utf8', 0, 100);
+          console.warn(`[proxy] 403 FORBIDDEN DEBUG:`);
+          console.warn(`  Host: ${upstreamHost}`);
+          console.warn(`  URL: ${targetUrl}`);
+          console.warn(`  Body preview: ${bodyPreview}`);
+        }
       }
 
       // If we get 404 and have no stale cache, return the error
