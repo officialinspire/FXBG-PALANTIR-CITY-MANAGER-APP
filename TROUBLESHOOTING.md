@@ -12,23 +12,25 @@ This document describes known issues with external data sources and how to addre
 [proxy] https://data.virginia.gov/resource/e9fd3f45-7f33-424b-b472-b531043fa02a.json?$limit=200&$order=:id%20DESC returned HTTP 404
 ```
 
-**Root Cause:** The dataset ID `e9fd3f45-7f33-424b-b472-b531043fa02a` appears to have been removed or changed on the Virginia Open Data Portal.
+**Root Cause:** The dataset ID `e9fd3f45-7f33-424b-b472-b531043fa02a` has been removed or changed on the Virginia Open Data Portal.
 
-**Status:** Currently DISABLED in `index.js` (CONFIG.virginiaCrashData.enabled = false)
+**Status:** ✅ RESOLVED - Disabled in `index.js` (CONFIG.virginiaCrashData.enabled = false) as of January 2026
 
-**Alternative Solutions:**
-1. **Virginia Roads API** - Explore these alternatives:
+**Current Solution:** The app now relies on `CONFIG.arcgisCrash` which provides the same crash data from the ArcGIS FeatureServer:
+- Endpoint: `https://services.arcgis.com/p5v98VHDX9Atv3l7/arcgis/rest/services/CrashData_test/FeatureServer/0/query`
+- Status: ✅ Working
+- Data: Same Virginia crash data, updated regularly
+
+**Future Alternatives (if ArcGIS endpoint fails):**
+1. **Virginia Roads API**:
    - CrashData Details: https://www.virginiaroads.org/datasets/crashdata-details-2/api
    - CrashData Basic: https://www.virginiaroads.org/datasets/crashdata-basic-1/api
    - Search the portal: https://data.virginia.gov/dataset/crash-data
 
-2. **ArcGIS FeatureServer** - The existing `CONFIG.arcgisCrash` endpoint may still work
-
-3. **Request new API token** - The Socrata API may require authentication:
-   - Get an App Token from https://data.virginia.gov
-   - Add to `CONFIG.virginiaCrashData.apiKey`
-
-**Fix Required:** Update `CONFIG.virginiaCrashData.crashDataDetailsUrl` with the correct endpoint and re-enable.
+2. **Socrata API** - Find new dataset ID:
+   - Search portal: https://data.virginia.gov
+   - Get an App Token if required: https://data.virginia.gov
+   - Update `CONFIG.virginiaCrashData.crashDataDetailsUrl` with new endpoint
 
 ---
 
@@ -72,37 +74,48 @@ This document describes known issues with external data sources and how to addre
 
 ---
 
-### 3. 511 Virginia & Iteris - HTML Instead of GeoJSON
+### 3. 511 Virginia & Iteris - Host Blocking (403 Forbidden)
 
-**Issue:** Traffic incident endpoints return HTML error pages instead of expected GeoJSON data.
+**Issue:** Traffic incident endpoints return 403 Forbidden with host blocking headers.
 
 ```
+HTTP/1.1 403 Forbidden
+x-deny-reason: host_not_allowed
 [proxy] WARNING: https://www.511virginia.org/data/geojson/icons.incident.geojson returned HTML when structured data expected
 [proxy] WARNING: http://files5.iteriscdn.com/WebApps/VA/SafeTravel/data/local/icons/metadata/icons.incident.geojsonp returned HTML when structured data expected
 ```
 
-**Root Cause:** The endpoints may be:
-- Temporarily down for maintenance
-- Moved to new URLs
-- Requiring authentication or API keys
-- Experiencing server errors (returning generic error pages)
+**Root Cause:** VDOT has implemented host-based access control (`x-deny-reason: host_not_allowed`) on their 511 GeoJSON endpoints to prevent automated scraping and unauthorized API access. This is an intentional anti-scraping security measure.
 
 **Affected Endpoints:**
 - Primary: https://www.511virginia.org/data/geojson/icons.incident.geojson
 - Fallback: http://files5.iteriscdn.com/WebApps/VA/SafeTravel/data/local/icons/metadata/icons.incident.geojsonp
+- Cameras: https://511.vdot.virginia.gov/services/map/layers/map/cams
+- Construction: https://www.511virginia.org/data/geojson/icons.construction.geojson
 
-**Current Mitigation:** The proxy detects HTML responses and falls back to stale cached GeoJSON data when available.
+**Status:** ⚠️ BLOCKED - Disabled in `index.js` (CONFIG.va511.enabled = false) as of January 2026
+
+**Current Mitigation:**
+- The feature is disabled to prevent console errors
+- The proxy server's caching mechanism can serve stale data if re-enabled
+- No incident data will be shown until VDOT provides API access
 
 **Potential Solutions:**
-1. **Check Official API** - Visit https://www.511virginia.org to see if there's updated API documentation
-2. **VDOT Contact** - Reach out to VDOT for official API access
-3. **Alternative Format** - The primary 511.vdot.virginia.gov cameras endpoint may still work
-4. **Browser Inspection** - Use browser dev tools on 511virginia.org to find the actual API endpoints the web app uses
-5. **Wait for Service Restoration** - The endpoints may come back online automatically
+1. **Official API Access** - Contact VDOT to request:
+   - API key/token for authenticated access
+   - IP whitelist approval for your server
+   - Developer program enrollment (if available)
 
-**Monitoring:** Watch for console messages:
-- `Using stale cache instead of HTML error page` - Proxy is using cached data
-- `511 cameras endpoint may be down or blocking requests` - Primary endpoint failure
+2. **Alternative Data Sources:**
+   - Check Open Virginia portal: http://data.openva.com/dataset/vdot-511-geodata
+   - Virginia Roads portal: https://www.virginiaroads.org
+   - VDOT Data & APIs: https://www.virginiadot.org/info/developer.asp
+
+3. **Browser-Based Access** - Use headless browser (Puppeteer/Playwright) to access data as a browser would (may violate ToS)
+
+**Contact Information:**
+- VDOT 511 Support: Call 511 or visit https://www.511virginia.org
+- VDOT Developer Resources: https://www.virginiadot.org/info/developer.asp
 
 ---
 
