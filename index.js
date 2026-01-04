@@ -686,13 +686,20 @@
     gisOverlays: {
       enabled: true,
       overlays: [
-        { id:"fred_routes",   name:"FRED Bus Routes", type:"arcgis", url:"https://maps.fredericksburgva.gov/arcgis/rest/services/OpenData/OpenData/MapServer/7" },
-        { id:"fred_trails",   name:"Trails",          type:"arcgis", url:"https://maps.fredericksburgva.gov/arcgis/rest/services/OpenData/OpenData/MapServer/9" },
-        { id:"fred_rail",     name:"Railroad",        type:"arcgis", url:"https://maps.fredericksburgva.gov/arcgis/rest/services/OpenData/OpenData/MapServer/8" },
-        { id:"fred_parks",    name:"Parks",           type:"arcgis", url:"https://maps.fredericksburgva.gov/arcgis/rest/services/OpenData/OpenData/MapServer/20" },
-        { id:"fred_wards",    name:"Council Wards",   type:"arcgis", url:"https://maps.fredericksburgva.gov/arcgis/rest/services/OpenData/OpenData/MapServer/21" },
-        { id:"fred_zoning",   name:"Zoning",          type:"arcgis", url:"https://maps.fredericksburgva.gov/arcgis/rest/services/OpenData/OpenData/MapServer/22" },
-        { id:"vdot_districts",name:"VDOT Districts",  type:"arcgis", url:"https://services.arcgis.com/p5v98VHDX9Atv3l7/arcgis/rest/services/VDOTAdministrativeBoundaries/FeatureServer/2" }
+        { id:"fred_routes",   name:"FRED Bus Routes", type:"arcgis", url:"https://maps.fredericksburgva.gov/arcgis/rest/services/OpenData/OpenData/MapServer/7",
+          style:{ color:"#00d1ff", weight:4, dashArray:"8 6", fillOpacity:0.0 } },
+        { id:"fred_trails",   name:"Trails",          type:"arcgis", url:"https://maps.fredericksburgva.gov/arcgis/rest/services/OpenData/OpenData/MapServer/9",
+          style:{ color:"#7CFF6B", weight:3, dashArray:"2 8", fillOpacity:0.0 } },
+        { id:"fred_rail",     name:"Railroad",        type:"arcgis", url:"https://maps.fredericksburgva.gov/arcgis/rest/services/OpenData/OpenData/MapServer/8",
+          style:{ color:"#ffb300", weight:4, dashArray:null, fillOpacity:0.0 } },
+        { id:"fred_parks",    name:"Parks",           type:"arcgis", url:"https://maps.fredericksburgva.gov/arcgis/rest/services/OpenData/OpenData/MapServer/20",
+          style:{ color:"#00ff9d", weight:2, dashArray:null, fillOpacity:0.08 } },
+        { id:"fred_wards",    name:"Council Wards",   type:"arcgis", url:"https://maps.fredericksburgva.gov/arcgis/rest/services/OpenData/OpenData/MapServer/21",
+          style:{ color:"#a78bfa", weight:3, dashArray:"10 8", fillOpacity:0.06 } },
+        { id:"fred_zoning",   name:"Zoning",          type:"arcgis", url:"https://maps.fredericksburgva.gov/arcgis/rest/services/OpenData/OpenData/MapServer/22",
+          style:{ color:"#ff4d6d", weight:2, dashArray:null, fillOpacity:0.05 } },
+        { id:"vdot_districts",name:"VDOT Districts",  type:"arcgis", url:"https://services.arcgis.com/p5v98VHDX9Atv3l7/arcgis/rest/services/VDOTAdministrativeBoundaries/FeatureServer/2",
+          style:{ color:"#38bdf8", weight:2, dashArray:"6 6", fillOpacity:0.03 } }
       ]
     }
   };
@@ -930,6 +937,27 @@
     const tmp = document.createElement("div");
     tmp.innerHTML = html || "";
     return (tmp.textContent || tmp.innerText || "").replace(/\s+/g, " ").trim();
+  }
+
+  function getCameraEmoji(item) {
+    // Helper to determine appropriate emoji for camera sources
+    // preserve existing traffic cameras
+    const src = item?.source?.id || item?.sourceId || "";
+    const name = (item?.source?.name || item?.sourceName || "").toLowerCase();
+    const url = (item?.source?.url || item?.url || "").toLowerCase();
+
+    // VA 511 traffic cameras
+    if (String(src).includes("va511") || name.includes("511") || url.includes("511virginia") || url.includes("iteriscdn")) {
+      return "📷"; // keep traffic camera emoji
+    }
+
+    // WetMet / marina / weather cams
+    if (String(src).includes("wetmet") || url.includes("wetmet.net")) return "🌦️";
+    if (name.includes("marina") || url.includes("marina")) return "⚓";
+    if (name.includes("wharf") || url.includes("wharf")) return "🛟";
+
+    // default for other external cams
+    return "🛰️";
   }
 
 
@@ -1935,35 +1963,40 @@
         console.log(`[GIS] Loaded ${geojson.features.length} features for ${overlay.name}`);
       }
 
+      // Get style from overlay config
+      const st = overlay?.style || { color:"#22c55e", weight:2, dashArray:null, fillOpacity:0.05 };
+
       // Create Leaflet layer
       const leafletLayer = L.geoJSON(geojson, {
         style: (feature) => {
           const geomType = feature.geometry?.type;
           if (geomType === 'Polygon' || geomType === 'MultiPolygon') {
             return {
-              fillColor: '#4a90e2',
-              fillOpacity: 0.05,
-              color: '#6ab0ff',
-              weight: 2,
-              opacity: 0.6
+              color: st.color,
+              weight: st.weight ?? 2,
+              opacity: 0.7,
+              fillColor: st.color,
+              fillOpacity: st.fillOpacity ?? 0.05,
+              dashArray: st.dashArray || null
             };
           } else if (geomType === 'LineString' || geomType === 'MultiLineString') {
             return {
-              color: '#4a90e2',
-              weight: 3,
-              opacity: 0.7
+              color: st.color,
+              weight: st.weight ?? 3,
+              opacity: 0.8,
+              dashArray: st.dashArray || null
             };
           }
           return {};
         },
         pointToLayer: (feature, latlng) => {
           return L.circleMarker(latlng, {
-            radius: 6,
-            fillColor: '#4a90e2',
-            color: '#6ab0ff',
+            radius: 4,
+            color: st.color,
             weight: 2,
-            opacity: 0.8,
-            fillOpacity: 0.4
+            opacity: 0.9,
+            fillColor: st.color,
+            fillOpacity: 0.6
           });
         },
         onEachFeature: (feature, layer) => {
@@ -1986,6 +2019,7 @@
       leafletLayer.addTo(map);
       store.gis.layers.set(overlayId, leafletLayer);
       store.gis.enabled.add(overlayId);
+      updateOverlayLegendUI();
     } catch (e) {
       console.error(`[GIS] Failed to enable overlay ${overlayId}:`, e);
     }
@@ -1998,6 +2032,61 @@
       store.gis.layers.delete(overlayId);
     }
     store.gis.enabled.delete(overlayId);
+    updateOverlayLegendUI();
+  }
+
+  // -----------------------------
+  // GIS Overlay Legend Control
+  // -----------------------------
+  let overlayLegendControl = null;
+
+  function ensureOverlayLegendControl() {
+    if (!map || overlayLegendControl) return;
+    overlayLegendControl = L.control({ position: "bottomright" });
+    overlayLegendControl.onAdd = function() {
+      const div = L.DomUtil.create("div", "overlay-legend");
+      // prevent map drag when interacting
+      L.DomEvent.disableClickPropagation(div);
+      return div;
+    };
+    overlayLegendControl.addTo(map);
+    updateOverlayLegendUI(); // initial render
+  }
+
+  function updateOverlayLegendUI() {
+    try {
+      if (!overlayLegendControl) return;
+      const el = overlayLegendControl.getContainer();
+      if (!el) return;
+
+      const enabledIds = Array.from(store.gis?.enabled || []);
+      if (!enabledIds.length) {
+        el.style.display = "none";
+        el.innerHTML = "";
+        return;
+      }
+
+      el.style.display = "block";
+      const overlays = (CONFIG.gisOverlays?.overlays || [])
+        .filter(o => enabledIds.includes(o.id));
+
+      const rows = overlays.map(o => {
+        const c = o?.style?.color || "#22c55e";
+        return `
+          <div class="legend-row">
+            <span class="swatch" style="background:${c}; border-color:${c};"></span>
+            <span class="legend-label">${escapeHtml(o.name)}</span>
+          </div>
+        `;
+      }).join("");
+
+      el.innerHTML = `
+        <div class="legend-title">Map Overlays</div>
+        ${rows}
+      `;
+    } catch (e) {
+      console.warn("Legend update failed:", e);
+    }
   }
 
   // -----------------------------
@@ -3496,7 +3585,7 @@ function selectItem(id) {
         timestamp: new Date().toISOString(),
         lat,
         lon,
-        emoji: "📷",
+        emoji: getCameraEmoji({ sourceId: "va511-cameras", sourceName: "511 Virginia", url: finalPageUrl }),
         tone: "good",
         media,
         dedupeKey: key,
@@ -3546,7 +3635,7 @@ function selectItem(id) {
         timestamp: new Date().toISOString(),
         lat,
         lon,
-        emoji: "📷",
+        emoji: getCameraEmoji({ sourceId: "wetmet", sourceName: cam.name, url: cam.url }),
         tone: "good",
         media,
         dedupeKey: key,
@@ -5269,6 +5358,7 @@ function selectItem(id) {
   // -----------------------------
   // Boot + timers
   // -----------------------------
+  ensureOverlayLegendControl();
   refreshAll();
   setInterval(pollRSS, CONFIG.polling.rss);
   setInterval(fetchNWS, CONFIG.polling.nws);
