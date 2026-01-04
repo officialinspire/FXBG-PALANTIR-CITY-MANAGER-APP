@@ -91,6 +91,14 @@ const ALLOWED_UPSTREAM_DOMAINS = [
   // Geocoding
   'nominatim.openstreetmap.org',
 
+  // External Cameras
+  'wetmet.net',
+  'api.wetmet.net',
+
+  // GIS / Map Services
+  'maps.fredericksburgva.gov',
+  'p5v98VHDX9Atv3l7.maps.arcgis.com', // VDOT ArcGIS subdomain
+
   // Testing/Dev (remove in production if needed)
   'httpbin.org',
   'www.httpbin.org',
@@ -689,6 +697,14 @@ async function proxyFetch(targetUrl, reqHeaders) {
 
     const upstreamHost = u.hostname;
 
+    // Auto-upgrade Iteris CDN from http to https
+    let finalUrl = targetUrl;
+    if ((upstreamHost === 'files4.iteriscdn.com' || upstreamHost === 'files5.iteriscdn.com') &&
+        u.protocol === 'http:') {
+      finalUrl = targetUrl.replace('http://', 'https://');
+      console.log(`[proxy] Auto-upgrading Iteris CDN to HTTPS: ${upstreamHost}`);
+    }
+
     await waitForSlot(u.hostname);
     activeFetches++;
     hostLast.set(u.hostname, nowMs());
@@ -757,7 +773,7 @@ async function proxyFetch(targetUrl, reqHeaders) {
       const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
       try {
-        upstream = await fetch(targetUrl, {
+        upstream = await fetch(finalUrl, {
           method: "GET",
           redirect: "follow",
           headers: upstreamHeaders,
@@ -796,8 +812,8 @@ async function proxyFetch(targetUrl, reqHeaders) {
         throw e;
       }
 
-      // For 403 Forbidden, 429 rate limit, or server errors, return stale cache if available
-      if (staleCandidate && (upstream.status === 403 || upstream.status === 429 || upstream.status >= 500 || upstream.status === 404)) {
+      // For 403 Forbidden, 429 rate limit, 502 Bad Gateway, or server errors, return stale cache if available
+      if (staleCandidate && (upstream.status === 403 || upstream.status === 429 || upstream.status === 502 || upstream.status >= 500 || upstream.status === 404)) {
         console.log(`[proxy] Using stale cache for ${targetUrl} (upstream ${upstream.status})`);
 
         // Enhanced debug output for 403 responses (anti-hotlinking detection)

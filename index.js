@@ -614,12 +614,12 @@
       camerasGeojson: "https://511.vdot.virginia.gov/services/map/layers/map/cams",
       // OLD fallback (deprecated - old icons.cameras.geojson endpoint no longer active):
       // camerasGeojsonFallback: "http://www.511virginia.org/data/icons.cameras.geojson",
-      camerasGeojsonFallback: "http://files4.iteriscdn.com/WebApps/VA/SafeTravel/data/local/icons/metadata/icons.cameras_inactive.geojsonp",
+      camerasGeojsonFallback: "https://files4.iteriscdn.com/WebApps/VA/SafeTravel/data/local/icons/metadata/icons.cameras_inactive.geojsonp",
       camerasGeojsonFallback2: "",
       // Primary incidents endpoint - may return HTML error pages during outages
       incidentsGeojson: "https://www.511virginia.org/data/geojson/icons.incident.geojson",
       // Fallback to Iteris CDN if main endpoint fails (JSONP format - auto-stripped)
-      incidentsGeojsonFallback: "http://files5.iteriscdn.com/WebApps/VA/SafeTravel/data/local/icons/metadata/icons.incident.geojsonp",
+      incidentsGeojsonFallback: "https://files5.iteriscdn.com/WebApps/VA/SafeTravel/data/local/icons/metadata/icons.incident.geojsonp",
       constructionGeojson: "https://www.511virginia.org/data/geojson/icons.construction.geojson",
       includeConstructionOnMap: false
     },
@@ -640,6 +640,60 @@
       // CDC Wonder API - locality-specific health data
       wonderApiUrl: "https://data.cdc.gov/api/v3/views/psx4-wq38/query.json",
       maxAgeHours: 168  // Cache for 7 days
+    },
+
+    // External cameras (WetMet API)
+    externalCameras: {
+      enabled: true,
+      cacheTtlMs: 60_000,
+      cameras: [
+        {
+          id: "wetmet_wharf_dc",
+          name: "The Wharf (Washington, DC)",
+          lat: 38.879342,
+          lon: -77.024661,
+          url: "https://api.wetmet.net/91b95fbd-61c1-4949-8a07-0e5a2f64f0f2",
+          type: "iframe"
+        },
+        {
+          id: "wetmet_prince_william_marina",
+          name: "Prince William Marina",
+          lat: 38.662656,
+          lon: -77.253073,
+          url: "https://api.wetmet.net/widgets/stream/frame.php?uid=07f60c8f2db3b479f84d337088546af4",
+          type: "iframe"
+        },
+        {
+          id: "wetmet_reston",
+          name: "Reston, VA",
+          lat: 38.958631,
+          lon: -77.357003,
+          url: "https://api.wetmet.net/5ebfb9b0-12a9-4e02-888c-3fb204ac9d04",
+          type: "iframe"
+        },
+        {
+          id: "wetmet_loudoun_station",
+          name: "Loudoun Station (Loudoun County, VA)",
+          lat: 38.998021,
+          lon: -77.475549,
+          url: "https://api.wetmet.net/c3189678-8e98-46ee-8826-c9769396d138",
+          type: "iframe"
+        }
+      ]
+    },
+
+    // GIS Overlays (Fredericksburg OpenData + VDOT)
+    gisOverlays: {
+      enabled: true,
+      overlays: [
+        { id:"fred_routes",   name:"FRED Bus Routes", type:"arcgis", url:"https://maps.fredericksburgva.gov/arcgis/rest/services/OpenData/OpenData/MapServer/7" },
+        { id:"fred_trails",   name:"Trails",          type:"arcgis", url:"https://maps.fredericksburgva.gov/arcgis/rest/services/OpenData/OpenData/MapServer/9" },
+        { id:"fred_rail",     name:"Railroad",        type:"arcgis", url:"https://maps.fredericksburgva.gov/arcgis/rest/services/OpenData/OpenData/MapServer/8" },
+        { id:"fred_parks",    name:"Parks",           type:"arcgis", url:"https://maps.fredericksburgva.gov/arcgis/rest/services/OpenData/OpenData/MapServer/20" },
+        { id:"fred_wards",    name:"Council Wards",   type:"arcgis", url:"https://maps.fredericksburgva.gov/arcgis/rest/services/OpenData/OpenData/MapServer/21" },
+        { id:"fred_zoning",   name:"Zoning",          type:"arcgis", url:"https://maps.fredericksburgva.gov/arcgis/rest/services/OpenData/OpenData/MapServer/22" },
+        { id:"vdot_districts",name:"VDOT Districts",  type:"arcgis", url:"https://services.arcgis.com/p5v98VHDX9Atv3l7/arcgis/rest/services/VDOTAdministrativeBoundaries/FeatureServer/2" }
+      ]
     }
   };
 
@@ -1814,6 +1868,139 @@
   map.addLayer(clusters);
 
   // -----------------------------
+  // GIS Overlays (ArcGIS layers)
+  // -----------------------------
+  function buildArcgisGeojsonUrl(layerUrl, offset = 0) {
+    return `${layerUrl}/query?where=1%3D1&outFields=*&f=geojson&outSR=4326&resultOffset=${offset}&resultRecordCount=2000`;
+  }
+
+  async function fetchArcgisAllFeatures(layerUrl) {
+    const allFeatures = [];
+    let offset = 0;
+    const maxIterations = 50; // Safety limit to prevent infinite loops
+    let iteration = 0;
+
+    while (iteration < maxIterations) {
+      const url = buildArcgisGeojsonUrl(layerUrl, offset);
+      try {
+        const geojson = await fetchWithProxies(url, {
+          expect: 'json',
+          headers: {
+            'Accept': 'application/geo+json,application/json,*/*',
+            'Referer': layerUrl.includes('fredericksburgva.gov')
+              ? 'https://maps.fredericksburgva.gov/'
+              : 'https://www.virginiaroads.org/'
+          },
+          timeoutMs: 25000
+        });
+
+        const features = geojson?.features || [];
+        if (features.length === 0) break;
+
+        allFeatures.push(...features);
+
+        if (features.length < 2000) break; // Last page
+        offset += 2000;
+      } catch (e) {
+        console.error(`[GIS] Failed to fetch ${layerUrl} at offset ${offset}:`, e);
+        break;
+      }
+      iteration++;
+    }
+
+    return { type: 'FeatureCollection', features: allFeatures };
+  }
+
+  async function enableOverlay(overlayId) {
+    if (!CONFIG.gisOverlays.enabled) return;
+    if (store.gis.enabled.has(overlayId)) return; // Already enabled
+
+    const overlay = CONFIG.gisOverlays.overlays.find(o => o.id === overlayId);
+    if (!overlay) return;
+
+    try {
+      // Check cache first
+      const cached = store.gis.cache.get(overlayId);
+      const cacheAge = cached ? Date.now() - (cached.timestamp || 0) : Infinity;
+      const cacheTtl = 24 * 60 * 60 * 1000; // 24 hours
+
+      let geojson;
+      if (cached && cacheAge < cacheTtl) {
+        geojson = cached.geojson;
+        console.log(`[GIS] Using cached data for ${overlay.name}`);
+      } else {
+        console.log(`[GIS] Fetching ${overlay.name}...`);
+        geojson = await fetchArcgisAllFeatures(overlay.url);
+        store.gis.cache.set(overlayId, { geojson, timestamp: Date.now() });
+        console.log(`[GIS] Loaded ${geojson.features.length} features for ${overlay.name}`);
+      }
+
+      // Create Leaflet layer
+      const leafletLayer = L.geoJSON(geojson, {
+        style: (feature) => {
+          const geomType = feature.geometry?.type;
+          if (geomType === 'Polygon' || geomType === 'MultiPolygon') {
+            return {
+              fillColor: '#4a90e2',
+              fillOpacity: 0.05,
+              color: '#6ab0ff',
+              weight: 2,
+              opacity: 0.6
+            };
+          } else if (geomType === 'LineString' || geomType === 'MultiLineString') {
+            return {
+              color: '#4a90e2',
+              weight: 3,
+              opacity: 0.7
+            };
+          }
+          return {};
+        },
+        pointToLayer: (feature, latlng) => {
+          return L.circleMarker(latlng, {
+            radius: 6,
+            fillColor: '#4a90e2',
+            color: '#6ab0ff',
+            weight: 2,
+            opacity: 0.8,
+            fillOpacity: 0.4
+          });
+        },
+        onEachFeature: (feature, layer) => {
+          // Add popup with feature properties
+          if (feature.properties) {
+            const props = feature.properties;
+            let popupContent = `<div style="max-width:200px;"><strong>${overlay.name}</strong><br>`;
+            const keys = Object.keys(props).slice(0, 5); // Show first 5 properties
+            for (const key of keys) {
+              if (props[key] != null && key !== 'OBJECTID' && key !== 'SHAPE') {
+                popupContent += `<small>${key}: ${props[key]}</small><br>`;
+              }
+            }
+            popupContent += `</div>`;
+            layer.bindPopup(popupContent);
+          }
+        }
+      });
+
+      leafletLayer.addTo(map);
+      store.gis.layers.set(overlayId, leafletLayer);
+      store.gis.enabled.add(overlayId);
+    } catch (e) {
+      console.error(`[GIS] Failed to enable overlay ${overlayId}:`, e);
+    }
+  }
+
+  function disableOverlay(overlayId) {
+    const layer = store.gis.layers.get(overlayId);
+    if (layer) {
+      map.removeLayer(layer);
+      store.gis.layers.delete(overlayId);
+    }
+    store.gis.enabled.delete(overlayId);
+  }
+
+  // -----------------------------
   // Panel UI
   // -----------------------------
   const panel = $("panel");
@@ -2007,7 +2194,9 @@
     seenKeys: new Set(),
     markersById: new Map(),
     locks: { rss:false, nws:false, arcgis:false, virginiaCrashData:false, va511:false, openUV:false, cdc:false },
-    lastByCategory: new Map()
+    lastByCategory: new Map(),
+    lastFetch: { externalCameras: 0 },
+    gis: { enabled: new Set(), layers: new Map(), cache: new Map() }
   };
 
   /**
@@ -2342,7 +2531,26 @@ function selectItem(id) {
       `;
     } else if (item.media && item.media.type === "iframe" && item.media.src) {
       mediaEl.style.display = "block";
-      mediaEl.innerHTML = `<iframe class="panelMedia__frame" src="${escapeAttr(item.media.src)}" title="${escapeAttr(item.media.title || "media")}" loading="lazy" referrerpolicy="no-referrer"></iframe>`;
+      const iframeSrc = escapeAttr(item.media.src);
+      const iframeTitle = escapeAttr(item.media.alt || item.title || "External camera");
+      const sourceUrl = escapeAttr(item.url || item.media.src);
+      mediaEl.innerHTML = `
+        <div style="margin-bottom: 8px;">
+          <iframe src="${iframeSrc}"
+                  style="width:100%;height:260px;border:0;border-radius:6px;background:#000;display:block;"
+                  sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
+                  loading="lazy"
+                  title="${iframeTitle}"></iframe>
+        </div>
+        <div style="text-align:center;">
+          <a href="${sourceUrl}" target="_blank" rel="noopener noreferrer"
+             style="display:inline-block;padding:8px 16px;background:rgba(255,255,255,0.1);color:white;text-decoration:none;border-radius:4px;font-size:13px;font-weight:600;"
+             onmouseover="this.style.background='rgba(255,255,255,0.2)'"
+             onmouseout="this.style.background='rgba(255,255,255,0.1)'">
+            🔗 Open Camera Source
+          </a>
+        </div>
+      `;
     } else {
       mediaEl.style.display = "none";
       mediaEl.innerHTML = "";
@@ -2969,19 +3177,34 @@ function selectItem(id) {
     for (const endpoint of cameraEndpoints) {
       if (camerasLoaded) break;
 
-      try {
-        const headers = {
-          "X-Cache-TTL-MS": "120000",
-          "Accept": "application/geo+json,application/json,*/*",
-          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        };
-
-        // Only add Referer for primary endpoint
-        if (endpoint.name === 'primary') {
-          headers["Referer"] = "https://511.vdot.virginia.gov/";
+      // For Iteris CDN fallback, try both https and http variants
+      const fallbackVariants = [];
+      if ((endpoint.name === 'fallback1' || endpoint.name === 'fallback2') && endpoint.url.includes('iteriscdn.com')) {
+        // Try https first (already in config), then http as fallback
+        fallbackVariants.push(endpoint.url);
+        if (endpoint.url.startsWith('https://')) {
+          fallbackVariants.push(endpoint.url.replace('https://', 'http://'));
         }
+      } else if (endpoint.url) {
+        fallbackVariants.push(endpoint.url);
+      }
 
-        const response = await fetchWithProxies(endpoint.url, {
+      for (const urlVariant of fallbackVariants) {
+        if (camerasLoaded) break;
+
+        try {
+          const headers = {
+            "X-Cache-TTL-MS": "120000",
+            "Accept": "application/geo+json,application/json,*/*",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+          };
+
+          // Only add Referer for primary endpoint
+          if (endpoint.name === 'primary') {
+            headers["Referer"] = "https://511.vdot.virginia.gov/";
+          }
+
+          const response = await fetchWithProxies(urlVariant, {
           expect: endpoint.format === 'jsonp' ? 'text' : 'json',
           headers,
           timeoutMs: 25000
@@ -3000,13 +3223,14 @@ function selectItem(id) {
           // Record success to clear backoff
           recordSourceSuccess('va511-cameras');
         } else {
-          console.warn(`[VA511 Cameras] ${endpoint.name} returned invalid GeoJSON (missing features), trying next endpoint...`);
+          console.warn(`[VA511 Cameras] ${endpoint.name} returned invalid GeoJSON (missing features), trying next variant/endpoint...`);
         }
 
-      } catch (e) {
-        console.warn(`[VA511 Cameras] ${endpoint.name} failed: ${e.message}, trying next endpoint...`);
-      }
-    }
+        } catch (e) {
+          console.warn(`[VA511 Cameras] ${endpoint.name} (${urlVariant}) failed: ${e.message}, trying next variant/endpoint...`);
+        }
+      } // End urlVariant loop
+    } // End endpoint loop
 
     // If all endpoints failed, log error and apply backoff
     if (!camerasLoaded) {
@@ -3051,19 +3275,34 @@ function selectItem(id) {
     for (const endpoint of incidentsEndpoints) {
       if (incidentsLoaded) break;
 
-      try {
-        const headers = {
-          "X-Cache-TTL-MS": "60000",
-          "Accept": "application/geo+json,application/json,*/*",
-          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        };
-
-        // Only add Referer for non-fallback endpoints (fallback works better without)
-        if (endpoint.name === 'primary') {
-          headers["Referer"] = "https://www.511virginia.org/";
+      // For Iteris CDN fallback, try both https and http variants
+      const fallbackVariants = [];
+      if (endpoint.name === 'fallback' && endpoint.url.includes('iteriscdn.com')) {
+        // Try https first (already in config), then http as fallback
+        fallbackVariants.push(endpoint.url);
+        if (endpoint.url.startsWith('https://')) {
+          fallbackVariants.push(endpoint.url.replace('https://', 'http://'));
         }
+      } else {
+        fallbackVariants.push(endpoint.url);
+      }
 
-        const response = await fetchWithProxies(endpoint.url, {
+      for (const urlVariant of fallbackVariants) {
+        if (incidentsLoaded) break;
+
+        try {
+          const headers = {
+            "X-Cache-TTL-MS": "60000",
+            "Accept": "application/geo+json,application/json,*/*",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+          };
+
+          // Only add Referer for non-fallback endpoints (fallback works better without)
+          if (endpoint.name === 'primary') {
+            headers["Referer"] = "https://www.511virginia.org/";
+          }
+
+          const response = await fetchWithProxies(urlVariant, {
           expect: endpoint.format === 'jsonp' ? 'text' : 'json',
           headers,
           timeoutMs: 25000
@@ -3084,23 +3323,25 @@ function selectItem(id) {
           throw new Error("Invalid GeoJSON response (missing features)");
         }
 
-      } catch (e) {
-        // Try next endpoint if available
-        if (endpoint.name === 'fallback') {
-          // Round 3: Record failure only if all endpoints failed
-          recordSourceFailure('va511-incidents', 'fetch_error');
-          recordFeedError('va511-incidents');
+        } catch (e) {
+          // Try next URL variant or next endpoint if available
+          console.warn(`[VA511 Incidents] ${endpoint.name} (${urlVariant}) failed: ${e.message}, trying next variant/endpoint...`);
+          if (endpoint.name === 'fallback' && urlVariant === fallbackVariants[fallbackVariants.length - 1]) {
+            // Last variant of fallback endpoint failed - record failure
+            recordSourceFailure('va511-incidents', 'fetch_error');
+            recordFeedError('va511-incidents');
 
-          if (!store._511IncidentsErrorLogged) {
-            console.error("All 511 incidents endpoints failed. Error:", e.message || e);
-            console.error("The 511 incidents service may be down or blocking requests.");
-            console.error("  → Ensure proxy server is running: node proxy-server.js");
-            console.error("  → Tried endpoints:", incidentsEndpoints.map(ep => ep.url).join(', '));
-            store._511IncidentsErrorLogged = true;
+            if (!store._511IncidentsErrorLogged) {
+              console.error("All 511 incidents endpoints failed. Error:", e.message || e);
+              console.error("The 511 incidents service may be down or blocking requests.");
+              console.error("  → Ensure proxy server is running: node proxy-server.js");
+              console.error("  → Tried endpoints:", incidentsEndpoints.map(ep => ep.url).join(', '));
+              store._511IncidentsErrorLogged = true;
+            }
           }
         }
-      }
-    }
+      } // End urlVariant loop
+    } // End endpoint loop
     } // End backoff check for incidents
 
     if (CONFIG.va511.includeConstructionOnMap) {
@@ -3268,6 +3509,78 @@ function selectItem(id) {
     }
 
     return { added, total: feats.length };
+  }
+
+  // Ingest external cameras (WetMet API)
+  function ingestExternalCameras() {
+    if (!CONFIG.externalCameras.enabled) return { added: 0, total: 0 };
+
+    const cameras = CONFIG.externalCameras.cameras || [];
+    let added = 0;
+
+    for (const cam of cameras) {
+      const lat = Number(cam.lat);
+      const lon = Number(cam.lon);
+      if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
+
+      const key = `ext_cam::${cam.id}::${lat.toFixed(5)},${lon.toFixed(5)}`;
+      if (store.seenKeys.has(key)) continue;
+      store.seenKeys.add(key);
+
+      // Build media based on type
+      let media = null;
+      if (cam.type === "iframe") {
+        media = { type: "iframe", src: cam.url, alt: cam.name };
+      } else if (cam.type === "image") {
+        media = { type: "image", src: cam.url, alt: cam.name };
+      }
+
+      const item = {
+        id: key,
+        category: "camera",
+        title: cam.name,
+        summary: "External camera feed.",
+        sourceName: "WetMet Cameras",
+        sourceId: "wetmet",
+        url: cam.url,
+        timestamp: new Date().toISOString(),
+        lat,
+        lon,
+        emoji: "📷",
+        tone: "good",
+        media,
+        dedupeKey: key,
+        message: "External camera feed.",
+        panelHtml: "",
+        source: { id:"wetmet", name:"WetMet Cameras", category:"camera", url:"https://api.wetmet.net/" }
+      };
+
+      store.itemsById.set(item.id, item);
+      added++;
+    }
+
+    return { added, total: cameras.length };
+  }
+
+  // Poll external cameras (lightweight - only injects markers, doesn't fetch remote content)
+  async function pollExternalCameras() {
+    if (!CONFIG.externalCameras.enabled) return;
+
+    const now = Date.now();
+    const ttl = CONFIG.externalCameras.cacheTtlMs || 60_000;
+
+    // Check if we need to refresh
+    if (store.lastFetch.externalCameras && (now - store.lastFetch.externalCameras) < ttl) {
+      return; // Still fresh, skip
+    }
+
+    try {
+      const result = ingestExternalCameras();
+      store.lastFetch.externalCameras = now;
+      console.log(`[ExternalCameras] Loaded ${result.added} external camera markers`);
+    } catch (e) {
+      console.error("[ExternalCameras] Failed to load:", e);
+    }
   }
 
 
@@ -3993,7 +4306,8 @@ function selectItem(id) {
       CONFIG.nws.enabled ? fetchNWS().catch(e => console.warn("NWS refresh partial", e)) : Promise.resolve(),
       pollVa511().catch(e => console.warn("511 refresh partial", e)),
       CONFIG.openUV.enabled ? fetchOpenUV().catch(e => console.warn("OpenUV refresh partial", e)) : Promise.resolve(),
-      CONFIG.cdc.enabled ? fetchCDC().catch(e => console.warn("CDC refresh partial", e)) : Promise.resolve()
+      CONFIG.cdc.enabled ? fetchCDC().catch(e => console.warn("CDC refresh partial", e)) : Promise.resolve(),
+      CONFIG.externalCameras.enabled ? pollExternalCameras().catch(e => console.warn("External cameras refresh partial", e)) : Promise.resolve()
     ]);
 
     // Check budget before proceeding to crash data (budget enforcement)
@@ -4447,6 +4761,21 @@ function selectItem(id) {
     return summary;
   }
 
+  // Update category counts in dock (lightweight UI refresh for degraded mode)
+  function updateCategoryCounts() {
+    try {
+      // Lightweight UI refresh when degraded mode skips redraw()
+      // If dock is open, re-render it so the categories list reflects current store content
+      if (typeof dockState !== "undefined" && dockState && dockState.isOpen) {
+        renderDock();
+      }
+      // If a panel list exists and is open, keep it stable (no full redraw)
+      // (Only do minimal DOM updates if you have a known lightweight hook; otherwise no-op.)
+    } catch (e) {
+      console.warn("updateCategoryCounts failed:", e);
+    }
+  }
+
   // Summarize by source
   function summarizeBySource(items) {
     const summary = {};
@@ -4693,6 +5022,22 @@ function selectItem(id) {
       });
     }
 
+    // GIS Overlays
+    if (CONFIG.gisOverlays.enabled) {
+      html += `<div class="dockSectionTitle">Map Overlays</div>`;
+      html += `<div class="dockCard">`;
+      CONFIG.gisOverlays.overlays.forEach(overlay => {
+        const isEnabled = store.gis.enabled.has(overlay.id);
+        html += `<div class="dockRow" style="padding: 8px 0;">`;
+        html += `<label style="display:flex;align-items:center;gap:8px;cursor:pointer;width:100%;">`;
+        html += `<input type="checkbox" data-overlay-id="${escapeAttr(overlay.id)}" ${isEnabled ? 'checked' : ''} style="cursor:pointer;">`;
+        html += `<span style="flex:1;">${escapeHtml(overlay.name)}</span>`;
+        html += `</label>`;
+        html += `</div>`;
+      });
+      html += `</div>`;
+    }
+
     return html;
   }
 
@@ -4776,6 +5121,20 @@ function selectItem(id) {
           const cat = row.dataset.category;
           soloCategory(cat);
           closeDock();
+        });
+      });
+    }
+
+    if (dockState.tab === "system") {
+      // Bind GIS overlay toggles
+      dockPanelBody.querySelectorAll('input[data-overlay-id]').forEach(checkbox => {
+        checkbox.addEventListener("change", async (e) => {
+          const overlayId = e.target.dataset.overlayId;
+          if (e.target.checked) {
+            await enableOverlay(overlayId);
+          } else {
+            disableOverlay(overlayId);
+          }
         });
       });
     }
