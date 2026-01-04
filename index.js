@@ -4175,6 +4175,209 @@ function selectItem(id) {
   });
 
   // -----------------------------
+  // Radio Player Logic (HTML5 Audio)
+  // -----------------------------
+  const RADIO_FEEDS = [
+    { id: "527", name: "Fredericksburg City & Spotsylvania County Fire & EMS", streamUrl: "https://broadcastify.cdnstream1.com/527", pageUrl: "https://www.broadcastify.com/webPlayer/527" },
+    { id: "592", name: "Spotsylvania County Fire & Rescue", streamUrl: "https://broadcastify.cdnstream1.com/592", pageUrl: "https://www.broadcastify.com/webPlayer/592" },
+    { id: "5250", name: "King George County Fire & EMS", streamUrl: "https://broadcastify.cdnstream1.com/5250", pageUrl: "https://www.broadcastify.com/webPlayer/5250" },
+    { id: "27136", name: "Prince William County Police & Fire", streamUrl: "https://broadcastify.cdnstream1.com/27136", pageUrl: "https://www.broadcastify.com/webPlayer/27136" },
+    { id: "42002", name: "Orange County Fire & EMS", streamUrl: "https://broadcastify.cdnstream1.com/42002", pageUrl: "https://www.broadcastify.com/webPlayer/42002" },
+    { id: "26919", name: "Culpeper County Public Safety", streamUrl: "https://broadcastify.cdnstream1.com/26919", pageUrl: "https://www.broadcastify.com/webPlayer/26919" },
+    { id: "37506", name: "Culpeper County Sheriff", streamUrl: "https://broadcastify.cdnstream1.com/37506", pageUrl: "https://www.broadcastify.com/webPlayer/37506" },
+    { id: "37505", name: "Culpeper Town Police", streamUrl: "https://broadcastify.cdnstream1.com/37505", pageUrl: "https://www.broadcastify.com/webPlayer/37505" },
+  ];
+
+  // Create single shared audio instance
+  const radioAudio = new Audio();
+  radioAudio.preload = "none";
+  radioAudio.volume = 0.8;
+  radioAudio.crossOrigin = "anonymous"; // best-effort CORS
+
+  // Radio state
+  let currentStationId = null;
+  let isPlaying = false;
+
+  // Helper: Get station by ID
+  function radioGetStation(id) {
+    return RADIO_FEEDS.find(s => s.id === id);
+  }
+
+  // Helper: Update station UI status
+  function radioUpdateStationUI(stationId, status, buttonIcon) {
+    const statusEl = document.getElementById(`radioStatus-${stationId}`);
+    const btnEl = document.querySelector(`[data-radio-id="${stationId}"]`);
+    const rowEl = btnEl?.closest('.radioStationRow');
+
+    if (statusEl) {
+      statusEl.textContent = status;
+      statusEl.className = 'radioStatus';
+      if (status.includes('Playing')) statusEl.classList.add('playing');
+      if (status.includes('Error')) statusEl.classList.add('error');
+    }
+    if (btnEl) {
+      btnEl.textContent = buttonIcon;
+    }
+    if (rowEl) {
+      if (status.includes('Playing')) {
+        rowEl.classList.add('playing');
+      } else {
+        rowEl.classList.remove('playing');
+      }
+    }
+  }
+
+  // Helper: Reset all stations UI
+  function radioResetAllUI() {
+    RADIO_FEEDS.forEach(station => {
+      radioUpdateStationUI(station.id, 'Paused', '▶');
+    });
+  }
+
+  // Start a station
+  async function radioStartStation(id) {
+    const station = radioGetStation(id);
+    if (!station) return;
+
+    // Reset all UI first
+    radioResetAllUI();
+
+    // Update state
+    currentStationId = id;
+    radioAudio.src = station.streamUrl;
+
+    // Attempt playback
+    try {
+      await radioAudio.play();
+      // Success
+      isPlaying = true;
+      radioUpdateStationUI(id, 'Playing', '⏸');
+      $("radioNowPlaying").textContent = station.name;
+      $("radioMasterToggle").textContent = '⏸';
+    } catch (err) {
+      // Playback blocked or failed
+      console.warn(`Radio playback failed for ${station.name}:`, err);
+      isPlaying = false;
+      radioUpdateStationUI(id, 'Error (Open Player)', '▶');
+      $("radioNowPlaying").textContent = 'Playback blocked — use Open Player';
+      $("radioMasterToggle").textContent = '▶';
+    }
+  }
+
+  // Pause current station
+  function radioPauseAudio() {
+    radioAudio.pause();
+    isPlaying = false;
+    if (currentStationId) {
+      radioUpdateStationUI(currentStationId, 'Paused', '▶');
+    }
+    $("radioMasterToggle").textContent = '▶';
+  }
+
+  // Stop playback completely
+  function radioStopAudio() {
+    radioAudio.pause();
+    radioAudio.removeAttribute('src');
+    radioAudio.load();
+    currentStationId = null;
+    isPlaying = false;
+    radioResetAllUI();
+    $("radioNowPlaying").textContent = '—';
+    $("radioMasterToggle").textContent = '▶';
+  }
+
+  // Toggle station (play/pause)
+  function radioToggleStation(id) {
+    if (id === currentStationId && isPlaying) {
+      radioPauseAudio();
+    } else {
+      radioStartStation(id);
+    }
+  }
+
+  // Render station list
+  function radioRenderStations() {
+    const container = $("radioStations");
+    if (!container) return;
+
+    container.innerHTML = RADIO_FEEDS.map(station => `
+      <div class="radioStationRow">
+        <button class="radioStationPlayBtn" data-radio-id="${station.id}" aria-label="Play ${station.name}">▶</button>
+        <div class="radioStationMeta">
+          <div class="radioStationName">${station.name}</div>
+          <div id="radioStatus-${station.id}" class="radioStatus">Paused</div>
+        </div>
+        <a href="${station.pageUrl}" target="_blank" rel="noopener noreferrer" class="radioStationOpenLink">Open Player</a>
+      </div>
+    `).join('');
+
+    // Attach click handlers to play buttons
+    container.querySelectorAll('.radioStationPlayBtn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const id = btn.getAttribute('data-radio-id');
+        radioToggleStation(id);
+      });
+    });
+  }
+
+  // Wire master controls
+  $("radioMasterToggle").addEventListener('click', () => {
+    if (!currentStationId) {
+      // No station selected, start first station
+      radioStartStation(RADIO_FEEDS[0].id);
+    } else if (isPlaying) {
+      radioPauseAudio();
+    } else {
+      radioStartStation(currentStationId);
+    }
+  });
+
+  $("radioStop").addEventListener('click', () => {
+    radioStopAudio();
+  });
+
+  $("radioVolume").addEventListener('input', (e) => {
+    radioAudio.volume = parseFloat(e.target.value);
+  });
+
+  // Audio event listeners (keep UI in sync)
+  radioAudio.addEventListener('pause', () => {
+    if (isPlaying && currentStationId) {
+      isPlaying = false;
+      radioUpdateStationUI(currentStationId, 'Paused', '▶');
+      $("radioMasterToggle").textContent = '▶';
+    }
+  });
+
+  radioAudio.addEventListener('playing', () => {
+    if (!isPlaying && currentStationId) {
+      isPlaying = true;
+      radioUpdateStationUI(currentStationId, 'Playing', '⏸');
+      $("radioMasterToggle").textContent = '⏸';
+    }
+  });
+
+  radioAudio.addEventListener('ended', () => {
+    isPlaying = false;
+    if (currentStationId) {
+      radioUpdateStationUI(currentStationId, 'Paused', '▶');
+    }
+    $("radioMasterToggle").textContent = '▶';
+  });
+
+  radioAudio.addEventListener('error', () => {
+    if (currentStationId) {
+      isPlaying = false;
+      radioUpdateStationUI(currentStationId, 'Error (Open Player)', '▶');
+      $("radioNowPlaying").textContent = 'Playback blocked — use Open Player';
+      $("radioMasterToggle").textContent = '▶';
+    }
+  });
+
+  // Initialize radio UI
+  radioRenderStations();
+
+  // -----------------------------
   // Boot + timers
   // -----------------------------
   refreshAll();
