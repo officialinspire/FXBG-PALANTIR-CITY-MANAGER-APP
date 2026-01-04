@@ -55,6 +55,10 @@ const ALLOWED_UPSTREAM_DOMAINS = [
   'files4.iteriscdn.com',
   'files5.iteriscdn.com',
 
+  // VDOT Traffic Cameras - New camera snapshot domain (2025+)
+  // VA511 migrated camera snapshots to vdotcameras.com (snapshot.vdotcameras.com, media-sfs8.vdotcameras.com, etc.)
+  'vdotcameras.com',
+
   // Virginia Crash Data
   'data.virginia.gov',
   'services1.arcgis.com',
