@@ -610,11 +610,13 @@
     // 511Virginia GeoJSON endpoints
     va511: {
       enabled: true,
+      // Camera endpoints with fallbacks (try multiple sources due to API blocking)
       camerasGeojson: "https://511.vdot.virginia.gov/services/map/layers/map/cams",
+      camerasGeojsonFallback: "http://www.511virginia.org/data/icons.cameras.geojson",
+      camerasGeojsonFallback2: "http://files4.iteriscdn.com/WebApps/VA/SafeTravel/data/local/icons/metadata/icons.cameras_inactive.geojsonp",
       // Primary incidents endpoint - may return HTML error pages during outages
       incidentsGeojson: "https://www.511virginia.org/data/geojson/icons.incident.geojson",
       // Fallback to Iteris CDN if main endpoint fails (JSONP format - auto-stripped)
-      // Note: This fallback is also currently returning HTML errors
       incidentsGeojsonFallback: "http://files5.iteriscdn.com/WebApps/VA/SafeTravel/data/local/icons/metadata/icons.incident.geojsonp",
       constructionGeojson: "https://www.511virginia.org/data/geojson/icons.construction.geojson",
       includeConstructionOnMap: false
@@ -2945,44 +2947,77 @@ function selectItem(id) {
     if (!camerasBackoffCheck.allowed) {
       console.log(`[VA511 Backoff] Skipping cameras (backoff: ${Math.round(camerasBackoffCheck.delayMs / 1000)}s remaining)`);
     } else {
-    try {
-      const cams = await fetchWithProxies(CONFIG.va511.camerasGeojson, {
-        expect: "json",
-        headers: {
+
+    // Helper to parse JSONP response for camera endpoints
+    const parseJsonpCamera = (text) => {
+      if (typeof text !== 'string') return text;
+      const match = text.match(/^\s*\w+\s*\(\s*({[\s\S]*})\s*\)\s*;?\s*$/);
+      return match ? JSON.parse(match[1]) : JSON.parse(text);
+    };
+
+    // Try primary camera endpoint first, then fallbacks if it fails
+    const cameraEndpoints = [
+      { url: CONFIG.va511.camerasGeojson, format: 'json', name: 'primary' },
+      { url: CONFIG.va511.camerasGeojsonFallback, format: 'json', name: 'fallback1' },
+      { url: CONFIG.va511.camerasGeojsonFallback2, format: 'jsonp', name: 'fallback2' }
+    ];
+
+    for (const endpoint of cameraEndpoints) {
+      if (camerasLoaded) break;
+
+      try {
+        const headers = {
           "X-Cache-TTL-MS": "120000",
           "Accept": "application/geo+json,application/json,*/*",
-          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-          "Referer": "https://511.vdot.virginia.gov/"
-        },
-        timeoutMs: 25000
-      });
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        };
 
-      // Validate that we got actual GeoJSON
-      if (cams && (cams.type === "FeatureCollection" || Array.isArray(cams.features))) {
-        console.log("511 cameras loaded successfully:", cams.features?.length || 0, "cameras");
-        const result = ingestVa511Cameras(cams);
-        console.log(`511 cameras ingested: ${result.added} cameras added from ${result.total} total`);
-        camerasLoaded = true;
+        // Only add Referer for primary endpoint
+        if (endpoint.name === 'primary') {
+          headers["Referer"] = "https://511.vdot.virginia.gov/";
+        }
 
-        // Round 3: Record success to clear backoff
-        recordSourceSuccess('va511-cameras');
-      } else {
-        throw new Error("Invalid GeoJSON response (missing features)");
+        const response = await fetchWithProxies(endpoint.url, {
+          expect: endpoint.format === 'jsonp' ? 'text' : 'json',
+          headers,
+          timeoutMs: 25000
+        });
+
+        // Parse JSONP if needed
+        const cams = endpoint.format === 'jsonp' ? parseJsonpCamera(response) : response;
+
+        // Validate that we got actual GeoJSON
+        if (cams && (cams.type === "FeatureCollection" || Array.isArray(cams.features))) {
+          console.log(`511 cameras loaded successfully from ${endpoint.name}:`, cams.features?.length || 0, "cameras");
+          const result = ingestVa511Cameras(cams);
+          console.log(`511 cameras ingested: ${result.added} cameras added from ${result.total} total`);
+          camerasLoaded = true;
+
+          // Record success to clear backoff
+          recordSourceSuccess('va511-cameras');
+        } else {
+          console.warn(`[VA511 Cameras] ${endpoint.name} returned invalid GeoJSON (missing features), trying next endpoint...`);
+        }
+
+      } catch (e) {
+        console.warn(`[VA511 Cameras] ${endpoint.name} failed: ${e.message}, trying next endpoint...`);
       }
+    }
 
-    } catch (e) {
-      // Round 3: Record failure and apply backoff
+    // If all endpoints failed, log error and apply backoff
+    if (!camerasLoaded) {
       recordSourceFailure('va511-cameras', 'fetch_error');
       recordFeedError('va511-cameras');
 
-      // Only log CORS/network errors once per session to avoid console spam
       if (!store._511CamerasErrorLogged) {
-        console.warn("511 cameras fetch failed. Error:", e.message || e);
-        console.warn("The 511 cameras endpoint may be down or blocking requests.");
+        console.warn("511 cameras fetch failed on all endpoints.");
+        console.warn("The 511 cameras endpoints may be down or blocking requests.");
         console.warn("  → Ensure proxy server is running: node proxy-server.js");
+        console.warn("  → Manual camera data will be used as fallback");
         store._511CamerasErrorLogged = true;
       }
     }
+
     } // End backoff check for cameras
 
     // Incidents (STRICT time gate)

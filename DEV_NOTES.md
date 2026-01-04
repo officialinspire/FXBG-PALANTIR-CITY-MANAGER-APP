@@ -139,6 +139,9 @@ The proxy server accepts requests to these allowlisted domains:
 - `511virginia.org` — Virginia 511 traffic cameras/incidents
 - `511.vdot.virginia.gov` — VDOT traffic data
 - `virginiaroads.org` — Road conditions
+- `iteriscdn.com` — Iteris CDN (fallback for 511 traffic data)
+- `files4.iteriscdn.com` — Camera snapshots fallback
+- `files5.iteriscdn.com` — Incidents data fallback
 
 ### Crash Data
 - `data.virginia.gov` — Virginia Socrata open data portal
