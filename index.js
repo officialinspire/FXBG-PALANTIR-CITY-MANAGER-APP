@@ -4081,7 +4081,7 @@ function selectItem(id) {
       const summary = escapeHtml((item.summary || item.message || "No description").slice(0, 200));
       const jurisdiction = escapeHtml(item.jurisdiction || "Unknown");
       const category = escapeHtml(CATEGORIES[item.category]?.label || item.category || "News");
-      const time = formatTime(item.published);
+      const time = fmtTime(item.published);
 
       return `
         <div class="newsItem" data-item-id="${escapeAttr(item.id)}">
@@ -4105,7 +4105,11 @@ function selectItem(id) {
         const itemId = el.getAttribute('data-item-id');
         const item = store.itemsById.get(itemId);
         if (item) {
-          showMarkerPopup(item);
+          // Close the news flash panel
+          playClickSound('close');
+          $("newsFlashPanel").classList.add("newsFlashPanel--hidden");
+          // Select the item to show in the side panel
+          selectItem(itemId);
           // Also zoom to the item on the map
           if (item.loc) {
             map.setView([item.loc.lat, item.loc.lon], 14);
@@ -4463,7 +4467,7 @@ function selectItem(id) {
   // Get source status
   function getSourceStatus(sourceId) {
     // Check if source has recent errors
-    const hasErrors = healthTracker.recentErrors.some(err => err.source === sourceId);
+    const hasErrors = healthTracker.recentErrors.has(sourceId);
     if (hasErrors) return "error";
 
     // Check if source is in backoff
@@ -4647,8 +4651,8 @@ function selectItem(id) {
     let html = `<div class="dockCard">`;
     html += `<div class="dockRow">`;
     html += `<div class="dockRowLeft"><div class="dockRowTitle">System Status</div></div>`;
-    const statusClass = health === "live" ? "status-ok" : health === "partial" ? "status-backoff" : "status-error";
-    html += `<div class="dockBadge ${statusClass}">${health.toUpperCase()}</div>`;
+    const statusClass = health.status.toLowerCase() === "live" ? "status-ok" : health.status.toLowerCase() === "partial" ? "status-backoff" : "status-error";
+    html += `<div class="dockBadge ${statusClass}">${health.status.toUpperCase()}</div>`;
     html += `</div>`;
     html += `<div class="dockRow">`;
     html += `<div class="dockRowLeft"><div class="dockRowTitle">Stale Data Count</div></div>`;
@@ -4657,15 +4661,15 @@ function selectItem(id) {
     html += `</div>`;
 
     // Recent errors
-    if (healthTracker.recentErrors.length > 0) {
-      html += `<div class="dockSectionTitle">Recent Errors (${healthTracker.recentErrors.length})</div>`;
-      const errors = healthTracker.recentErrors.slice(0, 10);
-      errors.forEach(err => {
+    if (healthTracker.recentErrors.size > 0) {
+      html += `<div class="dockSectionTitle">Recent Errors (${healthTracker.recentErrors.size})</div>`;
+      const errorEntries = Array.from(healthTracker.recentErrors.entries()).slice(0, 10);
+      errorEntries.forEach(([feedId, data]) => {
         html += `<div class="dockCard">`;
         html += `<div class="dockRow">`;
         html += `<div class="dockRowLeft">`;
-        html += `<div class="dockRowTitle">${escapeHtml(err.source)}</div>`;
-        html += `<div class="dockRowMeta">${formatRelativeTime(err.timestamp)} • ${escapeHtml(err.message)}</div>`;
+        html += `<div class="dockRowTitle">${escapeHtml(feedId)}</div>`;
+        html += `<div class="dockRowMeta">${formatRelativeTime(data.firstSeen)} • ${data.count} error(s)</div>`;
         html += `</div>`;
         html += `</div>`;
         html += `</div>`;
