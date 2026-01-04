@@ -1201,6 +1201,18 @@ const server = http.createServer(async (req, res) => {
 });
 
 server.listen(PORT, () => {
-  console.log(`CITY MANAGER server running: http://localhost:${PORT}`);
-  console.log(`Proxy endpoint: http://localhost:${PORT}/proxy?url=https://example.com/feed`);
+  console.log(`┌─────────────────────────────────────────────────────────────────┐`);
+  console.log(`│ CITY MANAGER server running                                     │`);
+  console.log(`├─────────────────────────────────────────────────────────────────┤`);
+  console.log(`│ Local:     http://localhost:${PORT}`.padEnd(67) + `│`);
+  console.log(`│ Proxy:     http://localhost:${PORT}/proxy?url=<URL>`.padEnd(67) + `│`);
+  console.log(`│ Health:    http://localhost:${PORT}/health`.padEnd(67) + `│`);
+  console.log(`├─────────────────────────────────────────────────────────────────┤`);
+  console.log(`│ USB Tether Mode (Android/Termux):                               │`);
+  console.log(`│   1. Run this server on phone in Termux                         │`);
+  console.log(`│   2. Connect laptop via USB tether                              │`);
+  console.log(`│   3. Find phone gateway IP: ip route | grep default             │`);
+  console.log(`│   4. On laptop, open: http://<gateway-ip>:${PORT}`.padEnd(67) + `│`);
+  console.log(`│      (e.g., http://192.168.42.1:${PORT})`.padEnd(67) + `│`);
+  console.log(`└─────────────────────────────────────────────────────────────────┘`);
 });

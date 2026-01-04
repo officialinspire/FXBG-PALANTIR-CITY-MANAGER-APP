@@ -644,6 +644,97 @@
   };
 
   // -----------------------------
+  // Proxy Base Configuration (USB Tether Support)
+  // -----------------------------
+  /**
+   * Normalize proxy base URL: remove trailing slash
+   */
+  function normalizeProxyBase(s) {
+    if (typeof s !== 'string' || !s) return '';
+    return s.replace(/\/+$/, '');
+  }
+
+  /**
+   * Get default proxy base URL
+   * - If served over http(s): use location.origin (existing behavior)
+   * - If opened via file:// or origin is "null": default to http://localhost:8000
+   */
+  function defaultProxyBase() {
+    if (location.protocol === 'file:' || location.origin === 'null') {
+      return 'http://localhost:8000';
+    }
+    return location.origin;
+  }
+
+  /**
+   * Get current proxy base URL with priority order:
+   * 1. URL param: ?proxyBase=... or ?proxy=...
+   * 2. localStorage: cm_proxy_base
+   * 3. Default: location.origin or http://localhost:8000 (for file://)
+   */
+  function getProxyBase() {
+    try {
+      // Priority 1: URL param
+      const urlParams = new URLSearchParams(location.search);
+      const paramBase = urlParams.get('proxyBase') || urlParams.get('proxy');
+      if (paramBase) {
+        return normalizeProxyBase(paramBase);
+      }
+
+      // Priority 2: localStorage
+      const storedBase = localStorage.getItem('cm_proxy_base');
+      if (storedBase) {
+        return normalizeProxyBase(storedBase);
+      }
+
+      // Priority 3: Default
+      return normalizeProxyBase(defaultProxyBase());
+    } catch (e) {
+      console.warn('[Proxy] Failed to get proxy base:', e);
+      return normalizeProxyBase(defaultProxyBase());
+    }
+  }
+
+  /**
+   * Set proxy base URL (stores to localStorage and reloads page)
+   * @param {string} valueOrBlank - New proxy base URL, or blank/null to reset to default
+   */
+  function setProxyBase(valueOrBlank) {
+    try {
+      if (!valueOrBlank || typeof valueOrBlank !== 'string' || valueOrBlank.trim() === '') {
+        // Clear override - revert to default
+        localStorage.removeItem('cm_proxy_base');
+        console.log('[Proxy] Cleared custom proxy base, reverting to default');
+      } else {
+        // Store override
+        const normalized = normalizeProxyBase(valueOrBlank.trim());
+        localStorage.setItem('cm_proxy_base', normalized);
+        console.log('[Proxy] Set custom proxy base:', normalized);
+      }
+      // Reload to apply changes
+      location.reload();
+    } catch (e) {
+      console.error('[Proxy] Failed to set proxy base:', e);
+      alert('Failed to update proxy settings: ' + e.message);
+    }
+  }
+
+  // Auto-persist URL param to localStorage on load
+  (() => {
+    try {
+      const urlParams = new URLSearchParams(location.search);
+      const paramBase = urlParams.get('proxyBase') || urlParams.get('proxy');
+      if (paramBase) {
+        const normalized = normalizeProxyBase(paramBase);
+        localStorage.setItem('cm_proxy_base', normalized);
+        console.log('[Proxy] Auto-persisted URL param proxy base to localStorage:', normalized);
+      }
+    } catch (e) {
+      console.warn('[Proxy] Failed to persist URL param:', e);
+    }
+  })();
+
+  // -----------------------------
   // Categories
   // -----------------------------
   const CATEGORIES = {
@@ -1288,7 +1379,7 @@
         const u = new URL(url, location.href);
         // Only proxy absolute http(s) URLs (skip blob:, data:, etc.)
         if (!/^https?:$/.test(u.protocol)) return null;
-        return `${location.origin}/proxy?url=${encodeURIComponent(u.toString())}`;
+        return `${getProxyBase()}/proxy?url=${encodeURIComponent(u.toString())}`;
       } catch {
         return null;
       }
@@ -1753,7 +1844,7 @@
   // Check if proxy server is available
   async function checkProxyServer() {
     try {
-      const proxyUrl = `${location.origin}/proxy?url=${encodeURIComponent('https://api.weather.gov')}`;
+      const proxyUrl = `${getProxyBase()}/proxy?url=${encodeURIComponent('https://api.weather.gov')}`;
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 2000);
       const res = await fetch(proxyUrl, { signal: controller.signal });
@@ -4887,6 +4978,73 @@ function selectItem(id) {
       closeDock();
     }
   });
+
+  // -----------------------------
+  // Proxy Chip UI (USB Tether Mode Support)
+  // -----------------------------
+  (() => {
+    const center = document.querySelector('.topbar__center');
+    if (!center || document.getElementById('chipProxy')) return;
+
+    // Create chip element
+    const chip = document.createElement('div');
+    chip.className = 'chip';
+    chip.id = 'chipProxy';
+    chip.title = 'Click to configure proxy server (for USB tether mode)';
+
+    // Add icon
+    const icon = document.createElement('span');
+    icon.className = 'chip__icon';
+    icon.textContent = '🔌';
+    chip.appendChild(icon);
+
+    // Add text
+    const text = document.createElement('span');
+    text.className = 'chip__text';
+    text.id = 'proxyText';
+    chip.appendChild(text);
+
+    // Update chip text based on current proxy base
+    function updateProxyChipText() {
+      const current = getProxyBase();
+      const defaultBase = defaultProxyBase();
+      if (current === defaultBase) {
+        text.textContent = 'Proxy: Auto';
+      } else {
+        try {
+          const url = new URL(current);
+          text.textContent = `Proxy: ${url.host}`;
+        } catch {
+          text.textContent = `Proxy: ${current}`;
+        }
+      }
+    }
+
+    // Add click handler
+    chip.addEventListener('click', () => {
+      const current = getProxyBase();
+      const defaultBase = defaultProxyBase();
+      const isCustom = current !== defaultBase;
+
+      const promptMsg = isCustom
+        ? `Current: ${current}\n\nSet Proxy Base (blank = auto/default).\nExample: http://192.168.42.1:8000`
+        : 'Set Proxy Base (blank = auto/default).\nExample: http://192.168.42.1:8000';
+
+      const input = prompt(promptMsg, isCustom ? current : '');
+
+      if (input !== null) {
+        setProxyBase(input);
+      }
+    });
+
+    // Append to topbar center
+    center.appendChild(chip);
+
+    // Initial update
+    updateProxyChipText();
+
+    console.log('[Proxy] Initialized proxy chip UI. Current base:', getProxyBase());
+  })();
 
   // Wire header chips to dock tabs
   $("chipLive").addEventListener("click", () => {
