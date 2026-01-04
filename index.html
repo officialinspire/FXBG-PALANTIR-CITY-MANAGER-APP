@@ -235,17 +235,39 @@
           </div>
         </div>
       </aside>
+
+      <!-- Dock Panel -->
+      <aside id="dockPanel" class="dockPanel" aria-hidden="true">
+        <div class="dockPanelHeader">
+          <div class="dockPanelTitle" id="dockPanelTitle">Overview</div>
+          <div class="dockPanelActions">
+            <button id="dockPanelClose" class="dockCloseBtn" title="Close">✕</button>
+          </div>
+        </div>
+
+        <div class="dockTabs" id="dockTabs">
+          <button class="dockTab" data-dock="overview">Overview</button>
+          <button class="dockTab" data-dock="categories">Categories</button>
+          <button class="dockTab" data-dock="sources">Sources</button>
+          <button class="dockTab" data-dock="system">System</button>
+        </div>
+
+        <div class="dockPanelBody" id="dockPanelBody">
+          <!-- rendered content -->
+        </div>
+      </aside>
+
+      <!-- Dock Overlay -->
+      <div id="dockOverlay" class="dockOverlay" aria-hidden="true"></div>
     </section>
   </main>
 
   <footer class="bottombar">
-    <div class="bottombar__left">
-      <!-- Legend is now dynamically generated from CATEGORIES in index.js to avoid duplicates -->
-      <div class="legend" id="legend"></div>
-    </div>
-
-    <div class="bottombar__right">
-      <div class="filters" id="filters" aria-label="Category filters"></div>
+    <div class="dock" id="dock">
+      <button class="dockBtn" data-dock="overview" aria-pressed="false">Overview</button>
+      <button class="dockBtn" data-dock="categories" aria-pressed="false">Categories</button>
+      <button class="dockBtn" data-dock="sources" aria-pressed="false">Sources</button>
+      <button class="dockBtn" data-dock="system" aria-pressed="false">System</button>
     </div>
   </footer>
 

@@ -4378,6 +4378,530 @@ function selectItem(id) {
   radioRenderStations();
 
   // -----------------------------
+  // DOCK BAR NAVIGATION SYSTEM
+  // -----------------------------
+  const dockState = {
+    isOpen: false,
+    tab: "overview"
+  };
+
+  // Grab DOM elements
+  const dockPanel = $("dockPanel");
+  const dockOverlay = $("dockOverlay");
+  const dockPanelTitle = $("dockPanelTitle");
+  const dockPanelBody = $("dockPanelBody");
+  const dockPanelClose = $("dockPanelClose");
+  const dockButtons = Array.from(document.querySelectorAll(".dockBtn"));
+  const dockTabs = Array.from(document.querySelectorAll(".dockTab"));
+
+  // Helper: timestamp conversion
+  function toTs(v) {
+    if (!v) return 0;
+    const d = new Date(v);
+    return isNaN(d.getTime()) ? 0 : d.getTime();
+  }
+
+  // Helper: get all items as array
+  function getAllItemsArray() {
+    return Array.from(store.itemsById.values());
+  }
+
+  // Helper: format relative time
+  function formatRelativeTime(ts) {
+    if (!ts) return "unknown";
+    const now = Date.now();
+    const diff = now - ts;
+    const mins = Math.floor(diff / 60000);
+    const hours = Math.floor(diff / 3600000);
+    const days = Math.floor(diff / 86400000);
+
+    if (mins < 1) return "just now";
+    if (mins < 60) return `${mins}m ago`;
+    if (hours < 24) return `${hours}h ago`;
+    return `${days}d ago`;
+  }
+
+  // Summarize by category
+  function summarizeByCategory(items) {
+    const summary = {};
+    items.forEach(item => {
+      const cat = item.category || item.type || item.layer || "other";
+      if (!summary[cat]) {
+        summary[cat] = { count: 0, latestTs: 0, sampleItems: [] };
+      }
+      summary[cat].count++;
+      const itemTs = toTs(item.ts || item.timestamp || item.published || item.updated);
+      if (itemTs > summary[cat].latestTs) {
+        summary[cat].latestTs = itemTs;
+      }
+      if (summary[cat].sampleItems.length < 5) {
+        summary[cat].sampleItems.push(item);
+      }
+    });
+    return summary;
+  }
+
+  // Summarize by source
+  function summarizeBySource(items) {
+    const summary = {};
+    items.forEach(item => {
+      const sourceId = item.sourceId || item.feedId || item.source || item.provider || "unknown";
+      if (!summary[sourceId]) {
+        summary[sourceId] = { count: 0, latestTs: 0 };
+      }
+      summary[sourceId].count++;
+      const itemTs = toTs(item.ts || item.timestamp || item.published || item.updated);
+      if (itemTs > summary[sourceId].latestTs) {
+        summary[sourceId].latestTs = itemTs;
+      }
+    });
+    return summary;
+  }
+
+  // Get source status
+  function getSourceStatus(sourceId) {
+    // Check if source has recent errors
+    const hasErrors = healthTracker.recentErrors.some(err => err.source === sourceId);
+    if (hasErrors) return "error";
+
+    // Check if source is in backoff
+    const backoffEntry = sourceBackoff.get(sourceId);
+    if (backoffEntry && Date.now() < backoffEntry.nextAllowedMs) {
+      return "backoff";
+    }
+
+    return "ok";
+  }
+
+  // Render Overview tab
+  function renderOverviewHTML() {
+    const allItems = getAllItemsArray();
+    const totalItems = allItems.length;
+    const filteredItems = allItems.filter(item => {
+      const cat = item.category || item.type || item.layer || "other";
+      return activeCategories.has(cat);
+    });
+
+    const categorySummary = summarizeByCategory(allItems);
+    const hotCategories = Object.entries(categorySummary)
+      .sort((a, b) => b[1].count - a[1].count)
+      .slice(0, 5);
+
+    // Find newest item
+    const newestItem = allItems.length > 0
+      ? allItems.reduce((newest, item) => {
+          const itemTs = toTs(item.ts || item.timestamp || item.published || item.updated);
+          const newestTs = toTs(newest.ts || newest.timestamp || newest.published || newest.updated);
+          return itemTs > newestTs ? item : newest;
+        })
+      : null;
+
+    let html = `<div class="dockCard">`;
+    html += `<div class="dockRow"><div class="dockRowLeft"><div class="dockRowTitle">Total Items</div></div><div class="dockBadge">${totalItems}</div></div>`;
+    if (filteredItems.length !== totalItems) {
+      html += `<div class="dockRow"><div class="dockRowLeft"><div class="dockRowTitle">Filtered Items</div></div><div class="dockBadge">${filteredItems.length}</div></div>`;
+    }
+    html += `</div>`;
+
+    if (hotCategories.length > 0) {
+      html += `<div class="dockSectionTitle">Hot Categories</div>`;
+      html += `<div class="dockCard">`;
+      hotCategories.forEach(([cat, data]) => {
+        const catInfo = CATEGORIES[cat] || { label: cat, emoji: "📌" };
+        html += `<div class="dockRow">`;
+        html += `<div class="dockRowLeft">`;
+        html += `<div class="dockRowTitle">${catInfo.emoji} ${catInfo.label}</div>`;
+        html += `<div class="dockRowMeta">${formatRelativeTime(data.latestTs)}</div>`;
+        html += `</div>`;
+        html += `<div class="dockBadge">${data.count}</div>`;
+        html += `</div>`;
+      });
+      html += `</div>`;
+    }
+
+    if (newestItem) {
+      html += `<div class="dockSectionTitle">Newest Item</div>`;
+      html += `<div class="dockCard">`;
+      html += `<div class="dockRow" data-item-id="${escapeAttr(newestItem.id)}" style="cursor:pointer;">`;
+      html += `<div class="dockRowLeft">`;
+      html += `<div class="dockRowTitle">${escapeHtml(newestItem.title || newestItem.message || "Untitled")}</div>`;
+      const newestTs = toTs(newestItem.ts || newestItem.timestamp || newestItem.published || newestItem.updated);
+      html += `<div class="dockRowMeta">${formatRelativeTime(newestTs)} • ${escapeHtml(newestItem.source || newestItem.feedId || "Unknown")}</div>`;
+      html += `</div>`;
+      html += `</div>`;
+      html += `</div>`;
+    }
+
+    html += `<button class="dockBtnSmall" id="dockRefreshAll">Refresh All</button>`;
+    html += `<button class="dockBtnSmall" id="dockResetFilters">Reset Filters</button>`;
+
+    return html;
+  }
+
+  // Render Categories tab
+  function renderCategoriesHTML() {
+    const allItems = getAllItemsArray();
+    const categorySummary = summarizeByCategory(allItems);
+    const sortedCategories = Object.entries(categorySummary)
+      .sort((a, b) => b[1].count - a[1].count);
+
+    let html = `<button class="dockBtnSmall" id="dockResetFiltersTop">Reset Filters</button>`;
+    html += `<div class="dockSectionTitle">Categories (${sortedCategories.length})</div>`;
+
+    sortedCategories.forEach(([cat, data]) => {
+      const catInfo = CATEGORIES[cat] || { label: cat, emoji: "📌" };
+      html += `<div class="dockCard">`;
+      html += `<div class="dockRow" data-category="${escapeAttr(cat)}">`;
+      html += `<div class="dockRowLeft">`;
+      html += `<div class="dockRowTitle">${catInfo.emoji} ${catInfo.label}</div>`;
+      html += `<div class="dockRowMeta">Latest: ${formatRelativeTime(data.latestTs)}</div>`;
+      html += `</div>`;
+      html += `<div class="dockBadge">${data.count}</div>`;
+      html += `</div>`;
+      html += `</div>`;
+    });
+
+    return html;
+  }
+
+  // Render Sources tab
+  function renderSourcesHTML() {
+    const allItems = getAllItemsArray();
+    const sourceSummary = summarizeBySource(allItems);
+
+    // Categorize sources into RSS vs API
+    const rssSources = [];
+    const apiSources = [];
+
+    Object.entries(sourceSummary).forEach(([sourceId, data]) => {
+      const isRSS = CONFIG.rss.some(feed => feed.id === sourceId) || sourceId.includes("rss");
+      const entry = { sourceId, ...data };
+      if (isRSS) {
+        rssSources.push(entry);
+      } else {
+        apiSources.push(entry);
+      }
+    });
+
+    rssSources.sort((a, b) => b.count - a.count);
+    apiSources.sort((a, b) => b.count - a.count);
+
+    let html = "";
+
+    if (rssSources.length > 0) {
+      html += `<div class="dockSectionTitle">RSS Feeds (${rssSources.length})</div>`;
+      rssSources.forEach(source => {
+        const status = getSourceStatus(source.sourceId);
+        const statusClass = `status-${status}`;
+        const statusLabel = status.toUpperCase();
+        const feed = CONFIG.rss.find(f => f.id === source.sourceId);
+        const name = feed ? feed.name : source.sourceId;
+
+        html += `<div class="dockCard">`;
+        html += `<div class="dockRow">`;
+        html += `<div class="dockRowLeft">`;
+        html += `<div class="dockRowTitle">${escapeHtml(name)}</div>`;
+        html += `<div class="dockRowMeta">Latest: ${formatRelativeTime(source.latestTs)}</div>`;
+        html += `</div>`;
+        html += `<div style="display:flex;gap:6px;align-items:center;">`;
+        html += `<div class="dockBadge ${statusClass}">${statusLabel}</div>`;
+        html += `<div class="dockBadge">${source.count}</div>`;
+        html += `</div>`;
+        html += `</div>`;
+        html += `</div>`;
+      });
+    }
+
+    if (apiSources.length > 0) {
+      html += `<div class="dockSectionTitle">APIs (${apiSources.length})</div>`;
+      apiSources.forEach(source => {
+        const status = getSourceStatus(source.sourceId);
+        const statusClass = `status-${status}`;
+        const statusLabel = status.toUpperCase();
+
+        html += `<div class="dockCard">`;
+        html += `<div class="dockRow">`;
+        html += `<div class="dockRowLeft">`;
+        html += `<div class="dockRowTitle">${escapeHtml(source.sourceId)}</div>`;
+        html += `<div class="dockRowMeta">Latest: ${formatRelativeTime(source.latestTs)}</div>`;
+        html += `</div>`;
+        html += `<div style="display:flex;gap:6px;align-items:center;">`;
+        html += `<div class="dockBadge ${statusClass}">${statusLabel}</div>`;
+        html += `<div class="dockBadge">${source.count}</div>`;
+        html += `</div>`;
+        html += `</div>`;
+        html += `</div>`;
+      });
+    }
+
+    return html;
+  }
+
+  // Render System tab
+  function renderSystemHTML() {
+    const health = healthTracker.computeHealth();
+    const staleCount = healthTracker.staleDataCount;
+
+    let html = `<div class="dockCard">`;
+    html += `<div class="dockRow">`;
+    html += `<div class="dockRowLeft"><div class="dockRowTitle">System Status</div></div>`;
+    const statusClass = health === "live" ? "status-ok" : health === "partial" ? "status-backoff" : "status-error";
+    html += `<div class="dockBadge ${statusClass}">${health.toUpperCase()}</div>`;
+    html += `</div>`;
+    html += `<div class="dockRow">`;
+    html += `<div class="dockRowLeft"><div class="dockRowTitle">Stale Data Count</div></div>`;
+    html += `<div class="dockBadge">${staleCount}</div>`;
+    html += `</div>`;
+    html += `</div>`;
+
+    // Recent errors
+    if (healthTracker.recentErrors.length > 0) {
+      html += `<div class="dockSectionTitle">Recent Errors (${healthTracker.recentErrors.length})</div>`;
+      const errors = healthTracker.recentErrors.slice(0, 10);
+      errors.forEach(err => {
+        html += `<div class="dockCard">`;
+        html += `<div class="dockRow">`;
+        html += `<div class="dockRowLeft">`;
+        html += `<div class="dockRowTitle">${escapeHtml(err.source)}</div>`;
+        html += `<div class="dockRowMeta">${formatRelativeTime(err.timestamp)} • ${escapeHtml(err.message)}</div>`;
+        html += `</div>`;
+        html += `</div>`;
+        html += `</div>`;
+      });
+    }
+
+    // Backoff schedule
+    const backoffEntries = Array.from(sourceBackoff.entries()).filter(([_, entry]) => Date.now() < entry.nextAllowedMs);
+    if (backoffEntries.length > 0) {
+      html += `<div class="dockSectionTitle">Backoff Schedule (${backoffEntries.length})</div>`;
+      backoffEntries.forEach(([sourceId, entry]) => {
+        const timeUntil = Math.ceil((entry.nextAllowedMs - Date.now()) / 60000);
+        html += `<div class="dockCard">`;
+        html += `<div class="dockRow">`;
+        html += `<div class="dockRowLeft">`;
+        html += `<div class="dockRowTitle">${escapeHtml(sourceId)}</div>`;
+        html += `<div class="dockRowMeta">Resume in ${timeUntil}m • ${entry.consecutiveErrors} errors</div>`;
+        html += `</div>`;
+        html += `</div>`;
+        html += `</div>`;
+      });
+    }
+
+    return html;
+  }
+
+  // Main render function for dock tabs
+  function htmlForDockTab(tab) {
+    switch(tab) {
+      case "overview": return renderOverviewHTML();
+      case "categories": return renderCategoriesHTML();
+      case "sources": return renderSourcesHTML();
+      case "system": return renderSystemHTML();
+      default: return "<p>Unknown tab</p>";
+    }
+  }
+
+  // Tab title helper
+  function titleForTab(tab) {
+    const titles = {
+      overview: "Overview",
+      categories: "Categories",
+      sources: "Sources",
+      system: "System"
+    };
+    return titles[tab] || "Dock";
+  }
+
+  // Render dock content
+  function renderDock() {
+    dockPanelTitle.textContent = titleForTab(dockState.tab);
+    dockPanelBody.innerHTML = htmlForDockTab(dockState.tab);
+
+    // Update active tab styling
+    dockTabs.forEach(tab => {
+      if (tab.dataset.dock === dockState.tab) {
+        tab.classList.add("isActive");
+      } else {
+        tab.classList.remove("isActive");
+      }
+    });
+
+    // Re-bind click handlers for rendered content
+    if (dockState.tab === "overview") {
+      const refreshBtn = document.getElementById("dockRefreshAll");
+      if (refreshBtn) {
+        refreshBtn.addEventListener("click", () => {
+          closeDock();
+          refreshAll();
+        });
+      }
+
+      const resetBtn = document.getElementById("dockResetFilters");
+      if (resetBtn) {
+        resetBtn.addEventListener("click", () => {
+          resetCategoryFilters();
+          renderDock(); // Re-render to show updated counts
+        });
+      }
+
+      // Bind newest item click
+      const newestRow = dockPanelBody.querySelector('[data-item-id]');
+      if (newestRow) {
+        newestRow.addEventListener("click", () => {
+          const itemId = newestRow.dataset.itemId;
+          closeDock();
+          selectItem(itemId);
+        });
+      }
+    }
+
+    if (dockState.tab === "categories") {
+      const resetBtn = document.getElementById("dockResetFiltersTop");
+      if (resetBtn) {
+        resetBtn.addEventListener("click", () => {
+          resetCategoryFilters();
+          renderDock();
+        });
+      }
+
+      // Bind category rows
+      dockPanelBody.querySelectorAll('[data-category]').forEach(row => {
+        row.addEventListener("click", () => {
+          const cat = row.dataset.category;
+          soloCategory(cat);
+          closeDock();
+        });
+      });
+    }
+  }
+
+  // Open dock
+  function openDock(tab) {
+    dockState.isOpen = true;
+    dockState.tab = tab;
+    dockPanel.classList.add("isOpen");
+    dockOverlay.classList.add("isOpen");
+    dockPanel.setAttribute("aria-hidden", "false");
+    dockOverlay.setAttribute("aria-hidden", "false");
+
+    // Update button active states
+    dockButtons.forEach(btn => {
+      if (btn.dataset.dock === tab) {
+        btn.classList.add("isActive");
+        btn.setAttribute("aria-pressed", "true");
+      } else {
+        btn.classList.remove("isActive");
+        btn.setAttribute("aria-pressed", "false");
+      }
+    });
+
+    renderDock();
+  }
+
+  // Close dock
+  function closeDock() {
+    dockState.isOpen = false;
+    dockPanel.classList.remove("isOpen");
+    dockOverlay.classList.remove("isOpen");
+    dockPanel.setAttribute("aria-hidden", "true");
+    dockOverlay.setAttribute("aria-hidden", "true");
+
+    // Update button active states
+    dockButtons.forEach(btn => {
+      btn.classList.remove("isActive");
+      btn.setAttribute("aria-pressed", "false");
+    });
+  }
+
+  // Toggle dock
+  function toggleDock(tab) {
+    if (!dockState.isOpen) {
+      openDock(tab);
+    } else if (dockState.tab === tab) {
+      closeDock();
+    } else {
+      setDockTab(tab);
+    }
+  }
+
+  // Set dock tab (when already open)
+  function setDockTab(tab) {
+    dockState.tab = tab;
+
+    // Update button active states
+    dockButtons.forEach(btn => {
+      if (btn.dataset.dock === tab) {
+        btn.classList.add("isActive");
+        btn.setAttribute("aria-pressed", "true");
+      } else {
+        btn.classList.remove("isActive");
+        btn.setAttribute("aria-pressed", "false");
+      }
+    });
+
+    renderDock();
+  }
+
+  // Filter helpers
+  function soloCategory(cat) {
+    activeCategories.clear();
+    activeCategories.add(cat);
+    redraw();
+  }
+
+  function resetCategoryFilters() {
+    activeCategories.clear();
+    Object.keys(CATEGORIES).forEach(cat => activeCategories.add(cat));
+    redraw();
+  }
+
+  // Wire dock button clicks
+  dockButtons.forEach(btn => {
+    btn.addEventListener("click", () => {
+      const tab = btn.dataset.dock;
+      toggleDock(tab);
+    });
+  });
+
+  // Wire dock tab clicks
+  dockTabs.forEach(tab => {
+    tab.addEventListener("click", () => {
+      const tabName = tab.dataset.dock;
+      setDockTab(tabName);
+    });
+  });
+
+  // Wire close button
+  dockPanelClose.addEventListener("click", () => {
+    closeDock();
+  });
+
+  // Wire overlay click
+  dockOverlay.addEventListener("click", () => {
+    closeDock();
+  });
+
+  // Wire escape key
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && dockState.isOpen) {
+      closeDock();
+    }
+  });
+
+  // Wire header chips to dock tabs
+  $("chipLive").addEventListener("click", () => {
+    openDock("system");
+  });
+
+  $("chipWeather").addEventListener("click", () => {
+    openDock("overview");
+  });
+
+  $("chipTraffic").addEventListener("click", () => {
+    openDock("sources");
+  });
+
+  // -----------------------------
   // Boot + timers
   // -----------------------------
   refreshAll();
