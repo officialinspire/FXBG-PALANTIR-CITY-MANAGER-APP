@@ -1900,6 +1900,8 @@
 
   function buildFilters() {
     const host = $("filters");
+    if (!host) return;
+
     host.innerHTML = "";
     for (const [key, def] of Object.entries(CATEGORIES)) {
       const btn = document.createElement("button");
