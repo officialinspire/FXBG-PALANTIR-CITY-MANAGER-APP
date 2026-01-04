@@ -610,10 +610,12 @@
     // 511Virginia GeoJSON endpoints
     va511: {
       enabled: true,
-      // Camera endpoints with fallbacks (try multiple sources due to API blocking)
+      // Camera endpoints with fallbacks (new VDOT endpoint uses vdotcameras.com for snapshots)
       camerasGeojson: "https://511.vdot.virginia.gov/services/map/layers/map/cams",
-      camerasGeojsonFallback: "http://www.511virginia.org/data/icons.cameras.geojson",
-      camerasGeojsonFallback2: "http://files4.iteriscdn.com/WebApps/VA/SafeTravel/data/local/icons/metadata/icons.cameras_inactive.geojsonp",
+      // OLD fallback (deprecated - old icons.cameras.geojson endpoint no longer active):
+      // camerasGeojsonFallback: "http://www.511virginia.org/data/icons.cameras.geojson",
+      camerasGeojsonFallback: "http://files4.iteriscdn.com/WebApps/VA/SafeTravel/data/local/icons/metadata/icons.cameras_inactive.geojsonp",
+      camerasGeojsonFallback2: "",
       // Primary incidents endpoint - may return HTML error pages during outages
       incidentsGeojson: "https://www.511virginia.org/data/geojson/icons.incident.geojson",
       // Fallback to Iteris CDN if main endpoint fails (JSONP format - auto-stripped)
@@ -3216,11 +3218,10 @@ function selectItem(id) {
       let media = null;
 
       // Always prefer snapshot images for cameras (video feeds often don't work)
-      // IMPORTANT: Wrap camera URLs with proxy to avoid CORS issues
+      // NOTE: VDOT cameras now hosted on vdotcameras.com - proxy updated to allow direct access
       if (cleanedCamUrl) {
-        // Proxy the image URL to avoid CORS errors
-        const proxiedUrl = `${location.origin}/proxy?url=${encodeURIComponent(cleanedCamUrl)}`;
-        media = { type: "image", src: proxiedUrl, originalSrc: cleanedCamUrl, alt: name };
+        // Use direct camera URL (proxy allows vdotcameras.com domain)
+        media = { type: "image", src: cleanedCamUrl, originalSrc: cleanedCamUrl, alt: name };
       }
 
       // Debug logging for first 5 cameras to help troubleshoot
@@ -3228,7 +3229,6 @@ function selectItem(id) {
         console.log(`Camera ${added + 1}: "${name}"`, {
           id: cameraId,
           snapshotURL: cleanedCamUrl || 'NONE',
-          proxiedURL: media ? `${location.origin}/proxy?url=${encodeURIComponent(cleanedCamUrl)}` : 'NONE',
           pageURL: finalPageUrl.slice(0, 80) + '...',
           hasMedia: !!media,
           allProperties: Object.keys(p).filter(k => k.toLowerCase().includes('url') || k.toLowerCase().includes('image') || k.toLowerCase().includes('snapshot'))
