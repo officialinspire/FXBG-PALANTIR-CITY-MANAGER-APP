@@ -2121,9 +2121,8 @@
 
   // Utility: detect mobile landscape layout
   const isMobileUI = () =>
-    window.matchMedia?.("(orientation: landscape)")?.matches &&
-    (window.matchMedia?.("(max-height: 520px)")?.matches ||
-     window.matchMedia?.("(max-width: 980px)")?.matches);
+    window.matchMedia?.("(max-width: 980px)")?.matches &&
+    window.matchMedia?.("(orientation: landscape)")?.matches;
 
   // Ensure panel close button is always visible and tappable
   function ensurePanelCloseVisible(panelEl) {
@@ -5564,7 +5563,7 @@ function selectItem(id) {
   }
 
   function enableLegendDrag(el){
-    if(!el || !isMobileUI()) return;
+    if(!el) return;
 
     // Make it fixed + draggable
     el.classList.add("legendDraggable");
