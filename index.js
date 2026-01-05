@@ -5456,6 +5456,55 @@ function selectItem(id) {
   }
 
   // -----------------------------
+  // Mobile Landscape UX Helpers
+  // -----------------------------
+
+  // Detect mobile landscape mode
+  const mqlMobileLandscape = window.matchMedia('(orientation: landscape) and (max-height: 520px), (max-width: 980px) and (orientation: landscape)');
+
+  function updateMobileLandscapeMode() {
+    const isMobileLandscape = mqlMobileLandscape.matches;
+
+    if (isMobileLandscape) {
+      document.body.classList.add('mobileCompact');
+    } else {
+      document.body.classList.remove('mobileCompact');
+    }
+  }
+
+  // Update on load and when media query changes
+  updateMobileLandscapeMode();
+  if (mqlMobileLandscape && typeof mqlMobileLandscape.addEventListener === 'function') {
+    mqlMobileLandscape.addEventListener('change', updateMobileLandscapeMode);
+  }
+
+  // Enhance openDock for mobile landscape
+  const originalOpenDock = openDock;
+  openDock = function(tab) {
+    originalOpenDock(tab);
+
+    // On mobile landscape: scroll panel body to top for better UX
+    if (mqlMobileLandscape.matches && dockPanelBody) {
+      setTimeout(() => {
+        dockPanelBody.scrollTop = 0;
+      }, 50);
+    }
+  };
+
+  // Enhance setDockTab for mobile landscape
+  const originalSetDockTab = setDockTab;
+  setDockTab = function(tab) {
+    originalSetDockTab(tab);
+
+    // On mobile landscape: scroll panel body to top when switching tabs
+    if (mqlMobileLandscape.matches && dockPanelBody) {
+      setTimeout(() => {
+        dockPanelBody.scrollTop = 0;
+      }, 50);
+    }
+  };
+
+  // -----------------------------
   // Boot + timers
   // -----------------------------
   ensureOverlayLegendControl();
