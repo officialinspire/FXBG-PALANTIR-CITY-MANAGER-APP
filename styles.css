@@ -1512,3 +1512,234 @@ html, body{
 @media (orientation: portrait) and (max-width: 980px){
   body.force-landscape .rotateOverlay{ display:flex; }
 }
+
+/* ========================================
+   MOBILE LANDSCAPE UI CLEANUP
+   Compact, touch-friendly, scrollable layout
+   ======================================== */
+
+@media (orientation: landscape) and (max-height: 520px), (max-width: 980px) and (orientation: landscape) {
+
+  /* Force map to fill viewport behind UI */
+  #map, .mapShell {
+    height: 100vh !important;
+  }
+
+  /* Compact header: shorter, less padding, rounded */
+  .topbar {
+    top: calc(8px + var(--safeTop));
+    left: calc(8px + var(--safeLeft));
+    right: calc(8px + var(--safeRight));
+    padding: 8px 10px;
+    border-radius: 18px;
+    min-height: 64px;
+    height: auto;
+  }
+
+  /* Reduce title/subtitle size */
+  .brand__title {
+    font-size: 16px;
+    letter-spacing: .08em;
+  }
+  .brand__sub {
+    font-size: 11px;
+    opacity: .85;
+  }
+  .brand__mark {
+    width: 36px;
+    height: 36px;
+  }
+
+  /* Chips container becomes scroll row (NO WRAP) */
+  .topbar__center {
+    display: flex;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    gap: 8px;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    padding-bottom: 2px;
+    justify-content: flex-start;
+  }
+  .topbar__center::-webkit-scrollbar {
+    display: none;
+  }
+
+  /* Chips size reduced + touch friendly */
+  .chip {
+    min-height: 40px;
+    padding: 8px 10px;
+    border-radius: 14px;
+    font-size: 12px;
+    white-space: nowrap;
+    min-width: auto;
+    max-width: none;
+  }
+  .chip__icon {
+    margin-right: 6px;
+  }
+  #chipLive {
+    min-width: auto;
+    padding: 8px 12px;
+  }
+  #chipTraffic, #chipWeather {
+    min-width: auto;
+    max-width: 46vw;
+  }
+
+  /* Turn the header right-side widgets into a single scroll row */
+  .topbar__right {
+    display: flex;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    gap: 8px;
+    align-items: center;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    justify-content: flex-start;
+  }
+  .topbar__right::-webkit-scrollbar {
+    display: none;
+  }
+
+  /* Make buttons smaller and more compact */
+  .topbar__right .btn {
+    padding: 8px 10px;
+    border-radius: 14px;
+    font-size: 12px;
+    min-height: 40px;
+  }
+  .topbar__right .btn__label {
+    font-size: 11px;
+  }
+  .topbar__right .btn__icon {
+    font-size: 16px;
+  }
+
+  /* Compact mini widget */
+  .mini {
+    padding: 8px 10px;
+    border-radius: 14px;
+    background: rgba(255,255,255,.06);
+    border: 1px solid rgba(255,255,255,.10);
+    white-space: nowrap;
+  }
+  .mini__label {
+    font-size: 10px;
+  }
+  .mini__value {
+    font-size: 11px;
+  }
+
+  /* Footer dock: single row, horizontally scrollable, compact */
+  .bottombar {
+    bottom: calc(8px + var(--safeBottom));
+    left: calc(8px + var(--safeLeft));
+    right: calc(8px + var(--safeRight));
+    padding: 8px 10px;
+    border-radius: 18px;
+    min-height: 60px;
+    height: auto;
+  }
+
+  .dock {
+    display: flex;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    gap: 8px;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    justify-content: flex-start;
+  }
+  .dock::-webkit-scrollbar {
+    display: none;
+  }
+
+  /* Footer tab buttons: smaller, clear active state */
+  .dockBtn {
+    min-height: 40px;
+    padding: 8px 12px;
+    border-radius: 14px;
+    font-size: 12px;
+    white-space: nowrap;
+    opacity: .92;
+    flex: 0 0 auto;
+    min-width: auto;
+  }
+  .dockBtn.isActive,
+  .dockBtn[aria-pressed="true"] {
+    outline: 2px solid rgba(255,255,255,.20);
+    opacity: 1;
+    background: rgba(255,255,255,.14);
+  }
+
+  /* Prevent the bottom panel from being hidden behind footer */
+  .dockPanel {
+    max-height: calc(100vh - 110px - var(--safeTop) - var(--safeBottom));
+    bottom: calc(70px + var(--safeBottom));
+  }
+  .dockPanel.isOpen {
+    transform: translateY(0);
+  }
+
+  /* Panel adjustments for landscape */
+  .panel {
+    max-height: calc(100vh - 100px - var(--safeTop) - var(--safeBottom));
+    width: min(420px, 92vw);
+  }
+  .panel.open,
+  .panel:not(.panel--collapsed) {
+    bottom: auto;
+  }
+
+  /* Increase tap targets for close buttons */
+  .iconBtn,
+  .dockCloseBtn,
+  .panel__actions .iconBtn {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  /* News Flash and Radio panels adjustments */
+  .newsFlashPanel,
+  .radioPanel {
+    max-height: calc(100vh - 90px - var(--safeTop) - var(--safeBottom));
+    top: calc(74px + var(--safeTop));
+  }
+
+  /* Ensure stage uses compact spacing */
+  .stage {
+    top: calc(8px + 64px + 8px + var(--safeTop));
+    bottom: calc(8px + 60px + 8px + var(--safeBottom));
+  }
+
+  /* Dock tabs also scroll horizontally */
+  .dockTabs {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    flex-wrap: nowrap;
+  }
+  .dockTabs::-webkit-scrollbar {
+    display: none;
+  }
+
+  .dockTab {
+    padding: 6px 10px;
+    font-size: 12px;
+    flex-shrink: 0;
+  }
+
+  /* Optional: ultra-compact mode for very narrow screens */
+  @media (max-width: 740px) {
+    body.mobileCompact .btn__label {
+      /* Hide labels on very narrow screens, keep icons */
+      display: none;
+    }
+    body.mobileCompact .btn {
+      /* Make buttons icon-only */
+      padding: 8px;
+      min-width: 40px;
+    }
+  }
+}
