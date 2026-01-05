@@ -58,7 +58,8 @@
     <button class="banner__close" id="bannerClose" aria-label="Dismiss">✖</button>
   </div>
 
-  <header class="topbar">
+  <!-- Mobile Header (visible on mobile only) -->
+  <header class="topbar mobile-only" id="mobileHeader">
     <div class="topbar__left topbarTitleBlock">
       <div class="brand">
         <div class="brand__mark">🧠</div>
@@ -110,6 +111,11 @@
     <div class="topbar__right">
       <!-- Moved to topbarRow--actions for mobile layout -->
     </div>
+  </header>
+
+  <!-- Desktop Header (visible on desktop only) -->
+  <header class="topbar desktop-only" id="desktopHeader">
+    <!-- Will be populated by JavaScript with old desktop header layout -->
   </header>
 
   <main class="stage">

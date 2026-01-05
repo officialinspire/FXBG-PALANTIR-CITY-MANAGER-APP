@@ -705,6 +705,11 @@
   };
 
   // -----------------------------
+  // Desktop vs Mobile UI Detection
+  // -----------------------------
+  const IS_MOBILE_UI = window.matchMedia("(max-width: 899px)").matches;
+
+  // -----------------------------
   // Categories
   // -----------------------------
   const CATEGORIES = {
@@ -868,6 +873,115 @@
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", onUp);
     window.addEventListener("pointercancel", onUp);
+  }
+
+  // Make Leaflet control draggable (for legend, etc.)
+  function makeLeafletControlDraggable(el, map, storageKey) {
+    if (!el || !map) return;
+
+    // Prevent map interactions on the control
+    L.DomEvent.disableClickPropagation(el);
+    L.DomEvent.disableScrollPropagation(el);
+
+    // Add a drag handle at the top
+    const dragHandle = document.createElement('div');
+    dragHandle.className = 'legendDragHandle';
+    el.insertBefore(dragHandle, el.firstChild);
+
+    // Set up draggable state
+    el.classList.add('legendDraggable');
+    el.style.position = 'fixed';
+    el.style.touchAction = 'none';
+    el.style.userSelect = 'none';
+
+    // Restore position from localStorage
+    if (storageKey) {
+      try {
+        const saved = localStorage.getItem(storageKey);
+        if (saved) {
+          const pos = JSON.parse(saved);
+          el.style.left = pos.left + 'px';
+          el.style.top = pos.top + 'px';
+          el.style.right = 'auto';
+          el.style.bottom = 'auto';
+        }
+      } catch (e) {
+        console.warn('Failed to restore legend position:', e);
+      }
+    }
+
+    let dragging = false;
+    let startX = 0, startY = 0, origX = 0, origY = 0;
+
+    const onDown = (e) => {
+      // Only drag when clicking on the drag handle
+      if (!e.target.closest('.legendDragHandle')) return;
+
+      dragging = true;
+      map.dragging.disable(); // Prevent map panning
+
+      const rect = el.getBoundingClientRect();
+      origX = rect.left;
+      origY = rect.top;
+      startX = e.clientX || (e.touches && e.touches[0].clientX);
+      startY = e.clientY || (e.touches && e.touches[0].clientY);
+
+      // Switch to left/top positioning
+      el.style.right = 'auto';
+      el.style.bottom = 'auto';
+      el.style.left = origX + 'px';
+      el.style.top = origY + 'px';
+
+      e.preventDefault();
+      e.stopPropagation();
+    };
+
+    const onMove = (e) => {
+      if (!dragging) return;
+
+      const clientX = e.clientX || (e.touches && e.touches[0].clientX);
+      const clientY = e.clientY || (e.touches && e.touches[0].clientY);
+
+      const dx = clientX - startX;
+      const dy = clientY - startY;
+      const x = Math.max(10, Math.min(window.innerWidth - el.offsetWidth - 10, origX + dx));
+      const y = Math.max(10, Math.min(window.innerHeight - el.offsetHeight - 10, origY + dy));
+
+      el.style.left = x + 'px';
+      el.style.top = y + 'px';
+
+      e.preventDefault();
+    };
+
+    const onUp = (e) => {
+      if (!dragging) return;
+      dragging = false;
+      map.dragging.enable(); // Re-enable map panning
+
+      // Save position to localStorage
+      if (storageKey) {
+        try {
+          const pos = {
+            left: parseInt(el.style.left, 10),
+            top: parseInt(el.style.top, 10)
+          };
+          localStorage.setItem(storageKey, JSON.stringify(pos));
+        } catch (e) {
+          console.warn('Failed to save legend position:', e);
+        }
+      }
+    };
+
+    // Mouse events
+    dragHandle.addEventListener('mousedown', onDown);
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+
+    // Touch events
+    dragHandle.addEventListener('touchstart', onDown, { passive: false });
+    window.addEventListener('touchmove', onMove, { passive: false });
+    window.addEventListener('touchend', onUp);
+    window.addEventListener('touchcancel', onUp);
   }
 
 
@@ -2069,6 +2183,12 @@
     };
     overlayLegendControl.addTo(map);
     updateOverlayLegendUI(); // initial render
+
+    // Make legend draggable on both desktop and mobile
+    const legendEl = overlayLegendControl.getContainer();
+    if (legendEl) {
+      makeLeafletControlDraggable(legendEl, map, "fxbgLegendPos");
+    }
   }
 
   function updateOverlayLegendUI() {
@@ -5705,8 +5825,68 @@ function selectItem(id) {
   };
 
   // -----------------------------
+  // Desktop vs Mobile Header Initialization
+  // -----------------------------
+  function initDesktopHeader() {
+    if (IS_MOBILE_UI) return; // Keep mobile header as-is
+
+    const desktopHeader = document.getElementById("desktopHeader");
+    if (!desktopHeader) return;
+
+    // Render old desktop header layout (3-column grid)
+    desktopHeader.innerHTML = `
+      <div class="topbar__left">
+        <div class="brand">
+          <div class="brand__mark">🧠</div>
+          <div class="brand__text">
+            <div class="brand__title">CITY MANAGER</div>
+            <div class="brand__sub">FXBG • Stafford • Spotsylvania</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="topbar__center">
+        <div class="chip chip--live" id="chipLive">
+          <span class="dot"></span>
+          <span id="liveText">Live</span>
+        </div>
+
+        <div class="chip" id="chipWeather" title="Current conditions + 3 day forecast">
+          <span class="chip__icon">🌤️</span>
+          <span class="chip__text" id="weatherText">Weather: Loading…</span>
+        </div>
+
+        <div class="chip" id="chipTraffic" title="I‑95 traffic indicator (derived from 511 incidents near FXBG metro)">
+          <span class="chip__icon">🛣️</span>
+          <span class="chip__text" id="trafficText">I‑95: Loading…</span>
+        </div>
+      </div>
+
+      <div class="topbar__right">
+        <button class="btn" id="btnNewsFlash" title="Regional News Flash Dashboard">
+          <span class="btn__icon">📰</span>
+          <span class="btn__label">News Flash</span>
+        </button>
+        <button class="btn" id="btnRadioScanner" title="Radio Scanner">
+          <span class="btn__icon">📻</span>
+          <span class="btn__label">Radio</span>
+        </button>
+        <button class="btn" id="btnRefresh" title="Refresh now">
+          <span class="btn__icon">🔄</span>
+          <span class="btn__label">Refresh</span>
+        </button>
+        <div class="mini">
+          <div class="mini__label">Last update</div>
+          <div class="mini__value" id="lastUpdate">—</div>
+        </div>
+      </div>
+    `;
+  }
+
+  // -----------------------------
   // Boot + timers
   // -----------------------------
+  initDesktopHeader();
   ensureOverlayLegendControl();
   refreshAll();
   setInterval(pollRSS, CONFIG.polling.rss);
