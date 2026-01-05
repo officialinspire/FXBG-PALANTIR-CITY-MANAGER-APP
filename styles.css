@@ -1932,4 +1932,90 @@ html, body{
     flex-direction: column;
     gap: 0;
   }
+
+  /* ========================================
+     PART A: SLIM HEADER (mobile landscape)
+     ======================================== */
+
+  /* Reduce header padding and element sizes */
+  :root {
+    --mobileHeaderPadY: 4px;
+    --mobileChipH: 32px;
+    --mobileBtnH: 36px;
+  }
+
+  .topbarRow--status {
+    margin-top: 2px;
+  }
+
+  .topbarRow--actions {
+    margin-top: 4px;
+  }
+
+  /* ========================================
+     PART A: LEGEND DRAGGABLE STYLING
+     ======================================== */
+
+  /* Legend draggable mode */
+  .legendDraggable {
+    position: fixed !important;
+    z-index: 10050 !important;
+    max-height: calc(100vh - 120px - var(--safeTop) - var(--safeBottom)) !important;
+    overflow: auto !important;
+    touch-action: none; /* so drag works on touch */
+  }
+
+  /* optional handle added via JS */
+  .legendDragHandle {
+    height: 18px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: grab;
+    user-select: none;
+  }
+  .legendDragHandle::before {
+    content: "";
+    width: 44px;
+    height: 4px;
+    border-radius: 6px;
+    opacity: .6;
+    background: rgba(255,255,255,.35);
+  }
+
+  /* Ensure legend is not hidden behind bottom bar if user never drags it */
+  .leaflet-control-layers,
+  .leaflet-control.legend,
+  .legend,
+  #legend,
+  .mapLegend,
+  .overlay-legend {
+    margin-bottom: 90px; /* leaves space above bottom dock */
+  }
+
+  /* When bottom dock is expanded, add more room */
+  body.dockExpanded .leaflet-control-layers,
+  body.dockExpanded .leaflet-control.legend,
+  body.dockExpanded .legend,
+  body.dockExpanded #legend,
+  body.dockExpanded .mapLegend,
+  body.dockExpanded .overlay-legend {
+    margin-bottom: 130px;
+  }
+
+  /* ========================================
+     PART A: DOCK EXPAND/COLLAPSE VISUALS
+     ======================================== */
+
+  .bottombar.isCollapsed .dockPanel,
+  .bottombar.isCollapsed .panel,
+  .bottombar.isCollapsed .drawer,
+  .bottombar.isCollapsed .bottomSheet {
+    display: none !important;
+  }
+
+  /* Slightly slim the bottombar padding */
+  .bottombar {
+    padding: 6px 10px;
+  }
 }

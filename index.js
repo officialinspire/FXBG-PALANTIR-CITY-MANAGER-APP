@@ -5533,6 +5533,179 @@ function selectItem(id) {
   };
 
   // -----------------------------
+  // PART C: Draggable Legend (touch + mouse)
+  // -----------------------------
+  function findLegendEl(){
+    return document.querySelector("#mapLegend")
+      || document.querySelector(".mapLegend")
+      || document.querySelector("#legend")
+      || document.querySelector(".legend")
+      || document.querySelector(".overlay-legend")
+      || document.querySelector(".leaflet-control-layers"); // last resort
+  }
+
+  function loadLegendPos(){
+    try { return JSON.parse(localStorage.getItem("fxbgLegendPos") || "null"); } catch(e){ return null; }
+  }
+  function saveLegendPos(pos){
+    try { localStorage.setItem("fxbgLegendPos", JSON.stringify(pos)); } catch(e){}
+  }
+
+  function clampLegend(el, left, top){
+    const margin = 8;
+    const rect = el.getBoundingClientRect();
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+
+    // clamp using element size (rect.width/height)
+    let x = Math.max(margin, Math.min(left, vw - rect.width - margin));
+    let y = Math.max(margin, Math.min(top,  vh - rect.height - margin));
+    return { left: x, top: y };
+  }
+
+  function enableLegendDrag(el){
+    if(!el || !isMobileUI()) return;
+
+    // Make it fixed + draggable
+    el.classList.add("legendDraggable");
+
+    // Insert a handle if not present
+    let handle = el.querySelector(".legendDragHandle");
+    if(!handle){
+      handle = document.createElement("div");
+      handle.className = "legendDragHandle";
+      handle.title = "Drag legend";
+      el.insertBefore(handle, el.firstChild);
+    }
+
+    // Apply saved position
+    const saved = loadLegendPos();
+    if(saved && typeof saved.left === "number" && typeof saved.top === "number"){
+      const clamped = clampLegend(el, saved.left, saved.top);
+      el.style.left = clamped.left + "px";
+      el.style.top  = clamped.top  + "px";
+      el.style.right = "auto";
+      el.style.bottom = "auto";
+    } else {
+      // Default: top-left-ish but not under header
+      el.style.left = "10px";
+      el.style.top = "90px";
+      el.style.right = "auto";
+      el.style.bottom = "auto";
+    }
+
+    let dragging = false;
+    let startX = 0, startY = 0, startLeft = 0, startTop = 0;
+
+    const onDown = (e) => {
+      // only start drag from handle
+      const isHandle = e.target.closest(".legendDragHandle");
+      if(!isHandle) return;
+
+      dragging = true;
+      const pt = (e.touches && e.touches[0]) ? e.touches[0] : e;
+      const rect = el.getBoundingClientRect();
+      startX = pt.clientX;
+      startY = pt.clientY;
+      startLeft = rect.left;
+      startTop  = rect.top;
+
+      e.preventDefault();
+      e.stopPropagation();
+    };
+
+    const onMove = (e) => {
+      if(!dragging) return;
+      const pt = (e.touches && e.touches[0]) ? e.touches[0] : e;
+      const dx = pt.clientX - startX;
+      const dy = pt.clientY - startY;
+
+      const targetLeft = startLeft + dx;
+      const targetTop  = startTop + dy;
+      const clamped = clampLegend(el, targetLeft, targetTop);
+
+      el.style.left = clamped.left + "px";
+      el.style.top  = clamped.top  + "px";
+      el.style.right = "auto";
+      el.style.bottom = "auto";
+
+      e.preventDefault();
+      e.stopPropagation();
+    };
+
+    const onUp = (e) => {
+      if(!dragging) return;
+      dragging = false;
+      const rect = el.getBoundingClientRect();
+      saveLegendPos({ left: rect.left, top: rect.top });
+      e.preventDefault?.();
+      e.stopPropagation?.();
+    };
+
+    // Avoid double-binding
+    if(el.dataset.dragBound === "1") return;
+    el.dataset.dragBound = "1";
+
+    handle.addEventListener("touchstart", onDown, { passive: false });
+    handle.addEventListener("mousedown", onDown);
+
+    window.addEventListener("touchmove", onMove, { passive: false });
+    window.addEventListener("mousemove", onMove);
+
+    window.addEventListener("touchend", onUp);
+    window.addEventListener("mouseup", onUp);
+
+    // Re-clamp on resize/orientation change
+    window.addEventListener("resize", () => {
+      if(!el) return;
+      const rect = el.getBoundingClientRect();
+      const clamped = clampLegend(el, rect.left, rect.top);
+      el.style.left = clamped.left + "px";
+      el.style.top  = clamped.top  + "px";
+    });
+  }
+
+  function tryEnableLegendDrag(){
+    const el = findLegendEl();
+    if(el) enableLegendDrag(el);
+  }
+
+  // Try to enable legend drag on load and after a delay (in case legend appears late)
+  setTimeout(() => {
+    tryEnableLegendDrag();
+    // If legend appears later (layer toggles), poll lightly without heavy loops:
+    let attempts = 0;
+    const t = setInterval(() => {
+      attempts++;
+      tryEnableLegendDrag();
+      if(findLegendEl() || attempts > 20) clearInterval(t); // ~10 seconds max
+    }, 500);
+  }, 1000);
+
+  // -----------------------------
+  // PART C: Dock Expand/Collapse State Management
+  // -----------------------------
+  function setDockExpanded(isExpanded){
+    document.body.classList.toggle("dockExpanded", !!isExpanded);
+    const bb = document.querySelector(".bottombar");
+    if(bb) bb.classList.toggle("isCollapsed", !isExpanded);
+  }
+
+  // Enhance openDock to set expanded state
+  const originalOpenDockForExpand = openDock;
+  openDock = function(tab) {
+    originalOpenDockForExpand(tab);
+    setDockExpanded(true);
+  };
+
+  // Enhance closeDock to set collapsed state
+  const originalCloseDockForExpand = closeDock;
+  closeDock = function() {
+    originalCloseDockForExpand();
+    setDockExpanded(false);
+  };
+
+  // -----------------------------
   // Boot + timers
   // -----------------------------
   ensureOverlayLegendControl();
