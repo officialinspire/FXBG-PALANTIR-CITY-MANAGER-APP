@@ -1365,12 +1365,30 @@
     // then same-origin/direct requests, then any configured public proxies.
     const candidates = [];
 
+    const PROXY_ORIGIN_OVERRIDE_KEY = "CM_PROXY_ORIGIN";
     const tryLocalProxy = () => {
       try {
         const u = new URL(url, location.href);
         // Only proxy absolute http(s) URLs (skip blob:, data:, etc.)
         if (!/^https?:$/.test(u.protocol)) return null;
-        return `${location.origin}/proxy?url=${encodeURIComponent(u.toString())}`;
+
+        // Determine base origin for proxy
+        let baseOrigin = location.origin;
+
+        // Check for proxy override (for Termux/file:// scenarios)
+        try {
+          const override = localStorage.getItem(PROXY_ORIGIN_OVERRIDE_KEY);
+          if (override && /^https?:\/\//i.test(override)) {
+            baseOrigin = override.replace(/\/+$/, ''); // Remove trailing slashes
+          } else if (location.origin === "null" || location.protocol === "file:") {
+            // Fallback for file:// protocol (common in Termux/local dev)
+            baseOrigin = "http://localhost:8000";
+          }
+        } catch (e) {
+          // localStorage might not be available - use default
+        }
+
+        return `${baseOrigin}/proxy?url=${encodeURIComponent(u.toString())}`;
       } catch {
         return null;
       }
@@ -2128,6 +2146,41 @@
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape") closePanel();
   });
+
+  // Panel swipe-down to close (mobile touch only)
+  (() => {
+    let startY = 0;
+    let isDragging = false;
+
+    panelHandle.addEventListener("pointerdown", (e) => {
+      // Only handle touch/pen inputs (not mouse on desktop)
+      if (e.pointerType === "mouse") return;
+      // Only if panel is open
+      if (panel.classList.contains("panel--collapsed")) return;
+
+      startY = e.clientY;
+      isDragging = true;
+    });
+
+    window.addEventListener("pointermove", (e) => {
+      if (!isDragging) return;
+
+      const deltaY = e.clientY - startY;
+      // If swiped down more than 60px, close the panel
+      if (deltaY > 60) {
+        isDragging = false;
+        closePanel();
+      }
+    });
+
+    window.addEventListener("pointerup", () => {
+      isDragging = false;
+    });
+
+    window.addEventListener("pointercancel", () => {
+      isDragging = false;
+    });
+  })();
 
 
   // -----------------------------
@@ -5354,6 +5407,53 @@ function selectItem(id) {
   $("chipTraffic").addEventListener("click", () => {
     openDock("sources");
   });
+
+  // -----------------------------
+  // Mobile Landscape Orientation Handling
+  // -----------------------------
+  const mqlPortrait = window.matchMedia?.("(orientation: portrait)");
+  function updateOrientationUI(){
+    const isPortrait = mqlPortrait ? mqlPortrait.matches : (window.innerHeight > window.innerWidth);
+    const isMobileish = window.matchMedia?.("(max-width: 980px)")?.matches ?? (window.innerWidth <= 980);
+    const allowPortrait = !!window.__CM_ALLOW_PORTRAIT;
+    document.body.classList.toggle("force-landscape", isMobileish && isPortrait && !allowPortrait);
+  }
+
+  // Update on load, resize, and orientation change
+  updateOrientationUI();
+  window.addEventListener("resize", updateOrientationUI);
+  if (mqlPortrait && typeof mqlPortrait.addEventListener === 'function') {
+    mqlPortrait.addEventListener("change", updateOrientationUI);
+  }
+
+  // Fullscreen attempt button
+  const btnTryFullscreen = document.getElementById("btnTryFullscreen");
+  if (btnTryFullscreen) {
+    btnTryFullscreen.addEventListener("click", async () => {
+      try{
+        if (document.documentElement.requestFullscreen) {
+          await document.documentElement.requestFullscreen();
+        }
+        if (screen.orientation && screen.orientation.lock) {
+          await screen.orientation.lock("landscape").catch(() => {
+            // Screen orientation lock may fail - that's okay
+          });
+        }
+      }catch(e){
+        // Fullscreen request may fail - that's okay
+      }
+      updateOrientationUI();
+    });
+  }
+
+  // Continue Anyway button
+  const btnContinuePortrait = document.getElementById("btnContinuePortrait");
+  if (btnContinuePortrait) {
+    btnContinuePortrait.addEventListener("click", () => {
+      window.__CM_ALLOW_PORTRAIT = true;
+      updateOrientationUI();
+    });
+  }
 
   // -----------------------------
   // Boot + timers

@@ -15,7 +15,9 @@ const http = require("http");
 const fs = require("fs");
 const fsp = require("fs/promises");
 const path = require("path");
+const os = require("os");
 
+const HOST = process.env.BIND || "0.0.0.0";
 const PORT = Number(process.env.PORT || 8000);
 const PUBLIC_DIR = __dirname;
 
@@ -1216,7 +1218,29 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-server.listen(PORT, () => {
-  console.log(`CITY MANAGER server running: http://localhost:${PORT}`);
-  console.log(`Proxy endpoint: http://localhost:${PORT}/proxy?url=https://example.com/feed`);
+server.listen(PORT, HOST, () => {
+  console.log(`\n🧠 CITY MANAGER server running on ${HOST}:${PORT}\n`);
+  console.log(`📱 Open on this device: http://127.0.0.1:${PORT}`);
+
+  // Enumerate network interfaces and show LAN URLs
+  const networkInterfaces = os.networkInterfaces();
+  const lanIPs = [];
+
+  for (const [name, interfaces] of Object.entries(networkInterfaces)) {
+    for (const iface of interfaces) {
+      // Only show IPv4, non-internal addresses
+      if (iface.family === 'IPv4' && !iface.internal) {
+        lanIPs.push(iface.address);
+      }
+    }
+  }
+
+  if (lanIPs.length > 0) {
+    console.log(`\n💻 Open from laptop (tether/Wi-Fi):`);
+    lanIPs.forEach(ip => {
+      console.log(`   http://${ip}:${PORT}`);
+    });
+  }
+
+  console.log(`\n🔧 Proxy endpoint: http://127.0.0.1:${PORT}/proxy?url=https://example.com/feed\n`);
 });

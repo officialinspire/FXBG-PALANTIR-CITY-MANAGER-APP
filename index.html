@@ -271,6 +271,20 @@
     </div>
   </footer>
 
+  <!-- Rotate Overlay for Mobile Portrait Mode -->
+  <div id="rotateOverlay" class="rotateOverlay" role="dialog" aria-modal="true" aria-label="Rotate device">
+    <div class="rotateOverlay__card">
+      <div class="rotateOverlay__title">Rotate to Landscape</div>
+      <div class="rotateOverlay__text">
+        CITY MANAGER is optimized for landscape on mobile for better map + panel readability.
+      </div>
+      <div class="rotateOverlay__actions">
+        <button class="btn btn--primary" id="btnTryFullscreen" type="button">Try Fullscreen</button>
+        <button class="btn" id="btnContinuePortrait" type="button">Continue Anyway</button>
+      </div>
+    </div>
+  </div>
+
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
   <script src="./index.js"></script>

@@ -1415,3 +1415,100 @@ body{
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
+/* ========================================
+   MOBILE LANDSCAPE + TERMUX IMPROVEMENTS
+   ======================================== */
+
+/* iOS safe-area support + better tap ergonomics */
+:root{
+  --safeTop: env(safe-area-inset-top, 0px);
+  --safeRight: env(safe-area-inset-right, 0px);
+  --safeBottom: env(safe-area-inset-bottom, 0px);
+  --safeLeft: env(safe-area-inset-left, 0px);
+}
+html, body{
+  -webkit-text-size-adjust: 100%;
+}
+*{
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Make buttons more finger-friendly (do not break desktop) */
+.btn, .iconBtn, .chip{
+  min-height: 44px;
+}
+
+/* Landscape mobile layout optimization */
+@media (orientation: landscape) and (max-height: 520px){
+  :root{
+    --topH: 78px;
+    --botH: 78px;
+  }
+
+  .topbar{
+    top: calc(10px + var(--safeTop));
+    left: calc(10px + var(--safeLeft));
+    right: calc(10px + var(--safeRight));
+    padding: 8px 10px;
+  }
+
+  .bottombar{
+    bottom: calc(10px + var(--safeBottom));
+    left: calc(10px + var(--safeLeft));
+    right: calc(10px + var(--safeRight));
+    padding: 8px 10px;
+  }
+
+  /* Chips row scrolls horizontally instead of wrapping into tall stacks */
+  .topbar__center{
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    flex-wrap: nowrap;
+    gap: 8px;
+    padding-bottom: 2px;
+  }
+  .topbar__center::-webkit-scrollbar{ display:none; }
+
+  /* Panel becomes wider but height-limited */
+  .panel{
+    width: min(520px, 96vw);
+    max-height: calc(100% - 24px - var(--safeTop) - var(--safeBottom));
+  }
+}
+
+/* Portrait "rotate required" overlay (UX-enforced orientation) */
+.rotateOverlay{
+  position: fixed;
+  inset: 0;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  z-index: 99999;
+  background: rgba(0,0,0,.72);
+  backdrop-filter: blur(10px);
+}
+.rotateOverlay__card{
+  width: min(520px, 94vw);
+  border-radius: 18px;
+  border: 1px solid rgba(255,255,255,.14);
+  background: rgba(12, 16, 32, .86);
+  box-shadow: 0 18px 50px rgba(0,0,0,.6);
+  padding: 16px;
+}
+.rotateOverlay__title{ font-size: 18px; font-weight: 800; margin-bottom: 6px; }
+.rotateOverlay__text{ opacity: .9; margin-bottom: 12px; line-height: 1.35; }
+.rotateOverlay__actions{ display:flex; gap: 10px; flex-wrap: wrap; }
+.btn--primary{
+  background: rgba(126,240,255,.15);
+  border-color: rgba(126,240,255,.30);
+}
+.btn--primary:hover{
+  background: rgba(126,240,255,.25);
+  border-color: rgba(126,240,255,.45);
+}
+
+@media (orientation: portrait) and (max-width: 980px){
+  body.force-landscape .rotateOverlay{ display:flex; }
+}
