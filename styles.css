@@ -1439,8 +1439,8 @@ html, body{
   min-height: 44px;
 }
 
-/* Landscape mobile layout optimization */
-@media (orientation: landscape) and (max-height: 520px){
+/* Landscape mobile layout optimization - mobile devices only */
+@media (max-width: 980px) and (orientation: landscape) and (max-height: 520px){
   :root{
     --topH: 78px;
     --botH: 78px;
@@ -1518,7 +1518,7 @@ html, body{
    Compact, touch-friendly, scrollable layout
    ======================================== */
 
-@media (orientation: landscape) and (max-height: 520px), (max-width: 980px) and (orientation: landscape) {
+@media (max-width: 980px) and (orientation: landscape) {
 
   /* Force map to fill viewport behind UI */
   #map, .mapShell {
@@ -1748,7 +1748,7 @@ html, body{
    MOBILE LANDSCAPE HEADER SLIMMING + TWO-ROW LAYOUT
    ======================================== */
 
-@media (orientation: landscape) and (max-height: 520px), (max-width: 980px) and (orientation: landscape) {
+@media (max-width: 980px) and (orientation: landscape) {
   :root{
     --safeTop: env(safe-area-inset-top, 0px);
     --safeBottom: env(safe-area-inset-bottom, 0px);
@@ -1933,57 +1933,7 @@ html, body{
     gap: 0;
   }
 
-  /* ========================================
-     PART A: SLIM HEADER (mobile landscape)
-     ======================================== */
-
-  /* Reduce header padding and element sizes */
-  :root {
-    --mobileHeaderPadY: 4px;
-    --mobileChipH: 32px;
-    --mobileBtnH: 36px;
-  }
-
-  .topbarRow--status {
-    margin-top: 2px;
-  }
-
-  .topbarRow--actions {
-    margin-top: 4px;
-  }
-
-  /* ========================================
-     PART A: LEGEND DRAGGABLE STYLING
-     ======================================== */
-
-  /* Legend draggable mode */
-  .legendDraggable {
-    position: fixed !important;
-    z-index: 10050 !important;
-    max-height: calc(100vh - 120px - var(--safeTop) - var(--safeBottom)) !important;
-    overflow: auto !important;
-    touch-action: none; /* so drag works on touch */
-  }
-
-  /* optional handle added via JS */
-  .legendDragHandle {
-    height: 18px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    cursor: grab;
-    user-select: none;
-  }
-  .legendDragHandle::before {
-    content: "";
-    width: 44px;
-    height: 4px;
-    border-radius: 6px;
-    opacity: .6;
-    background: rgba(255,255,255,.35);
-  }
-
-  /* Ensure legend is not hidden behind bottom bar if user never drags it */
+  /* Ensure legend is not hidden behind bottom bar on mobile (applies only to mobile landscape) */
   .leaflet-control-layers,
   .leaflet-control.legend,
   .legend,
@@ -2003,10 +1953,7 @@ html, body{
     margin-bottom: 130px;
   }
 
-  /* ========================================
-     PART A: DOCK EXPAND/COLLAPSE VISUALS
-     ======================================== */
-
+  /* Dock collapse styles (mobile landscape only) */
   .bottombar.isCollapsed .dockPanel,
   .bottombar.isCollapsed .panel,
   .bottombar.isCollapsed .drawer,
@@ -2014,8 +1961,58 @@ html, body{
     display: none !important;
   }
 
-  /* Slightly slim the bottombar padding */
+  /* Slim bottombar padding (mobile landscape only) */
   .bottombar {
     padding: 6px 10px;
+  }
+}
+
+/* ========================================
+   DRAGGABLE LEGEND (ALL DEVICES)
+   ======================================== */
+
+/* Legend draggable mode - works on both desktop and mobile */
+.legendDraggable {
+  position: fixed !important;
+  z-index: 10050 !important;
+  max-height: calc(100vh - 120px) !important;
+  overflow: auto !important;
+  cursor: move;
+  cursor: grab;
+}
+
+.legendDraggable:active {
+  cursor: grabbing;
+}
+
+/* Drag handle added via JS */
+.legendDragHandle {
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: grab;
+  user-select: none;
+  background: rgba(0, 0, 0, 0.2);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.legendDragHandle:active {
+  cursor: grabbing;
+}
+
+.legendDragHandle::before {
+  content: "";
+  width: 44px;
+  height: 4px;
+  border-radius: 6px;
+  opacity: .6;
+  background: rgba(255,255,255,.35);
+}
+
+/* On mobile, prevent map interaction while dragging */
+@media (max-width: 980px) and (orientation: landscape) {
+  .legendDraggable {
+    touch-action: none;
   }
 }
