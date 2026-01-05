@@ -1979,6 +1979,8 @@ html, body{
   overflow: auto !important;
   cursor: move;
   cursor: grab;
+  touch-action: none;
+  user-select: none;
 }
 
 .legendDraggable:active {
@@ -2014,5 +2016,79 @@ html, body{
 @media (max-width: 980px) and (orientation: landscape) {
   .legendDraggable {
     touch-action: none;
+  }
+}
+
+/* ========================================
+   DESKTOP VS MOBILE UI SPLIT
+   ======================================== */
+
+/* Default: show mobile UI, hide desktop UI */
+.desktop-only {
+  display: none;
+}
+
+.mobile-only {
+  display: block;
+}
+
+/* Desktop breakpoint: show desktop UI, hide mobile UI */
+@media (min-width: 900px) {
+  .desktop-only {
+    display: block;
+  }
+
+  .mobile-only {
+    display: none;
+  }
+
+  /* Desktop header: restore old 3-column grid layout */
+  .topbar.desktop-only {
+    display: grid;
+    grid-template-columns: 1.05fr 2.9fr 1.05fr;
+    gap: 10px;
+    align-items: center;
+    padding: 10px 12px;
+    min-height: var(--topH);
+    height: auto;
+  }
+
+  /* Desktop header sections */
+  .topbar.desktop-only .topbar__left {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    min-width: 0;
+  }
+
+  .topbar.desktop-only .topbar__center {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    align-items: center;
+    justify-content: center;
+    min-width: 0;
+  }
+
+  .topbar.desktop-only .topbar__right {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    justify-content: flex-end;
+  }
+
+  /* Desktop: chips in a single row, no topbarRow wrappers */
+  .topbar.desktop-only .chip {
+    min-height: 40px;
+    max-width: 360px;
+  }
+
+  /* Desktop: buttons and mini widget properly sized */
+  .topbar.desktop-only .btn {
+    min-height: 44px;
+  }
+
+  .topbar.desktop-only .mini {
+    text-align: right;
   }
 }
