@@ -2115,10 +2115,35 @@
   const panelClose = $("panelClose");
   makeDraggable(panel, panelHandle);
 
+  // ========================================
+  // MOBILE UX UTILITIES
+  // ========================================
+
+  // Utility: detect mobile landscape layout
+  const isMobileUI = () =>
+    window.matchMedia?.("(orientation: landscape)")?.matches &&
+    (window.matchMedia?.("(max-height: 520px)")?.matches ||
+     window.matchMedia?.("(max-width: 980px)")?.matches);
+
+  // Ensure panel close button is always visible and tappable
+  function ensurePanelCloseVisible(panelEl) {
+    if (!panelEl) return;
+    if (!isMobileUI()) return;
+
+    // Ensure panel scroll is at top so header/close is visible
+    const scroller = panelEl.querySelector(".panel__body, .content, .drawerBody") || panelEl;
+    try {
+      scroller.scrollTop = 0;
+    } catch(e) {}
+
+    // Add a class to panel to apply mobile safe styling if needed
+    panelEl.classList.add("mobileSafe");
+  }
 
   function openPanel() {
     panel.classList.remove("panel--collapsed");
     panelHandle.setAttribute("aria-expanded", "true");
+    ensurePanelCloseVisible(panel);
   }
   function closePanel() {
     clearSelection();
@@ -4584,6 +4609,7 @@ function selectItem(id) {
       playClickSound('open');
       panel.classList.remove("newsFlashPanel--hidden");
       updateNewsFlash();
+      ensurePanelCloseVisible(panel);
     } else {
       playClickSound('close');
       panel.classList.add("newsFlashPanel--hidden");
@@ -4625,6 +4651,7 @@ function selectItem(id) {
     if (isHidden) {
       playClickSound('open');
       panel.classList.remove("radioPanel--hidden");
+      ensurePanelCloseVisible(panel);
     } else {
       playClickSound('close');
       panel.classList.add("radioPanel--hidden");
@@ -5303,6 +5330,7 @@ function selectItem(id) {
     });
 
     renderDock();
+    ensurePanelCloseVisible(dockPanel);
   }
 
   // Close dock
