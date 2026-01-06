@@ -4958,7 +4958,6 @@ function selectItem(id) {
       console.warn(`[DegradedMode] ${cycleStats.failureCount} sources failed, entering degraded mode`);
     }
 
-    const liveTextEl = getChipElement("liveText");
     if (liveTextEl) liveTextEl.textContent = "Live";
     setLastUpdate();
 
