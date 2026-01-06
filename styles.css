@@ -349,6 +349,11 @@ body{
 }
 .leaflet-container{ background: rgba(10,14,24,1); }
 
+/* Map tiles: increase contrast/brightness for better readability while keeping dark theme */
+.leaflet-tile-pane .leaflet-tile {
+  filter: brightness(1.20) contrast(1.15);
+}
+
 /* Custom emoji marker with source-type color coding */
 .emojiMarker{
   width: 36px; height: 36px;
