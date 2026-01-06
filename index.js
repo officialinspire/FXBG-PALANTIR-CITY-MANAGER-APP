@@ -639,7 +639,17 @@
       enabled: true,
       // CDC Wonder API - locality-specific health data
       wonderApiUrl: "https://data.cdc.gov/api/v3/views/psx4-wq38/query.json",
+      wonderFallbackUrl: "https://data.cdc.gov/resource/psx4-wq38.json?$limit=50",
       maxAgeHours: 168  // Cache for 7 days
+    },
+
+    // Air Quality (AQICN/WAQI API)
+    air: {
+      enabled: true,
+      token: "a58cd9bfebd6036fe5c44135ee5e8dd88e787af4",
+      lat: 38.3032,
+      lon: -77.4605,
+      refreshMs: 10 * 60 * 1000  // 10 minutes
     },
 
     // External cameras (WetMet API)
@@ -678,6 +688,76 @@
           lon: -77.475549,
           url: "https://api.wetmet.net/c3189678-8e98-46ee-8826-c9769396d138",
           type: "iframe"
+        },
+        {
+          id: "oxblue_gmu",
+          name: "GMU Institute (OxBlue)",
+          lat: 38.8319,
+          lon: -77.3070,
+          url: "https://app.oxblue.com/?openlink=clarkconstruction/gmuinstitute",
+          type: "link"
+        },
+        {
+          id: "hope_springs_marina",
+          name: "Hope Springs Marina",
+          lat: 38.1839,
+          lon: -77.1860,
+          url: "http://hsm.hopto.me/view/viewer_index.shtml?id=52",
+          type: "link"
+        },
+        {
+          id: "webcamgalore_spotsylvania",
+          name: "Spotsylvania, VA",
+          lat: 38.1859,
+          lon: -77.6526,
+          url: "https://www.webcamgalore.com/webcam/USA/Spotsylvania-Virginia/24944.html",
+          thumb: "https://images.webcamgalore.com/webcamimages/120x90/24944.jpg",
+          type: "webcamgalore"
+        },
+        {
+          id: "webcamgalore_ashburn",
+          name: "Ashburn, VA",
+          lat: 39.0438,
+          lon: -77.4874,
+          url: "https://www.webcamgalore.com/webcam/USA/Ashburn-Virginia/18982.html",
+          thumb: "https://images.webcamgalore.com/webcamimages/120x90/18982.jpg",
+          type: "webcamgalore"
+        },
+        {
+          id: "webcamgalore_dc",
+          name: "Washington, DC",
+          lat: 38.9072,
+          lon: -77.0369,
+          url: "https://www.webcamgalore.com/webcam/USA/Washington-DC-District-of-Columbia/7237.html",
+          thumb: "https://images.webcamgalore.com/webcamimages/120x90/7237.jpg",
+          type: "webcamgalore"
+        },
+        {
+          id: "webcamgalore_mclean",
+          name: "McLean, VA",
+          lat: 38.9338,
+          lon: -77.1772,
+          url: "https://www.webcamgalore.com/webcam/USA/McLean-Virginia/24972.html",
+          thumb: "https://images.webcamgalore.com/webcamimages/120x90/24972.jpg",
+          type: "webcamgalore"
+        },
+        {
+          id: "webcamgalore_national_harbor",
+          name: "National Harbor, MD",
+          lat: 38.7826,
+          lon: -77.0174,
+          url: "https://www.webcamgalore.com/webcam/USA/National-Harbor-Maryland/20669.html",
+          thumb: "https://images.webcamgalore.com/webcamimages/120x90/20669.jpg",
+          type: "webcamgalore"
+        },
+        {
+          id: "webcamgalore_king_george",
+          name: "King George, VA",
+          lat: 38.2662,
+          lon: -77.1850,
+          url: "https://www.webcamgalore.com/webcam/USA/King-George-Virginia/14217.html",
+          thumb: "https://images.webcamgalore.com/webcamimages/120x90/14217.jpg",
+          type: "webcamgalore"
         }
       ]
     },
@@ -1074,6 +1154,25 @@
     return "🛰️";
   }
 
+  // Helper: dedupe header IDs for desktop (fix duplicate ID issue)
+  function dedupeHeaderIdsForDesktop() {
+    if (IS_MOBILE_UI) return;
+    const mobileHeader = document.getElementById("mobileHeader");
+    if (!mobileHeader) return;
+
+    const idsToRename = [
+      "chipLive", "liveText",
+      "chipWeather", "weatherText",
+      "chipTraffic", "trafficText",
+      "chipNet", "netText",
+      "chipAir", "airDot", "airText"
+    ];
+
+    for (const id of idsToRename) {
+      const el = mobileHeader.querySelector("#" + CSS.escape(id));
+      if (el) el.id = id + "Mobile";
+    }
+  }
 
   function centroidFromPolygon(poly) {
     const ring = poly?.[0];
@@ -1998,7 +2097,19 @@
     minZoom: 7
   }).setView([CONFIG.center.lat, CONFIG.center.lon], CONFIG.zoom);
 
-  L.tileLayer(
+  // CARTO Dark Matter tiles (primary) - more detail + no "Map data not available" at high zoom
+  const cartoLayer = L.tileLayer(
+    "https://cartodb-basemaps-{s}.global.ssl.fastly.net/dark_all/{z}/{x}/{y}.png",
+    {
+      maxZoom: 20,
+      subdomains: ['a', 'b', 'c', 'd'],
+      attribution: '© OpenStreetMap contributors, tiles © CARTO',
+      errorTileUrl: 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'
+    }
+  );
+
+  // ESRI Dark tiles (fallback if CARTO fails)
+  const esriBaseLayer = L.tileLayer(
     "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}",
     {
       maxZoom: 20,
@@ -2006,9 +2117,9 @@
       attribution: 'Map tiles by Esri',
       errorTileUrl: 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'
     }
-  ).addTo(map);
+  );
 
-  L.tileLayer(
+  const esriRefLayer = L.tileLayer(
     "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}",
     {
       maxZoom: 20,
@@ -2016,7 +2127,19 @@
       opacity: 0.95,
       errorTileUrl: 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'
     }
-  ).addTo(map);
+  );
+
+  // Try CARTO first, fallback to ESRI on error
+  cartoLayer.on('tileerror', function() {
+    if (!map.hasLayer(esriBaseLayer)) {
+      console.log('[Map] CARTO tiles failed, switching to ESRI fallback');
+      map.removeLayer(cartoLayer);
+      esriBaseLayer.addTo(map);
+      esriRefLayer.addTo(map);
+    }
+  });
+
+  cartoLayer.addTo(map);
 
   L.control.zoom({ position: "bottomright" }).addTo(map);
 
@@ -2479,10 +2602,11 @@
     itemsById: new Map(),
     seenKeys: new Set(),
     markersById: new Map(),
-    locks: { rss:false, nws:false, arcgis:false, virginiaCrashData:false, va511:false, openUV:false, cdc:false },
+    locks: { rss:false, nws:false, arcgis:false, virginiaCrashData:false, va511:false, openUV:false, cdc:false, air:false },
     lastByCategory: new Map(),
     lastFetch: { externalCameras: 0 },
-    gis: { enabled: new Set(), layers: new Map(), cache: new Map() }
+    gis: { enabled: new Set(), layers: new Map(), cache: new Map() },
+    air: { aqi: null, timestamp: null }  // Air quality data cache
   };
 
   /**
@@ -3661,7 +3785,9 @@ function selectItem(id) {
       recordSourceFailure('va511', 'catastrophic_error');
       recordFeedError('va511');
 
-      return { i95Incidents: 0 };
+      // Return null to indicate total failure (different from 0 which means "NORMAL")
+      setI95Indicator(null);
+      return { i95Incidents: null };
     } finally {
       store.locks.va511 = false;
     }
@@ -3815,10 +3941,57 @@ function selectItem(id) {
 
       // Build media based on type
       let media = null;
+      let panelHtml = "";
+
       if (cam.type === "iframe") {
         media = { type: "iframe", src: cam.url, alt: cam.name };
       } else if (cam.type === "image") {
         media = { type: "image", src: cam.url, alt: cam.name };
+      } else if (cam.type === "link") {
+        // For link type (OxBlue, Hope Springs), just show a button
+        panelHtml = `
+          <p>${escapeHtml(cam.name)} - External camera feed</p>
+          <a href="${escapeAttr(cam.url)}" target="_blank" rel="noopener noreferrer" class="linkBtn">
+            Open Live Cam ↗
+          </a>
+        `;
+      } else if (cam.type === "webcamgalore") {
+        // Inject WebcamGalore CSS once
+        if (!document.getElementById("webcamgaloreCSS")) {
+          const link = document.createElement("link");
+          link.id = "webcamgaloreCSS";
+          link.rel = "stylesheet";
+          link.href = "https://images.webcamgalore.com/wcglink.css";
+          document.head.appendChild(link);
+        }
+
+        // Render WebcamGalore card
+        const wcgId = cam.url.match(/\/(\d+)\.html/)?.[1] || "";
+        panelHtml = `
+          <p>${escapeHtml(cam.name)} webcam</p>
+          <a href="${escapeAttr(cam.url)}" target="_blank" rel="noopener noreferrer" class="wcgcard">
+            <img src="${escapeAttr(cam.thumb)}" alt="${escapeAttr(cam.name)}" style="border-radius:4px;" />
+            <span>${escapeHtml(cam.name)}</span>
+          </a>
+          <p style="margin-top:8px;"><a href="${escapeAttr(cam.url)}" target="_blank" rel="noopener noreferrer" class="linkBtn">Open on WebcamGalore ↗</a></p>
+        `;
+      }
+
+      // Determine source name based on type
+      let sourceName = "External Cameras";
+      let sourceId = "external-cameras";
+      if (cam.type === "iframe" || cam.type === "image") {
+        sourceName = "WetMet Cameras";
+        sourceId = "wetmet";
+      } else if (cam.type === "webcamgalore") {
+        sourceName = "WebcamGalore";
+        sourceId = "webcamgalore";
+      } else if (cam.id.includes("oxblue")) {
+        sourceName = "OxBlue";
+        sourceId = "oxblue";
+      } else if (cam.id.includes("hope_springs")) {
+        sourceName = "Hope Springs Marina";
+        sourceId = "hope-springs";
       }
 
       const item = {
@@ -3826,19 +3999,19 @@ function selectItem(id) {
         category: "camera",
         title: cam.name,
         summary: "External camera feed.",
-        sourceName: "WetMet Cameras",
-        sourceId: "wetmet",
+        sourceName,
+        sourceId,
         url: cam.url,
         timestamp: new Date().toISOString(),
         lat,
         lon,
-        emoji: getCameraEmoji({ sourceId: "wetmet", sourceName: cam.name, url: cam.url }),
+        emoji: getCameraEmoji({ sourceId, sourceName: cam.name, url: cam.url }),
         tone: "good",
         media,
         dedupeKey: key,
         message: "External camera feed.",
-        panelHtml: "",
-        source: { id:"wetmet", name:"WetMet Cameras", category:"camera", url:"https://api.wetmet.net/" }
+        panelHtml,
+        source: { id: sourceId, name: sourceName, category: "camera", url: cam.url }
       };
 
       store.itemsById.set(item.id, item);
@@ -4478,12 +4651,28 @@ function selectItem(id) {
 
     try {
       // Fetch CDC health surveillance data (locality-specific)
-      const data = await fetchWithProxies(CONFIG.cdc.wonderApiUrl, {
-        expect: "json",
-        headers: {
-          "Accept": "application/json"
+      // Try primary endpoint first, fallback to secondary if 403
+      let data;
+      try {
+        data = await fetchWithProxies(CONFIG.cdc.wonderApiUrl, {
+          expect: "json",
+          headers: {
+            "Accept": "application/json"
+          }
+        });
+      } catch (primaryErr) {
+        if (primaryErr.message?.includes("403") || primaryErr.message?.includes("Forbidden")) {
+          console.warn("[CDC] Primary endpoint returned 403, trying fallback...");
+          data = await fetchWithProxies(CONFIG.cdc.wonderFallbackUrl, {
+            expect: "json",
+            headers: {
+              "Accept": "application/json"
+            }
+          });
+        } else {
+          throw primaryErr;
         }
-      });
+      }
 
       if (!data || !Array.isArray(data)) {
         console.warn("[CDC] No valid health data received");
@@ -4567,6 +4756,56 @@ function selectItem(id) {
   }
 
   // -----------------------------
+  // Air Quality (AQICN/WAQI)
+  // -----------------------------
+  async function fetchAirQuality() {
+    if (!CONFIG.air.enabled) return;
+    if (store.locks.air) return;
+    store.locks.air = true;
+
+    try {
+      const url = `https://api.waqi.info/feed/geo:${CONFIG.air.lat};${CONFIG.air.lon}/?token=${CONFIG.air.token}`;
+      const data = await fetchWithProxies(url, { expect: "json" });
+
+      if (data && data.status === "ok" && data.data && typeof data.data.aqi === "number") {
+        const aqi = data.data.aqi;
+        store.air.aqi = aqi;
+        store.air.timestamp = Date.now();
+
+        // Update chip text
+        const airTextEl = $("airText");
+        if (airTextEl) airTextEl.textContent = `AQI: ${aqi}`;
+
+        // Update dot color based on AQI ranges
+        const airDotEl = $("airDot");
+        if (airDotEl) {
+          let color;
+          if (aqi <= 50) color = "#00e400";  // Good (green)
+          else if (aqi <= 100) color = "#ffff00";  // Moderate (yellow)
+          else if (aqi <= 150) color = "#ff7e00";  // Unhealthy for Sensitive Groups (orange)
+          else if (aqi <= 200) color = "#ff0000";  // Unhealthy (red)
+          else if (aqi <= 300) color = "#99004c";  // Very Unhealthy (purple)
+          else color = "#7e0023";  // Hazardous (maroon)
+
+          airDotEl.style.backgroundColor = color;
+        }
+
+        console.log(`[Air Quality] AQI: ${aqi}`);
+      } else {
+        console.warn("[Air Quality] No valid AQI data received");
+        const airTextEl = $("airText");
+        if (airTextEl) airTextEl.textContent = "AQI: N/A";
+      }
+    } catch (err) {
+      console.error("[Air Quality] Fetch failed:", err.message);
+      const airTextEl = $("airText");
+      if (airTextEl) airTextEl.textContent = "AQI: N/A";
+    } finally {
+      store.locks.air = false;
+    }
+  }
+
+  // -----------------------------
   // Controls
   // -----------------------------
   function setLastUpdate() { $("lastUpdate").textContent = fmtTime(new Date()); }
@@ -4593,6 +4832,7 @@ function selectItem(id) {
       pollVa511().catch(e => console.warn("511 refresh partial", e)),
       CONFIG.openUV.enabled ? fetchOpenUV().catch(e => console.warn("OpenUV refresh partial", e)) : Promise.resolve(),
       CONFIG.cdc.enabled ? fetchCDC().catch(e => console.warn("CDC refresh partial", e)) : Promise.resolve(),
+      CONFIG.air.enabled ? fetchAirQuality().catch(e => console.warn("Air quality refresh partial", e)) : Promise.resolve(),
       CONFIG.externalCameras.enabled ? pollExternalCameras().catch(e => console.warn("External cameras refresh partial", e)) : Promise.resolve()
     ]);
 
@@ -5275,6 +5515,20 @@ function selectItem(id) {
     html += `<div class="dockRowLeft"><div class="dockRowTitle">Stale Data Count</div></div>`;
     html += `<div class="dockBadge">${staleCount}</div>`;
     html += `</div>`;
+
+    // Air Quality status
+    if (CONFIG.air.enabled && store.air.aqi !== null) {
+      html += `<div class="dockRow">`;
+      html += `<div class="dockRowLeft">`;
+      html += `<div class="dockRowTitle">Air Quality (AQI)</div>`;
+      if (store.air.timestamp) {
+        html += `<div class="dockRowMeta">${formatRelativeTime(store.air.timestamp)}</div>`;
+      }
+      html += `</div>`;
+      html += `<div class="dockBadge">${store.air.aqi}</div>`;
+      html += `</div>`;
+    }
+
     html += `</div>`;
 
     // Recent errors
@@ -5860,6 +6114,11 @@ function selectItem(id) {
           <span class="chip__icon">🛣️</span>
           <span class="chip__text" id="trafficText">I‑95: Loading…</span>
         </div>
+
+        <div class="chip" id="chipAir" title="Air Quality Index">
+          <span class="dot" id="airDot"></span>
+          <span id="airText">AQI: …</span>
+        </div>
       </div>
 
       <div class="topbar__right">
@@ -5887,6 +6146,7 @@ function selectItem(id) {
   // Boot + timers
   // -----------------------------
   initDesktopHeader();
+  dedupeHeaderIdsForDesktop();  // Fix duplicate IDs on desktop
   ensureOverlayLegendControl();
   refreshAll();
   setInterval(pollRSS, CONFIG.polling.rss);
@@ -5896,4 +6156,5 @@ function selectItem(id) {
   setInterval(pollVa511, CONFIG.polling.va511);
   setInterval(fetchOpenUV, CONFIG.polling.openUV);
   setInterval(fetchCDC, CONFIG.polling.cdc);
+  setInterval(fetchAirQuality, CONFIG.air.refreshMs);
 })();
