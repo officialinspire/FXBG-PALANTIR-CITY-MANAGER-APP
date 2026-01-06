@@ -823,6 +823,366 @@
           url: "https://www.weatherbug.com/traffic-cam/?zip=20745",
           thumb: "https://cam.weatherbug.com/images/cams/KNHMD_thumb.jpg",
           type: "weatherbug"
+        },
+        // HOSPITALS - Major hospitals in the region
+        {
+          id: "hospital_mary_washington",
+          name: "Mary Washington Hospital",
+          lat: 38.3092,
+          lon: -77.4838,
+          url: "https://www.marywashingtonhealthcare.com/locations/mary-washington-hospital",
+          type: "hospital",
+          info: "1001 Sam Perry Blvd, Fredericksburg, VA 22401 | Emergency: (540) 741-1100"
+        },
+        {
+          id: "hospital_stafford",
+          name: "Stafford Hospital Center",
+          lat: 38.4394,
+          lon: -77.4483,
+          url: "https://www.marywashingtonhealthcare.com/locations/stafford-hospital",
+          type: "hospital",
+          info: "101 Hospital Center Blvd, Stafford, VA 22554 | Emergency: (540) 741-9000"
+        },
+        {
+          id: "hospital_spotsylvania",
+          name: "Spotsylvania Regional Medical Center",
+          lat: 38.1928,
+          lon: -77.5894,
+          url: "https://www.mystronghealth.com/",
+          type: "hospital",
+          info: "4600 Spotsylvania Pkwy, Fredericksburg, VA 22408 | Emergency: (540) 498-4000"
+        },
+        {
+          id: "hospital_uva_culpeper",
+          name: "UVA Culpeper Hospital",
+          lat: 38.4652,
+          lon: -77.9986,
+          url: "https://uvahealth.com/locations/uva-culpeper-hospital",
+          type: "hospital",
+          info: "501 Sunset Ln, Culpeper, VA 22701 | Emergency: (540) 829-4100"
+        },
+        {
+          id: "hospital_mary_washington_fredericksburg_outpatient",
+          name: "Mary Washington Healthcare Outpatient Center",
+          lat: 38.2854,
+          lon: -77.5163,
+          url: "https://www.marywashingtonhealthcare.com/locations/fredericksburg-outpatient-center",
+          type: "clinic",
+          info: "2300 Fall Hill Ave, Fredericksburg, VA 22401 | (540) 741-3340"
+        },
+        {
+          id: "hospital_lake_of_woods_emergency",
+          name: "Lake of the Woods Emergency Center",
+          lat: 38.3458,
+          lon: -77.7139,
+          url: "https://www.marywashingtonhealthcare.com/locations/lake-of-the-woods-emergency-center",
+          type: "clinic",
+          info: "11617 Lake of the Woods Dr, Locust Grove, VA 22508 | Emergency: (540) 972-2800"
+        },
+        // CLINICS - Major clinics and urgent care centers
+        {
+          id: "clinic_patient_first_fredericksburg",
+          name: "Patient First - Fredericksburg",
+          lat: 38.2716,
+          lon: -77.5247,
+          url: "https://www.patientfirst.com/",
+          type: "clinic",
+          info: "2401 Cowan Blvd, Fredericksburg, VA 22401 | Urgent Care: (540) 368-7080"
+        },
+        {
+          id: "clinic_patient_first_stafford",
+          name: "Patient First - Stafford",
+          lat: 38.4223,
+          lon: -77.4297,
+          url: "https://www.patientfirst.com/",
+          type: "clinic",
+          info: "77 Garrisonville Rd, Stafford, VA 22554 | Urgent Care: (540) 659-3800"
+        },
+        {
+          id: "clinic_patient_first_spotsylvania",
+          name: "Patient First - Spotsylvania",
+          lat: 38.1915,
+          lon: -77.5905,
+          url: "https://www.patientfirst.com/",
+          type: "clinic",
+          info: "4620 Southpoint Pkwy, Fredericksburg, VA 22407 | Urgent Care: (540) 786-4357"
+        },
+        {
+          id: "clinic_medexpress_fredericksburg",
+          name: "MedExpress Urgent Care - Fredericksburg",
+          lat: 38.2534,
+          lon: -77.5568,
+          url: "https://www.medexpress.com/",
+          type: "clinic",
+          info: "9900 Southpoint Centre Blvd, Fredericksburg, VA 22407 | (540) 693-9355"
+        },
+        {
+          id: "clinic_medexpress_stafford",
+          name: "MedExpress Urgent Care - Stafford",
+          lat: 38.4614,
+          lon: -77.4403,
+          url: "https://www.medexpress.com/",
+          type: "clinic",
+          info: "1248 Stafford Market Pl, Stafford, VA 22556 | (540) 288-4650"
+        },
+        // SCHOOLS - FREDERICKSBURG
+        {
+          id: "school_james_monroe_hs",
+          name: "James Monroe High School",
+          lat: 38.2955,
+          lon: -77.4743,
+          url: "https://jmhs.cityschools.com/",
+          type: "school",
+          info: "2300 Washington Ave, Fredericksburg, VA 22401 | High School | (540) 372-1140"
+        },
+        {
+          id: "school_walker_grant_ms",
+          name: "Walker-Grant Middle School",
+          lat: 38.3095,
+          lon: -77.4645,
+          url: "https://wgms.cityschools.com/",
+          type: "school",
+          info: "401 Wicklow Dr, Fredericksburg, VA 22405 | Middle School | (540) 372-1160"
+        },
+        {
+          id: "school_hugh_mercer_es",
+          name: "Hugh Mercer Elementary",
+          lat: 38.2934,
+          lon: -77.4822,
+          url: "https://hmes.cityschools.com/",
+          type: "school",
+          info: "1700 College Ave, Fredericksburg, VA 22401 | Elementary | (540) 372-1170"
+        },
+        {
+          id: "school_lafayette_upper_es",
+          name: "Lafayette Upper Elementary",
+          lat: 38.3204,
+          lon: -77.4599,
+          url: "https://lues.cityschools.com/",
+          type: "school",
+          info: "512 Kenmore Ave, Fredericksburg, VA 22405 | Elementary | (540) 372-1180"
+        },
+        // SCHOOLS - STAFFORD COUNTY
+        {
+          id: "school_stafford_hs",
+          name: "Stafford High School",
+          lat: 38.4297,
+          lon: -77.4481,
+          url: "https://www.staffordschools.net/",
+          type: "school",
+          info: "33 Stafford Indians Ln, Falmouth, VA 22405 | High School | (540) 658-6000"
+        },
+        {
+          id: "school_north_stafford_hs",
+          name: "North Stafford High School",
+          lat: 38.4783,
+          lon: -77.4633,
+          url: "https://www.staffordschools.net/",
+          type: "school",
+          info: "839 Garrisonville Rd, Stafford, VA 22556 | High School | (540) 658-6100"
+        },
+        {
+          id: "school_colonial_forge_hs",
+          name: "Colonial Forge High School",
+          lat: 38.4428,
+          lon: -77.4975,
+          url: "https://www.staffordschools.net/",
+          type: "school",
+          info: "550 East Rocks Rd, Stafford, VA 22554 | High School | (540) 658-6200"
+        },
+        {
+          id: "school_brooke_point_hs",
+          name: "Brooke Point High School",
+          lat: 38.4025,
+          lon: -77.3800,
+          url: "https://www.staffordschools.net/",
+          type: "school",
+          info: "1700 Courthouse Rd, Stafford, VA 22554 | High School | (540) 658-6500"
+        },
+        {
+          id: "school_mountain_view_hs",
+          name: "Mountain View High School",
+          lat: 38.3914,
+          lon: -77.5558,
+          url: "https://www.staffordschools.net/",
+          type: "school",
+          info: "2135 Mountain View Rd, Stafford, VA 22556 | High School | (540) 658-6800"
+        },
+        {
+          id: "school_park_ridge_es",
+          name: "Park Ridge Elementary",
+          lat: 38.4628,
+          lon: -77.4556,
+          url: "https://www.staffordschools.net/",
+          type: "school",
+          info: "350 Garrisonville Rd, Stafford, VA 22554 | Elementary | (540) 658-6300"
+        },
+        // SCHOOLS - SPOTSYLVANIA COUNTY
+        {
+          id: "school_chancellor_hs",
+          name: "Chancellor High School",
+          lat: 38.2858,
+          lon: -77.5833,
+          url: "https://www.spotsylvania.k12.va.us/",
+          type: "school",
+          info: "6300 Harrison Rd, Fredericksburg, VA 22407 | High School | (540) 898-8700"
+        },
+        {
+          id: "school_courtland_hs",
+          name: "Courtland High School",
+          lat: 38.1775,
+          lon: -77.5531,
+          url: "https://www.spotsylvania.k12.va.us/",
+          type: "school",
+          info: "6901 Smith Station Rd, Spotsylvania, VA 22553 | High School | (540) 898-8800"
+        },
+        {
+          id: "school_massaponax_hs",
+          name: "Massaponax High School",
+          lat: 38.3217,
+          lon: -77.5164,
+          url: "https://www.spotsylvania.k12.va.us/",
+          type: "school",
+          info: "8201 Jefferson Davis Hwy, Fredericksburg, VA 22407 | High School | (540) 898-8900"
+        },
+        {
+          id: "school_riverbend_hs",
+          name: "Riverbend High School",
+          lat: 38.2194,
+          lon: -77.6267,
+          url: "https://www.spotsylvania.k12.va.us/",
+          type: "school",
+          info: "11801 Scotts Hill Rd, Fredericksburg, VA 22407 | High School | (540) 898-9000"
+        },
+        {
+          id: "school_spotsylvania_hs",
+          name: "Spotsylvania High School",
+          lat: 38.1989,
+          lon: -77.6681,
+          url: "https://www.spotsylvania.k12.va.us/",
+          type: "school",
+          info: "8020 Courthouse Rd, Spotsylvania, VA 22553 | High School | (540) 898-9100"
+        },
+        // SCHOOLS - CULPEPER COUNTY
+        {
+          id: "school_culpeper_county_hs",
+          name: "Culpeper County High School",
+          lat: 38.4625,
+          lon: -77.9833,
+          url: "https://www.culpeperschools.org/",
+          type: "school",
+          info: "14240 Achievement Dr, Culpeper, VA 22701 | High School | (540) 829-6700"
+        },
+        {
+          id: "school_eastern_view_hs",
+          name: "Eastern View High School",
+          lat: 38.4281,
+          lon: -77.8928,
+          url: "https://www.culpeperschools.org/",
+          type: "school",
+          info: "16332 Cyclone Way, Culpeper, VA 22701 | High School | (540) 829-6800"
+        },
+        {
+          id: "school_culpeper_ms",
+          name: "Culpeper Middle School",
+          lat: 38.4697,
+          lon: -77.9958,
+          url: "https://www.culpeperschools.org/",
+          type: "school",
+          info: "450 Radio Ln, Culpeper, VA 22701 | Middle School | (540) 829-6600"
+        },
+        // SCHOOLS - CAROLINE COUNTY
+        {
+          id: "school_caroline_hs",
+          name: "Caroline High School",
+          lat: 38.0567,
+          lon: -77.4103,
+          url: "https://www.ccps.us/",
+          type: "school",
+          info: "19191 Rogers Clark Blvd, Milford, VA 22514 | High School | (804) 633-5194"
+        },
+        {
+          id: "school_caroline_ms",
+          name: "Caroline Middle School",
+          lat: 38.0519,
+          lon: -77.4150,
+          url: "https://www.ccps.us/",
+          type: "school",
+          info: "19219 Rogers Clark Blvd, Milford, VA 22514 | Middle School | (804) 633-5306"
+        },
+        {
+          id: "school_dawn_elementary",
+          name: "Dawn Elementary",
+          lat: 38.1378,
+          lon: -77.3417,
+          url: "https://www.ccps.us/",
+          type: "school",
+          info: "24121 Rogers Clark Blvd, Ruther Glen, VA 22546 | Elementary | (804) 633-5252"
+        },
+        // SCHOOLS - KING GEORGE COUNTY
+        {
+          id: "school_king_george_hs",
+          name: "King George High School",
+          lat: 38.2781,
+          lon: -77.1847,
+          url: "https://www.kgcs.k12.va.us/",
+          type: "school",
+          info: "6901 Courthouse Ln, King George, VA 22485 | High School | (540) 775-3598"
+        },
+        {
+          id: "school_king_george_ms",
+          name: "King George Middle School",
+          lat: 38.2736,
+          lon: -77.1800,
+          url: "https://www.kgcs.k12.va.us/",
+          type: "school",
+          info: "6798 Kings Hwy, King George, VA 22485 | Middle School | (540) 775-7846"
+        },
+        {
+          id: "school_king_george_es",
+          name: "King George Elementary",
+          lat: 38.2764,
+          lon: -77.1842,
+          url: "https://www.kgcs.k12.va.us/",
+          type: "school",
+          info: "8941 Kings Hwy, King George, VA 22485 | Elementary | (540) 775-7934"
+        },
+        // SCHOOLS - ORANGE COUNTY
+        {
+          id: "school_orange_county_hs",
+          name: "Orange County High School",
+          lat: 38.2425,
+          lon: -78.1103,
+          url: "https://www.ocss-va.org/",
+          type: "school",
+          info: "200 Porters Rd, Orange, VA 22960 | High School | (540) 661-4550"
+        },
+        {
+          id: "school_locust_grove_ms",
+          name: "Locust Grove Middle School",
+          lat: 38.3272,
+          lon: -77.7761,
+          url: "https://www.ocss-va.org/",
+          type: "school",
+          info: "3500 Germanna Hwy, Locust Grove, VA 22508 | Middle School | (540) 661-4590"
+        },
+        {
+          id: "school_orange_es",
+          name: "Orange Elementary",
+          lat: 38.2453,
+          lon: -78.1117,
+          url: "https://www.ocss-va.org/",
+          type: "school",
+          info: "405 Byrd St, Orange, VA 22960 | Elementary | (540) 661-4570"
+        },
+        {
+          id: "school_gordon_barbour_es",
+          name: "Gordon-Barbour Elementary",
+          lat: 38.3242,
+          lon: -77.7811,
+          url: "https://www.ocss-va.org/",
+          type: "school",
+          info: "3529 Germanna Hwy, Locust Grove, VA 22508 | Elementary | (540) 661-4580"
         }
       ]
     },
@@ -871,6 +1231,9 @@
     legal_courts:             { label: "Legal / Courts", emoji: "⚖️" },
     health:                   { label: "Health / Safety", emoji: "🏥" },
     uv_index:                 { label: "UV Index", emoji: "☀️" },
+    hospital:                 { label: "Hospitals", emoji: "🏥" },
+    clinic:                   { label: "Clinics", emoji: "⚕️" },
+    school:                   { label: "Schools", emoji: "🏫" },
     // Legacy categories (for backwards compatibility with existing data sources)
     crime:                    { label: "Police / Crime", emoji: "🚨" },
     traffic:                  { label: "Traffic", emoji: "🚗" },
@@ -1199,7 +1562,13 @@
   }
 
   function getCameraEmoji(item) {
-    // Helper to determine appropriate emoji for camera sources
+    // Helper to determine appropriate emoji for camera sources and other marker types
+    // Check if this is a hospital, clinic, or school
+    const type = item?.type || "";
+    if (type === "hospital") return "🏥";
+    if (type === "clinic") return "⚕️";
+    if (type === "school") return "🏫";
+
     // preserve existing traffic cameras
     const src = item?.source?.id || item?.sourceId || "";
     const name = (item?.source?.name || item?.sourceName || "").toLowerCase();
@@ -4042,8 +4411,53 @@ function selectItem(id) {
       // Build media based on type
       let media = null;
       let panelHtml = "";
+      let category = "camera";
+      let summary = "External camera feed.";
+      let message = "External camera feed.";
 
-      if (cam.type === "iframe") {
+      if (cam.type === "hospital") {
+        // Hospital marker
+        category = "hospital";
+        summary = cam.info || "Hospital";
+        message = cam.info || "Hospital";
+        panelHtml = `
+          <div style="padding:10px;">
+            <h3 style="margin:0 0 10px 0;color:#fff;font-size:16px;">🏥 ${escapeHtml(cam.name)}</h3>
+            <p style="margin:0 0 10px 0;color:rgba(255,255,255,0.88);font-size:13px;line-height:1.5;">${escapeHtml(cam.info || "Hospital")}</p>
+            <a href="${escapeAttr(cam.url)}" target="_blank" rel="noopener noreferrer" class="linkBtn">
+              Visit Website ↗
+            </a>
+          </div>
+        `;
+      } else if (cam.type === "clinic") {
+        // Clinic marker
+        category = "clinic";
+        summary = cam.info || "Clinic / Urgent Care";
+        message = cam.info || "Clinic / Urgent Care";
+        panelHtml = `
+          <div style="padding:10px;">
+            <h3 style="margin:0 0 10px 0;color:#fff;font-size:16px;">⚕️ ${escapeHtml(cam.name)}</h3>
+            <p style="margin:0 0 10px 0;color:rgba(255,255,255,0.88);font-size:13px;line-height:1.5;">${escapeHtml(cam.info || "Clinic / Urgent Care")}</p>
+            <a href="${escapeAttr(cam.url)}" target="_blank" rel="noopener noreferrer" class="linkBtn">
+              Visit Website ↗
+            </a>
+          </div>
+        `;
+      } else if (cam.type === "school") {
+        // School marker
+        category = "school";
+        summary = cam.info || "School";
+        message = cam.info || "School";
+        panelHtml = `
+          <div style="padding:10px;">
+            <h3 style="margin:0 0 10px 0;color:#fff;font-size:16px;">🏫 ${escapeHtml(cam.name)}</h3>
+            <p style="margin:0 0 10px 0;color:rgba(255,255,255,0.88);font-size:13px;line-height:1.5;">${escapeHtml(cam.info || "School")}</p>
+            <a href="${escapeAttr(cam.url)}" target="_blank" rel="noopener noreferrer" class="linkBtn">
+              Visit Website ↗
+            </a>
+          </div>
+        `;
+      } else if (cam.type === "iframe") {
         media = { type: "iframe", src: cam.url, alt: cam.name };
       } else if (cam.type === "image") {
         media = { type: "image", src: cam.url, alt: cam.name };
@@ -4076,7 +4490,16 @@ function selectItem(id) {
       // Determine source name based on type
       let sourceName = "External Cameras";
       let sourceId = "external-cameras";
-      if (cam.type === "iframe" || cam.type === "image") {
+      if (cam.type === "hospital") {
+        sourceName = "Hospitals";
+        sourceId = "hospitals";
+      } else if (cam.type === "clinic") {
+        sourceName = "Clinics";
+        sourceId = "clinics";
+      } else if (cam.type === "school") {
+        sourceName = "Schools";
+        sourceId = "schools";
+      } else if (cam.type === "iframe" || cam.type === "image") {
         sourceName = "WetMet Cameras";
         sourceId = "wetmet";
       } else if (cam.type === "webcamgalore") {
@@ -4095,22 +4518,22 @@ function selectItem(id) {
 
       const item = {
         id: key,
-        category: "camera",
+        category,
         title: cam.name,
-        summary: "External camera feed.",
+        summary,
         sourceName,
         sourceId,
         url: cam.url,
         timestamp: new Date().toISOString(),
         lat,
         lon,
-        emoji: getCameraEmoji({ sourceId, sourceName: cam.name, url: cam.url }),
+        emoji: getCameraEmoji({ sourceId, sourceName: cam.name, url: cam.url, type: cam.type }),
         tone: "good",
         media,
         dedupeKey: key,
-        message: "External camera feed.",
+        message,
         panelHtml,
-        source: { id: sourceId, name: sourceName, category: "camera", url: cam.url }
+        source: { id: sourceId, name: sourceName, category, url: cam.url }
       };
 
       store.itemsById.set(item.id, item);
