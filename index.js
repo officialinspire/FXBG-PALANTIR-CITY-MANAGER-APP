@@ -1241,7 +1241,9 @@
       "chipWeather", "weatherText",
       "chipTraffic", "trafficText",
       "chipNet", "netText",
-      "chipAir", "airDot", "airText"
+      "chipAir", "airDot", "airText",
+      "btnNewsFlash", "btnRadioScanner", "btnRefresh",
+      "lastUpdate"
     ];
 
     for (const id of idsToRename) {
