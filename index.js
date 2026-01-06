@@ -23,8 +23,8 @@
     center: { lat: 38.3032, lon: -77.4605 },
     zoom: 10,
 
-    // Region filter bbox (rough FXBG + Stafford + Spotsy)
-    bbox: { minLat: 38.10, maxLat: 38.52, minLon: -77.85, maxLon: -77.20 },
+    // Region filter bbox (expanded to include all data source areas: FXBG, Stafford, Spotsy, Caroline, Warrenton, etc.)
+    bbox: { minLat: 37.9, maxLat: 38.9, minLon: -78.0, maxLon: -77.0 },
 
     // I‑95 corridor bbox near FXBG metro (for traffic indicator)
     i95Bbox: { minLat: 38.15, maxLat: 38.55, minLon: -77.70, maxLon: -77.20 },
