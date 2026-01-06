@@ -832,7 +832,15 @@
           lon: -77.4838,
           url: "https://www.marywashingtonhealthcare.com/locations/mary-washington-hospital",
           type: "hospital",
-          info: "1001 Sam Perry Blvd, Fredericksburg, VA 22401 | Emergency: (540) 741-1100"
+          info: "1001 Sam Perry Blvd, Fredericksburg, VA 22401 | Emergency: (540) 741-1100",
+          yearFounded: 1899,
+          beds: 437,
+          departments: ["Emergency Medicine", "Cardiology", "Oncology", "Orthopedics", "Neurology", "Women's Services", "Pediatrics", "Surgery"],
+          services: "Level II Trauma Center, Heart & Vascular Center, Cancer Center, Orthopedic & Spine Institute, Emergency Services",
+          specialties: "Cardiac Care, Cancer Treatment, Advanced Imaging, Robotic Surgery, Stroke Center",
+          emergencyServices: "24/7 Emergency Department",
+          address: "1001 Sam Perry Blvd, Fredericksburg, VA 22401",
+          phone: "(540) 741-1100"
         },
         {
           id: "hospital_stafford",
@@ -841,7 +849,15 @@
           lon: -77.4483,
           url: "https://www.marywashingtonhealthcare.com/locations/stafford-hospital",
           type: "hospital",
-          info: "101 Hospital Center Blvd, Stafford, VA 22554 | Emergency: (540) 741-9000"
+          info: "101 Hospital Center Blvd, Stafford, VA 22554 | Emergency: (540) 741-9000",
+          yearFounded: 2009,
+          beds: 100,
+          departments: ["Emergency Medicine", "Medical/Surgical", "Intensive Care", "Imaging", "Laboratory", "Cardiology"],
+          services: "Emergency Care, Inpatient Care, Medical Imaging, Laboratory Services, Cardiac Catheterization",
+          specialties: "Emergency Care, Critical Care, Diagnostic Imaging, Cardiac Services",
+          emergencyServices: "24/7 Emergency Department",
+          address: "101 Hospital Center Blvd, Stafford, VA 22554",
+          phone: "(540) 741-9000"
         },
         {
           id: "hospital_spotsylvania",
@@ -850,7 +866,15 @@
           lon: -77.5894,
           url: "https://www.mystronghealth.com/",
           type: "hospital",
-          info: "4600 Spotsylvania Pkwy, Fredericksburg, VA 22408 | Emergency: (540) 498-4000"
+          info: "4600 Spotsylvania Pkwy, Fredericksburg, VA 22408 | Emergency: (540) 498-4000",
+          yearFounded: 2010,
+          beds: 130,
+          departments: ["Emergency Medicine", "Surgery", "Medical/Surgical", "Intensive Care", "Maternity", "Imaging", "Rehabilitation"],
+          services: "Emergency Care, Surgical Services, Maternity Care, ICU, Rehabilitation Services, Advanced Imaging",
+          specialties: "Women's Services, Emergency Medicine, Surgical Care, Critical Care, Imaging & Diagnostics",
+          emergencyServices: "24/7 Emergency Department",
+          address: "4600 Spotsylvania Pkwy, Fredericksburg, VA 22408",
+          phone: "(540) 498-4000"
         },
         {
           id: "hospital_uva_culpeper",
@@ -859,7 +883,15 @@
           lon: -77.9986,
           url: "https://uvahealth.com/locations/uva-culpeper-hospital",
           type: "hospital",
-          info: "501 Sunset Ln, Culpeper, VA 22701 | Emergency: (540) 829-4100"
+          info: "501 Sunset Ln, Culpeper, VA 22701 | Emergency: (540) 829-4100",
+          yearFounded: 1952,
+          beds: 70,
+          departments: ["Emergency Medicine", "Surgery", "Medical/Surgical", "Intensive Care", "Imaging", "Cardiology", "Oncology"],
+          services: "Emergency Care, Surgical Services, Cancer Care, Heart & Vascular Care, Imaging Services, ICU",
+          specialties: "UVA Health Network Affiliation, Cancer Care, Cardiac Services, Emergency Medicine, Advanced Surgery",
+          emergencyServices: "24/7 Emergency Department",
+          address: "501 Sunset Ln, Culpeper, VA 22701",
+          phone: "(540) 829-4100"
         },
         {
           id: "hospital_mary_washington_fredericksburg_outpatient",
@@ -868,7 +900,13 @@
           lon: -77.5163,
           url: "https://www.marywashingtonhealthcare.com/locations/fredericksburg-outpatient-center",
           type: "clinic",
-          info: "2300 Fall Hill Ave, Fredericksburg, VA 22401 | (540) 741-3340"
+          info: "2300 Fall Hill Ave, Fredericksburg, VA 22401 | (540) 741-3340",
+          yearFounded: 2005,
+          services: "Outpatient Surgery, Imaging Services, Lab Services, Specialty Clinics, Physical Therapy",
+          specialties: "Same-Day Surgery, Advanced Imaging, Diagnostic Services, Rehabilitation",
+          hours: "Monday-Friday: 7:00 AM - 5:00 PM",
+          address: "2300 Fall Hill Ave, Fredericksburg, VA 22401",
+          phone: "(540) 741-3340"
         },
         {
           id: "hospital_lake_of_woods_emergency",
@@ -877,7 +915,13 @@
           lon: -77.7139,
           url: "https://www.marywashingtonhealthcare.com/locations/lake-of-the-woods-emergency-center",
           type: "clinic",
-          info: "11617 Lake of the Woods Dr, Locust Grove, VA 22508 | Emergency: (540) 972-2800"
+          info: "11617 Lake of the Woods Dr, Locust Grove, VA 22508 | Emergency: (540) 972-2800",
+          yearFounded: 2015,
+          services: "Emergency Care, Urgent Care, X-Ray & Imaging, Lab Services, Minor Surgery",
+          specialties: "24/7 Emergency Services, Fast Track Care, Advanced Diagnostics",
+          hours: "24/7 Emergency Services",
+          address: "11617 Lake of the Woods Dr, Locust Grove, VA 22508",
+          phone: "(540) 972-2800"
         },
         // CLINICS - Major clinics and urgent care centers
         {
@@ -887,7 +931,13 @@
           lon: -77.5247,
           url: "https://www.patientfirst.com/",
           type: "clinic",
-          info: "2401 Cowan Blvd, Fredericksburg, VA 22401 | Urgent Care: (540) 368-7080"
+          info: "2401 Cowan Blvd, Fredericksburg, VA 22401 | Urgent Care: (540) 368-7080",
+          yearFounded: 2001,
+          services: "Urgent Care, Primary Care, X-Ray, Lab Work, Occupational Health, Vaccinations",
+          specialties: "Walk-In Care, No Appointment Needed, Extended Hours, Minor Injuries & Illnesses",
+          hours: "Monday-Friday: 8:00 AM - 10:00 PM, Weekends: 8:00 AM - 8:00 PM",
+          address: "2401 Cowan Blvd, Fredericksburg, VA 22401",
+          phone: "(540) 368-7080"
         },
         {
           id: "clinic_patient_first_stafford",
@@ -896,7 +946,13 @@
           lon: -77.4297,
           url: "https://www.patientfirst.com/",
           type: "clinic",
-          info: "77 Garrisonville Rd, Stafford, VA 22554 | Urgent Care: (540) 659-3800"
+          info: "77 Garrisonville Rd, Stafford, VA 22554 | Urgent Care: (540) 659-3800",
+          yearFounded: 2003,
+          services: "Urgent Care, Primary Care, X-Ray, Lab Services, Occupational Medicine, Immunizations",
+          specialties: "Same-Day Care, Walk-Ins Welcome, Extended Evening Hours, Full Lab & Imaging",
+          hours: "Monday-Friday: 8:00 AM - 10:00 PM, Weekends: 8:00 AM - 8:00 PM",
+          address: "77 Garrisonville Rd, Stafford, VA 22554",
+          phone: "(540) 659-3800"
         },
         {
           id: "clinic_patient_first_spotsylvania",
@@ -905,7 +961,13 @@
           lon: -77.5905,
           url: "https://www.patientfirst.com/",
           type: "clinic",
-          info: "4620 Southpoint Pkwy, Fredericksburg, VA 22407 | Urgent Care: (540) 786-4357"
+          info: "4620 Southpoint Pkwy, Fredericksburg, VA 22407 | Urgent Care: (540) 786-4357",
+          yearFounded: 2008,
+          services: "Urgent Care, Family Medicine, Digital X-Ray, Laboratory, Workers' Comp, Travel Medicine",
+          specialties: "No Wait Times, Walk-In Friendly, Full Diagnostic Services, Family Care",
+          hours: "Monday-Friday: 8:00 AM - 10:00 PM, Weekends: 8:00 AM - 8:00 PM",
+          address: "4620 Southpoint Pkwy, Fredericksburg, VA 22407",
+          phone: "(540) 786-4357"
         },
         {
           id: "clinic_medexpress_fredericksburg",
@@ -914,7 +976,13 @@
           lon: -77.5568,
           url: "https://www.medexpress.com/",
           type: "clinic",
-          info: "9900 Southpoint Centre Blvd, Fredericksburg, VA 22407 | (540) 693-9355"
+          info: "9900 Southpoint Centre Blvd, Fredericksburg, VA 22407 | (540) 693-9355",
+          yearFounded: 2012,
+          services: "Urgent Care, Occupational Health, X-Ray & Imaging, Lab Testing, Physicals, Vaccinations",
+          specialties: "Extended Hours, Online Check-In, Employer Services, Sports Physicals",
+          hours: "Monday-Friday: 8:00 AM - 8:00 PM, Weekends: 8:00 AM - 5:00 PM",
+          address: "9900 Southpoint Centre Blvd, Fredericksburg, VA 22407",
+          phone: "(540) 693-9355"
         },
         {
           id: "clinic_medexpress_stafford",
@@ -923,7 +991,13 @@
           lon: -77.4403,
           url: "https://www.medexpress.com/",
           type: "clinic",
-          info: "1248 Stafford Market Pl, Stafford, VA 22556 | (540) 288-4650"
+          info: "1248 Stafford Market Pl, Stafford, VA 22556 | (540) 288-4650",
+          yearFounded: 2014,
+          services: "Urgent Care, Work Health, Imaging Services, Lab Work, DOT Physicals, Flu Shots",
+          specialties: "Quick Service, Online Scheduling, Workplace Wellness, Comprehensive Care",
+          hours: "Monday-Friday: 8:00 AM - 8:00 PM, Weekends: 8:00 AM - 5:00 PM",
+          address: "1248 Stafford Market Pl, Stafford, VA 22556",
+          phone: "(540) 288-4650"
         },
         // SCHOOLS - FREDERICKSBURG
         {
@@ -933,7 +1007,18 @@
           lon: -77.4743,
           url: "https://jmhs.cityschools.com/",
           type: "school",
-          info: "2300 Washington Ave, Fredericksburg, VA 22401 | High School | (540) 372-1140"
+          info: "2300 Washington Ave, Fredericksburg, VA 22401 | High School | (540) 372-1140",
+          yearFounded: 1958,
+          enrollment: 1450,
+          grades: "9-12",
+          mascot: "Yellow Jackets",
+          colors: "Blue & Gold",
+          sports: "Football, Basketball, Soccer, Baseball, Softball, Track & Field, Cross Country, Tennis, Golf, Wrestling, Volleyball, Swimming, Lacrosse",
+          achievements: "Virginia State Football Championship (2019), Multiple Regional Titles, Academic Excellence Awards",
+          programs: "Advanced Placement (AP), Dual Enrollment, Career & Technical Education, STEM Academy, Arts & Humanities",
+          specialPrograms: "International Baccalaureate Prep, Engineering & Technology, Healthcare Sciences, Business & Finance",
+          address: "2300 Washington Ave, Fredericksburg, VA 22401",
+          phone: "(540) 372-1140"
         },
         {
           id: "school_walker_grant_ms",
@@ -942,7 +1027,18 @@
           lon: -77.4645,
           url: "https://wgms.cityschools.com/",
           type: "school",
-          info: "401 Wicklow Dr, Fredericksburg, VA 22405 | Middle School | (540) 372-1160"
+          info: "401 Wicklow Dr, Fredericksburg, VA 22405 | Middle School | (540) 372-1160",
+          yearFounded: 1992,
+          enrollment: 850,
+          grades: "6-8",
+          mascot: "Dragons",
+          colors: "Green & White",
+          sports: "Basketball, Soccer, Track, Cross Country, Volleyball, Wrestling",
+          achievements: "SOL Excellence Awards, National Junior Honor Society, STEM Competition Winners",
+          programs: "STEM Enrichment, Band & Orchestra, Visual Arts, World Languages (Spanish, French)",
+          specialPrograms: "Gifted & Talented, Advanced Math & Science, Technology Integration",
+          address: "401 Wicklow Dr, Fredericksburg, VA 22405",
+          phone: "(540) 372-1160"
         },
         {
           id: "school_hugh_mercer_es",
@@ -951,7 +1047,18 @@
           lon: -77.4822,
           url: "https://hmes.cityschools.com/",
           type: "school",
-          info: "1700 College Ave, Fredericksburg, VA 22401 | Elementary | (540) 372-1170"
+          info: "1700 College Ave, Fredericksburg, VA 22401 | Elementary | (540) 372-1170",
+          yearFounded: 1921,
+          enrollment: 480,
+          grades: "K-5",
+          mascot: "Generals",
+          colors: "Red & Blue",
+          sports: "Youth Sports Programs, Physical Education",
+          achievements: "Blue Ribbon School, SOL Pass Rate Excellence, Community Service Awards",
+          programs: "Reading Recovery, STEAM Education, Music & Art, Library Media",
+          specialPrograms: "ESL Support, Special Education Services, Before & After School Care",
+          address: "1700 College Ave, Fredericksburg, VA 22401",
+          phone: "(540) 372-1170"
         },
         {
           id: "school_lafayette_upper_es",
@@ -960,7 +1067,18 @@
           lon: -77.4599,
           url: "https://lues.cityschools.com/",
           type: "school",
-          info: "512 Kenmore Ave, Fredericksburg, VA 22405 | Elementary | (540) 372-1180"
+          info: "512 Kenmore Ave, Fredericksburg, VA 22405 | Elementary | (540) 372-1180",
+          yearFounded: 1994,
+          enrollment: 520,
+          grades: "3-5",
+          mascot: "Patriots",
+          colors: "Blue & Gold",
+          sports: "Intramural Sports, PE Programs",
+          achievements: "Virginia Index of Performance Excellence, Academic Achievement Recognition",
+          programs: "Technology Integration, Science Lab, Art & Music Education, Guidance Services",
+          specialPrograms: "Advanced Learner Programs, Reading Intervention, Math Enrichment",
+          address: "512 Kenmore Ave, Fredericksburg, VA 22405",
+          phone: "(540) 372-1180"
         },
         // SCHOOLS - STAFFORD COUNTY
         {
@@ -970,7 +1088,18 @@
           lon: -77.4481,
           url: "https://www.staffordschools.net/",
           type: "school",
-          info: "33 Stafford Indians Ln, Falmouth, VA 22405 | High School | (540) 658-6000"
+          info: "33 Stafford Indians Ln, Falmouth, VA 22405 | High School | (540) 658-6000",
+          yearFounded: 1960,
+          enrollment: 1650,
+          grades: "9-12",
+          mascot: "Indians",
+          colors: "Red & White",
+          sports: "Football, Basketball, Baseball, Softball, Soccer, Lacrosse, Track & Field, Swimming, Wrestling, Tennis, Golf, Volleyball, Cross Country",
+          achievements: "Multiple State Championships, Regional Academic Excellence, National Honor Society Chapter",
+          programs: "Advanced Placement (AP), Dual Enrollment with UMW, STEM Programs, Career & Technical Education",
+          specialPrograms: "Engineering Academy, Cybersecurity Program, Healthcare Sciences, Advanced Math & Science",
+          address: "33 Stafford Indians Ln, Falmouth, VA 22405",
+          phone: "(540) 658-6000"
         },
         {
           id: "school_north_stafford_hs",
@@ -979,7 +1108,18 @@
           lon: -77.4633,
           url: "https://www.staffordschools.net/",
           type: "school",
-          info: "839 Garrisonville Rd, Stafford, VA 22556 | High School | (540) 658-6100"
+          info: "839 Garrisonville Rd, Stafford, VA 22556 | High School | (540) 658-6100",
+          yearFounded: 1995,
+          enrollment: 2100,
+          grades: "9-12",
+          mascot: "Wolverines",
+          colors: "Blue & Silver",
+          sports: "Football, Basketball, Baseball, Softball, Soccer, Lacrosse, Swimming, Wrestling, Track, Cross Country, Tennis, Golf, Volleyball, Cheerleading",
+          achievements: "State Championship Titles, Top Academic Rankings, National Merit Scholars",
+          programs: "International Baccalaureate (IB), AP Courses, Dual Enrollment, CTE Programs, Fine Arts",
+          specialPrograms: "IB Diploma Programme, Advanced Engineering, Medical Sciences, Business & IT",
+          address: "839 Garrisonville Rd, Stafford, VA 22556",
+          phone: "(540) 658-6100"
         },
         {
           id: "school_colonial_forge_hs",
@@ -988,7 +1128,18 @@
           lon: -77.4975,
           url: "https://www.staffordschools.net/",
           type: "school",
-          info: "550 East Rocks Rd, Stafford, VA 22554 | High School | (540) 658-6200"
+          info: "550 East Rocks Rd, Stafford, VA 22554 | High School | (540) 658-6200",
+          yearFounded: 2006,
+          enrollment: 2250,
+          grades: "9-12",
+          mascot: "Eagles",
+          colors: "Navy Blue & Vegas Gold",
+          sports: "Football, Basketball, Soccer, Baseball, Softball, Lacrosse, Swimming, Track & Field, Wrestling, Tennis, Golf, Volleyball, Cross Country, Cheerleading",
+          achievements: "State Championships in Multiple Sports, Academic Excellence Awards, Award-Winning Arts Programs",
+          programs: "Advanced Placement (AP), Dual Enrollment, STEM Academy, Arts & Communications",
+          specialPrograms: "Engineering & Technology, Computer Science, Healthcare Sciences, Business Academy",
+          address: "550 East Rocks Rd, Stafford, VA 22554",
+          phone: "(540) 658-6200"
         },
         {
           id: "school_brooke_point_hs",
@@ -997,7 +1148,18 @@
           lon: -77.3800,
           url: "https://www.staffordschools.net/",
           type: "school",
-          info: "1700 Courthouse Rd, Stafford, VA 22554 | High School | (540) 658-6500"
+          info: "1700 Courthouse Rd, Stafford, VA 22554 | High School | (540) 658-6500",
+          yearFounded: 2010,
+          enrollment: 2400,
+          grades: "9-12",
+          mascot: "Black-Hawks",
+          colors: "Black & Columbia Blue",
+          sports: "Football, Basketball, Soccer, Baseball, Softball, Lacrosse, Track & Field, Swimming, Wrestling, Tennis, Golf, Volleyball, Cross Country",
+          achievements: "Regional Championships, SOL Excellence, Growing Athletic & Academic Programs",
+          programs: "AP Courses, Dual Enrollment, Career & Technical Education, STEM Focus",
+          specialPrograms: "Cyber Security, Engineering, Advanced Sciences, Business & Finance",
+          address: "1700 Courthouse Rd, Stafford, VA 22554",
+          phone: "(540) 658-6500"
         },
         {
           id: "school_mountain_view_hs",
@@ -1006,7 +1168,18 @@
           lon: -77.5558,
           url: "https://www.staffordschools.net/",
           type: "school",
-          info: "2135 Mountain View Rd, Stafford, VA 22556 | High School | (540) 658-6800"
+          info: "2135 Mountain View Rd, Stafford, VA 22556 | High School | (540) 658-6800",
+          yearFounded: 2015,
+          enrollment: 1850,
+          grades: "9-12",
+          mascot: "Wildcats",
+          colors: "Purple & Silver",
+          sports: "Football, Basketball, Soccer, Baseball, Softball, Lacrosse, Track & Field, Swimming, Volleyball, Tennis, Cross Country",
+          achievements: "Newest School in District, Rapidly Growing Programs, Modern Facilities",
+          programs: "Advanced Placement (AP), Dual Enrollment, STEM Programs, Arts Education",
+          specialPrograms: "Technology Integration, Engineering, Science Research, Career Pathways",
+          address: "2135 Mountain View Rd, Stafford, VA 22556",
+          phone: "(540) 658-6800"
         },
         {
           id: "school_park_ridge_es",
@@ -1015,7 +1188,18 @@
           lon: -77.4556,
           url: "https://www.staffordschools.net/",
           type: "school",
-          info: "350 Garrisonville Rd, Stafford, VA 22554 | Elementary | (540) 658-6300"
+          info: "350 Garrisonville Rd, Stafford, VA 22554 | Elementary | (540) 658-6300",
+          yearFounded: 2002,
+          enrollment: 680,
+          grades: "K-5",
+          mascot: "Panthers",
+          colors: "Blue & Gold",
+          sports: "Youth Sports Programs, Physical Education",
+          achievements: "SOL Excellence, Community Partnership Awards, Technology Integration Recognition",
+          programs: "STEAM Education, Music & Arts, Library Media, Physical Education",
+          specialPrograms: "Gifted Programs, Special Education, ESL Services, Extended Day Programs",
+          address: "350 Garrisonville Rd, Stafford, VA 22554",
+          phone: "(540) 658-6300"
         },
         // SCHOOLS - SPOTSYLVANIA COUNTY
         {
@@ -1025,7 +1209,18 @@
           lon: -77.5833,
           url: "https://www.spotsylvania.k12.va.us/",
           type: "school",
-          info: "6300 Harrison Rd, Fredericksburg, VA 22407 | High School | (540) 898-8700"
+          info: "6300 Harrison Rd, Fredericksburg, VA 22407 | High School | (540) 898-8700",
+          yearFounded: 2004,
+          enrollment: 1750,
+          grades: "9-12",
+          mascot: "Chargers",
+          colors: "Navy Blue & Silver",
+          sports: "Football, Basketball, Soccer, Baseball, Softball, Lacrosse, Track & Field, Cross Country, Wrestling, Tennis, Golf, Volleyball, Swimming",
+          achievements: "Academic Excellence Awards, Regional Athletic Championships, Award-Winning Band Program",
+          programs: "Advanced Placement (AP), Dual Enrollment, STEM Programs, Career & Technical Education, Arts",
+          specialPrograms: "Engineering & Technology, Computer Science, Healthcare Sciences, Business Programs",
+          address: "6300 Harrison Rd, Fredericksburg, VA 22407",
+          phone: "(540) 898-8700"
         },
         {
           id: "school_courtland_hs",
@@ -1034,7 +1229,18 @@
           lon: -77.5531,
           url: "https://www.spotsylvania.k12.va.us/",
           type: "school",
-          info: "6901 Smith Station Rd, Spotsylvania, VA 22553 | High School | (540) 898-8800"
+          info: "6901 Smith Station Rd, Spotsylvania, VA 22553 | High School | (540) 898-8800",
+          yearFounded: 2001,
+          enrollment: 1900,
+          grades: "9-12",
+          mascot: "Cougars",
+          colors: "Purple & Gold",
+          sports: "Football, Basketball, Soccer, Baseball, Softball, Lacrosse, Track & Field, Cross Country, Wrestling, Tennis, Golf, Volleyball, Cheerleading",
+          achievements: "State Championships, SOL Excellence, National Honor Society Recognition",
+          programs: "AP Courses, Dual Enrollment, STEM Academy, Career & Technical Education, Fine Arts",
+          specialPrograms: "Advanced Sciences, Engineering Programs, Medical Sciences, IT & Cybersecurity",
+          address: "6901 Smith Station Rd, Spotsylvania, VA 22553",
+          phone: "(540) 898-8800"
         },
         {
           id: "school_massaponax_hs",
@@ -1043,7 +1249,18 @@
           lon: -77.5164,
           url: "https://www.spotsylvania.k12.va.us/",
           type: "school",
-          info: "8201 Jefferson Davis Hwy, Fredericksburg, VA 22407 | High School | (540) 898-8900"
+          info: "8201 Jefferson Davis Hwy, Fredericksburg, VA 22407 | High School | (540) 898-8900",
+          yearFounded: 1978,
+          enrollment: 1550,
+          grades: "9-12",
+          mascot: "Panthers",
+          colors: "Black & Vegas Gold",
+          sports: "Football, Basketball, Baseball, Softball, Soccer, Lacrosse, Track & Field, Wrestling, Cross Country, Tennis, Golf, Volleyball",
+          achievements: "Multiple State Titles, Academic Achievement Awards, Distinguished Athletic Programs",
+          programs: "Advanced Placement (AP), Dual Enrollment, CTE Programs, JROTC, Arts Programs",
+          specialPrograms: "Military Science (JROTC), Engineering, Healthcare Sciences, Business Academy",
+          address: "8201 Jefferson Davis Hwy, Fredericksburg, VA 22407",
+          phone: "(540) 898-8900"
         },
         {
           id: "school_riverbend_hs",
@@ -1052,7 +1269,18 @@
           lon: -77.6267,
           url: "https://www.spotsylvania.k12.va.us/",
           type: "school",
-          info: "11801 Scotts Hill Rd, Fredericksburg, VA 22407 | High School | (540) 898-9000"
+          info: "11801 Scotts Hill Rd, Fredericksburg, VA 22407 | High School | (540) 898-9000",
+          yearFounded: 2008,
+          enrollment: 2050,
+          grades: "9-12",
+          mascot: "Bears",
+          colors: "Columbia Blue & Black",
+          sports: "Football, Basketball, Soccer, Baseball, Softball, Lacrosse, Track & Field, Swimming, Wrestling, Tennis, Golf, Volleyball, Cross Country",
+          achievements: "State Championships, Academic Excellence Recognition, Growing Athletic Programs",
+          programs: "Advanced Placement (AP), Dual Enrollment, STEM Focus, Career & Technical Education",
+          specialPrograms: "Engineering & Technology, Advanced Sciences, Computer Programming, Healthcare",
+          address: "11801 Scotts Hill Rd, Fredericksburg, VA 22407",
+          phone: "(540) 898-9000"
         },
         {
           id: "school_spotsylvania_hs",
@@ -1061,7 +1289,18 @@
           lon: -77.6681,
           url: "https://www.spotsylvania.k12.va.us/",
           type: "school",
-          info: "8020 Courthouse Rd, Spotsylvania, VA 22553 | High School | (540) 898-9100"
+          info: "8020 Courthouse Rd, Spotsylvania, VA 22553 | High School | (540) 898-9100",
+          yearFounded: 1968,
+          enrollment: 1450,
+          grades: "9-12",
+          mascot: "Knights",
+          colors: "Red & White",
+          sports: "Football, Basketball, Soccer, Baseball, Softball, Track & Field, Cross Country, Wrestling, Tennis, Golf, Volleyball",
+          achievements: "Longstanding Traditions, Regional Championships, Academic Achievement",
+          programs: "Advanced Placement (AP), Dual Enrollment, Career & Technical Education, Arts Programs",
+          specialPrograms: "Engineering, Computer Science, Agricultural Sciences, Business & Finance",
+          address: "8020 Courthouse Rd, Spotsylvania, VA 22553",
+          phone: "(540) 898-9100"
         },
         // SCHOOLS - CULPEPER COUNTY
         {
@@ -1071,7 +1310,18 @@
           lon: -77.9833,
           url: "https://www.culpeperschools.org/",
           type: "school",
-          info: "14240 Achievement Dr, Culpeper, VA 22701 | High School | (540) 829-6700"
+          info: "14240 Achievement Dr, Culpeper, VA 22701 | High School | (540) 829-6700",
+          yearFounded: 2013,
+          enrollment: 1800,
+          grades: "9-12",
+          mascot: "Blue Devils",
+          colors: "Blue & White",
+          sports: "Football, Basketball, Soccer, Baseball, Softball, Track & Field, Cross Country, Wrestling, Tennis, Golf, Volleyball",
+          achievements: "Modern Facility, Regional Championships, Academic Excellence Programs",
+          programs: "Advanced Placement (AP), Dual Enrollment, Career & Technical Education, STEM Programs",
+          specialPrograms: "Engineering & Technology, Healthcare Sciences, Agricultural Sciences, Business Academy",
+          address: "14240 Achievement Dr, Culpeper, VA 22701",
+          phone: "(540) 829-6700"
         },
         {
           id: "school_eastern_view_hs",
@@ -1080,7 +1330,18 @@
           lon: -77.8928,
           url: "https://www.culpeperschools.org/",
           type: "school",
-          info: "16332 Cyclone Way, Culpeper, VA 22701 | High School | (540) 829-6800"
+          info: "16332 Cyclone Way, Culpeper, VA 22701 | High School | (540) 829-6800",
+          yearFounded: 2008,
+          enrollment: 1600,
+          grades: "9-12",
+          mascot: "Cyclones",
+          colors: "Green & Gold",
+          sports: "Football, Basketball, Soccer, Baseball, Softball, Track & Field, Cross Country, Wrestling, Tennis, Volleyball, Golf",
+          achievements: "Growing Athletic Programs, Academic Recognition, State-of-the-Art Facilities",
+          programs: "AP Courses, Dual Enrollment, Career & Technical Education, Fine Arts Programs",
+          specialPrograms: "Advanced STEM, Computer Science, Healthcare Programs, Agricultural Education",
+          address: "16332 Cyclone Way, Culpeper, VA 22701",
+          phone: "(540) 829-6800"
         },
         {
           id: "school_culpeper_ms",
@@ -1089,7 +1350,18 @@
           lon: -77.9958,
           url: "https://www.culpeperschools.org/",
           type: "school",
-          info: "450 Radio Ln, Culpeper, VA 22701 | Middle School | (540) 829-6600"
+          info: "450 Radio Ln, Culpeper, VA 22701 | Middle School | (540) 829-6600",
+          yearFounded: 1998,
+          enrollment: 950,
+          grades: "6-8",
+          mascot: "Mustangs",
+          colors: "Purple & Gold",
+          sports: "Basketball, Soccer, Track, Cross Country, Volleyball, Wrestling",
+          achievements: "SOL Excellence, Positive Behavior Programs, Academic Achievement Recognition",
+          programs: "Pre-AP Courses, STEM Education, Band & Orchestra, Art Programs, World Languages",
+          specialPrograms: "Gifted & Talented, Advanced Math & Science, Technology Integration",
+          address: "450 Radio Ln, Culpeper, VA 22701",
+          phone: "(540) 829-6600"
         },
         // SCHOOLS - CAROLINE COUNTY
         {
@@ -1099,7 +1371,18 @@
           lon: -77.4103,
           url: "https://www.ccps.us/",
           type: "school",
-          info: "19191 Rogers Clark Blvd, Milford, VA 22514 | High School | (804) 633-5194"
+          info: "19191 Rogers Clark Blvd, Milford, VA 22514 | High School | (804) 633-5194",
+          yearFounded: 1959,
+          enrollment: 950,
+          grades: "9-12",
+          mascot: "Cavaliers",
+          colors: "Orange & Black",
+          sports: "Football, Basketball, Soccer, Baseball, Softball, Track & Field, Cross Country, Wrestling, Volleyball",
+          achievements: "Regional Championships, Academic Excellence, Strong Community Support",
+          programs: "Advanced Placement (AP), Dual Enrollment, Career & Technical Education, Arts Programs",
+          specialPrograms: "Agricultural Sciences, Engineering & Technology, Healthcare Sciences, Business",
+          address: "19191 Rogers Clark Blvd, Milford, VA 22514",
+          phone: "(804) 633-5194"
         },
         {
           id: "school_caroline_ms",
@@ -1108,7 +1391,18 @@
           lon: -77.4150,
           url: "https://www.ccps.us/",
           type: "school",
-          info: "19219 Rogers Clark Blvd, Milford, VA 22514 | Middle School | (804) 633-5306"
+          info: "19219 Rogers Clark Blvd, Milford, VA 22514 | Middle School | (804) 633-5306",
+          yearFounded: 1992,
+          enrollment: 650,
+          grades: "6-8",
+          mascot: "Crusaders",
+          colors: "Blue & Gold",
+          sports: "Basketball, Soccer, Track, Volleyball, Wrestling",
+          achievements: "SOL Achievement, Character Education Programs, Community Involvement",
+          programs: "STEM Education, Band & Music, Art Programs, Physical Education, Technology",
+          specialPrograms: "Advanced Academics, Special Education Services, ESL Programs",
+          address: "19219 Rogers Clark Blvd, Milford, VA 22514",
+          phone: "(804) 633-5306"
         },
         {
           id: "school_dawn_elementary",
@@ -1117,7 +1411,18 @@
           lon: -77.3417,
           url: "https://www.ccps.us/",
           type: "school",
-          info: "24121 Rogers Clark Blvd, Ruther Glen, VA 22546 | Elementary | (804) 633-5252"
+          info: "24121 Rogers Clark Blvd, Ruther Glen, VA 22546 | Elementary | (804) 633-5252",
+          yearFounded: 2001,
+          enrollment: 550,
+          grades: "K-5",
+          mascot: "Dolphins",
+          colors: "Teal & Navy",
+          sports: "Youth Sports Programs, Physical Education",
+          achievements: "SOL Excellence, Positive School Climate, Parent Engagement Awards",
+          programs: "STEAM Education, Reading Programs, Music & Art, Library Media, PE",
+          specialPrograms: "Gifted Programs, Reading Recovery, Special Education, Technology Integration",
+          address: "24121 Rogers Clark Blvd, Ruther Glen, VA 22546",
+          phone: "(804) 633-5252"
         },
         // SCHOOLS - KING GEORGE COUNTY
         {
@@ -1127,7 +1432,18 @@
           lon: -77.1847,
           url: "https://www.kgcs.k12.va.us/",
           type: "school",
-          info: "6901 Courthouse Ln, King George, VA 22485 | High School | (540) 775-3598"
+          info: "6901 Courthouse Ln, King George, VA 22485 | High School | (540) 775-3598",
+          yearFounded: 1971,
+          enrollment: 1100,
+          grades: "9-12",
+          mascot: "Foxes",
+          colors: "Orange & Black",
+          sports: "Football, Basketball, Soccer, Baseball, Softball, Track & Field, Cross Country, Wrestling, Tennis, Volleyball, Golf",
+          achievements: "Regional Athletic Success, Academic Excellence, Strong Arts Programs",
+          programs: "Advanced Placement (AP), Dual Enrollment, Career & Technical Education, Arts & Music",
+          specialPrograms: "STEM Programs, Engineering, Healthcare Sciences, Agricultural Education",
+          address: "6901 Courthouse Ln, King George, VA 22485",
+          phone: "(540) 775-3598"
         },
         {
           id: "school_king_george_ms",
@@ -1136,7 +1452,18 @@
           lon: -77.1800,
           url: "https://www.kgcs.k12.va.us/",
           type: "school",
-          info: "6798 Kings Hwy, King George, VA 22485 | Middle School | (540) 775-7846"
+          info: "6798 Kings Hwy, King George, VA 22485 | Middle School | (540) 775-7846",
+          yearFounded: 1988,
+          enrollment: 750,
+          grades: "6-8",
+          mascot: "Falcons",
+          colors: "Blue & White",
+          sports: "Basketball, Soccer, Track, Cross Country, Volleyball, Wrestling",
+          achievements: "SOL Achievement Awards, Character Education Recognition, Community Service",
+          programs: "Pre-AP Courses, STEM Education, Band & Chorus, Art Programs, Technology",
+          specialPrograms: "Advanced Academics, Gifted Programs, Special Education Services",
+          address: "6798 Kings Hwy, King George, VA 22485",
+          phone: "(540) 775-7846"
         },
         {
           id: "school_king_george_es",
@@ -1145,7 +1472,18 @@
           lon: -77.1842,
           url: "https://www.kgcs.k12.va.us/",
           type: "school",
-          info: "8941 Kings Hwy, King George, VA 22485 | Elementary | (540) 775-7934"
+          info: "8941 Kings Hwy, King George, VA 22485 | Elementary | (540) 775-7934",
+          yearFounded: 1995,
+          enrollment: 620,
+          grades: "K-5",
+          mascot: "Eagles",
+          colors: "Green & Gold",
+          sports: "Youth Sports Programs, Physical Education",
+          achievements: "SOL Excellence, Positive School Culture, Family Engagement Programs",
+          programs: "STEAM Education, Reading Programs, Music & Art, Library Media",
+          specialPrograms: "Gifted Services, Reading Intervention, Special Education, Extended Day",
+          address: "8941 Kings Hwy, King George, VA 22485",
+          phone: "(540) 775-7934"
         },
         // SCHOOLS - ORANGE COUNTY
         {
@@ -1155,7 +1493,18 @@
           lon: -78.1103,
           url: "https://www.ocss-va.org/",
           type: "school",
-          info: "200 Porters Rd, Orange, VA 22960 | High School | (540) 661-4550"
+          info: "200 Porters Rd, Orange, VA 22960 | High School | (540) 661-4550",
+          yearFounded: 1959,
+          enrollment: 1050,
+          grades: "9-12",
+          mascot: "Hornets",
+          colors: "Black & Gold",
+          sports: "Football, Basketball, Soccer, Baseball, Softball, Track & Field, Cross Country, Wrestling, Tennis, Volleyball",
+          achievements: "Regional Championships, Academic Achievement, Strong Community Traditions",
+          programs: "Advanced Placement (AP), Dual Enrollment, Career & Technical Education, Fine Arts",
+          specialPrograms: "Agricultural Sciences, Engineering & Technology, Healthcare, Business Programs",
+          address: "200 Porters Rd, Orange, VA 22960",
+          phone: "(540) 661-4550"
         },
         {
           id: "school_locust_grove_ms",
@@ -1164,7 +1513,18 @@
           lon: -77.7761,
           url: "https://www.ocss-va.org/",
           type: "school",
-          info: "3500 Germanna Hwy, Locust Grove, VA 22508 | Middle School | (540) 661-4590"
+          info: "3500 Germanna Hwy, Locust Grove, VA 22508 | Middle School | (540) 661-4590",
+          yearFounded: 2003,
+          enrollment: 700,
+          grades: "6-8",
+          mascot: "Lions",
+          colors: "Purple & Gold",
+          sports: "Basketball, Soccer, Track, Volleyball, Wrestling, Cross Country",
+          achievements: "SOL Excellence, STEM Competition Success, Character Education Programs",
+          programs: "Pre-AP Courses, STEM Education, Band & Orchestra, Art Programs, Technology Integration",
+          specialPrograms: "Gifted & Talented, Advanced Math & Science, Special Education Services",
+          address: "3500 Germanna Hwy, Locust Grove, VA 22508",
+          phone: "(540) 661-4590"
         },
         {
           id: "school_orange_es",
@@ -1173,7 +1533,18 @@
           lon: -78.1117,
           url: "https://www.ocss-va.org/",
           type: "school",
-          info: "405 Byrd St, Orange, VA 22960 | Elementary | (540) 661-4570"
+          info: "405 Byrd St, Orange, VA 22960 | Elementary | (540) 661-4570",
+          yearFounded: 1985,
+          enrollment: 450,
+          grades: "K-5",
+          mascot: "Tigers",
+          colors: "Orange & Black",
+          sports: "Youth Sports Programs, Physical Education",
+          achievements: "SOL Achievement, Positive Behavior Programs, Community Support",
+          programs: "STEAM Education, Reading Programs, Music & Art, Library Media, PE",
+          specialPrograms: "Gifted Programs, Reading Intervention, Special Education, ESL Services",
+          address: "405 Byrd St, Orange, VA 22960",
+          phone: "(540) 661-4570"
         },
         {
           id: "school_gordon_barbour_es",
@@ -1182,7 +1553,18 @@
           lon: -77.7811,
           url: "https://www.ocss-va.org/",
           type: "school",
-          info: "3529 Germanna Hwy, Locust Grove, VA 22508 | Elementary | (540) 661-4580"
+          info: "3529 Germanna Hwy, Locust Grove, VA 22508 | Elementary | (540) 661-4580",
+          yearFounded: 2005,
+          enrollment: 520,
+          grades: "K-5",
+          mascot: "Wildcats",
+          colors: "Blue & Gold",
+          sports: "Youth Sports Programs, Physical Education",
+          achievements: "SOL Excellence, Technology Integration Awards, Parent Partnership Programs",
+          programs: "STEAM Education, Reading Programs, Music & Art, Library Media, Technology",
+          specialPrograms: "Gifted Services, Reading Recovery, Special Education, Extended Day Programs",
+          address: "3529 Germanna Hwy, Locust Grove, VA 22508",
+          phone: "(540) 661-4580"
         }
       ]
     },
@@ -4420,43 +4802,149 @@ function selectItem(id) {
         category = "hospital";
         summary = cam.info || "Hospital";
         message = cam.info || "Hospital";
-        panelHtml = `
-          <div style="padding:10px;">
-            <h3 style="margin:0 0 10px 0;color:#fff;font-size:16px;">🏥 ${escapeHtml(cam.name)}</h3>
-            <p style="margin:0 0 10px 0;color:rgba(255,255,255,0.88);font-size:13px;line-height:1.5;">${escapeHtml(cam.info || "Hospital")}</p>
-            <a href="${escapeAttr(cam.url)}" target="_blank" rel="noopener noreferrer" class="linkBtn">
+
+        // Build comprehensive hospital info
+        let hospitalDetails = `<div style="padding:12px;background:rgba(20,20,20,0.95);border-radius:8px;">
+            <h3 style="margin:0 0 12px 0;color:#FFD700;font-size:18px;font-weight:bold;text-shadow:1px 1px 2px rgba(0,0,0,0.8);">🏥 ${escapeHtml(cam.name)}</h3>`;
+
+        if (cam.yearFounded) {
+          hospitalDetails += `<p style="margin:0 0 8px 0;color:#7FFF00;font-size:13px;"><strong style="color:#00E5FF;">📅 Founded:</strong> ${escapeHtml(cam.yearFounded.toString())}</p>`;
+        }
+
+        if (cam.beds) {
+          hospitalDetails += `<p style="margin:0 0 8px 0;color:#7FFF00;font-size:13px;"><strong style="color:#00E5FF;">🛏️ Beds:</strong> ${escapeHtml(cam.beds.toString())} beds</p>`;
+        }
+
+        if (cam.emergencyServices) {
+          hospitalDetails += `<p style="margin:0 0 8px 0;color:#FF6B6B;font-size:13px;font-weight:bold;"><strong style="color:#FFD700;">🚑 Emergency:</strong> ${escapeHtml(cam.emergencyServices)}</p>`;
+        }
+
+        if (cam.departments && cam.departments.length > 0) {
+          hospitalDetails += `<p style="margin:0 0 8px 0;color:#7FFF00;font-size:13px;"><strong style="color:#00E5FF;">🏨 Departments (${cam.departments.length}):</strong> ${escapeHtml(cam.departments.join(", "))}</p>`;
+        }
+
+        if (cam.specialties) {
+          hospitalDetails += `<p style="margin:0 0 8px 0;color:#7FFF00;font-size:13px;"><strong style="color:#00E5FF;">⭐ Specialties:</strong> ${escapeHtml(cam.specialties)}</p>`;
+        }
+
+        if (cam.services) {
+          hospitalDetails += `<p style="margin:0 0 8px 0;color:#7FFF00;font-size:13px;"><strong style="color:#00E5FF;">🔬 Services:</strong> ${escapeHtml(cam.services)}</p>`;
+        }
+
+        if (cam.address) {
+          hospitalDetails += `<p style="margin:0 0 8px 0;color:#FFFFFF;font-size:13px;"><strong style="color:#00E5FF;">📍 Address:</strong> ${escapeHtml(cam.address)}</p>`;
+        }
+
+        if (cam.phone) {
+          hospitalDetails += `<p style="margin:0 0 12px 0;color:#FFFFFF;font-size:13px;"><strong style="color:#00E5FF;">📞 Phone:</strong> ${escapeHtml(cam.phone)}</p>`;
+        }
+
+        hospitalDetails += `<a href="${escapeAttr(cam.url)}" target="_blank" rel="noopener noreferrer" class="linkBtn" style="background:#FFD700;color:#000;font-weight:bold;padding:8px 16px;border-radius:6px;text-decoration:none;display:inline-block;">
               Visit Website ↗
             </a>
-          </div>
-        `;
+          </div>`;
+
+        panelHtml = hospitalDetails;
       } else if (cam.type === "clinic") {
         // Clinic marker
         category = "clinic";
         summary = cam.info || "Clinic / Urgent Care";
         message = cam.info || "Clinic / Urgent Care";
-        panelHtml = `
-          <div style="padding:10px;">
-            <h3 style="margin:0 0 10px 0;color:#fff;font-size:16px;">⚕️ ${escapeHtml(cam.name)}</h3>
-            <p style="margin:0 0 10px 0;color:rgba(255,255,255,0.88);font-size:13px;line-height:1.5;">${escapeHtml(cam.info || "Clinic / Urgent Care")}</p>
-            <a href="${escapeAttr(cam.url)}" target="_blank" rel="noopener noreferrer" class="linkBtn">
+
+        // Build comprehensive clinic info
+        let clinicDetails = `<div style="padding:12px;background:rgba(20,20,20,0.95);border-radius:8px;">
+            <h3 style="margin:0 0 12px 0;color:#FFD700;font-size:18px;font-weight:bold;text-shadow:1px 1px 2px rgba(0,0,0,0.8);">⚕️ ${escapeHtml(cam.name)}</h3>`;
+
+        if (cam.yearFounded) {
+          clinicDetails += `<p style="margin:0 0 8px 0;color:#7FFF00;font-size:13px;"><strong style="color:#00E5FF;">📅 Founded:</strong> ${escapeHtml(cam.yearFounded.toString())}</p>`;
+        }
+
+        if (cam.hours) {
+          clinicDetails += `<p style="margin:0 0 8px 0;color:#7FFF00;font-size:13px;"><strong style="color:#00E5FF;">🕐 Hours:</strong> ${escapeHtml(cam.hours)}</p>`;
+        }
+
+        if (cam.services) {
+          clinicDetails += `<p style="margin:0 0 8px 0;color:#7FFF00;font-size:13px;"><strong style="color:#00E5FF;">🔬 Services:</strong> ${escapeHtml(cam.services)}</p>`;
+        }
+
+        if (cam.specialties) {
+          clinicDetails += `<p style="margin:0 0 8px 0;color:#7FFF00;font-size:13px;"><strong style="color:#00E5FF;">⭐ Specialties:</strong> ${escapeHtml(cam.specialties)}</p>`;
+        }
+
+        if (cam.address) {
+          clinicDetails += `<p style="margin:0 0 8px 0;color:#FFFFFF;font-size:13px;"><strong style="color:#00E5FF;">📍 Address:</strong> ${escapeHtml(cam.address)}</p>`;
+        }
+
+        if (cam.phone) {
+          clinicDetails += `<p style="margin:0 0 12px 0;color:#FFFFFF;font-size:13px;"><strong style="color:#00E5FF;">📞 Phone:</strong> ${escapeHtml(cam.phone)}</p>`;
+        }
+
+        clinicDetails += `<a href="${escapeAttr(cam.url)}" target="_blank" rel="noopener noreferrer" class="linkBtn" style="background:#FFD700;color:#000;font-weight:bold;padding:8px 16px;border-radius:6px;text-decoration:none;display:inline-block;">
               Visit Website ↗
             </a>
-          </div>
-        `;
+          </div>`;
+
+        panelHtml = clinicDetails;
       } else if (cam.type === "school") {
         // School marker
         category = "school";
         summary = cam.info || "School";
         message = cam.info || "School";
-        panelHtml = `
-          <div style="padding:10px;">
-            <h3 style="margin:0 0 10px 0;color:#fff;font-size:16px;">🏫 ${escapeHtml(cam.name)}</h3>
-            <p style="margin:0 0 10px 0;color:rgba(255,255,255,0.88);font-size:13px;line-height:1.5;">${escapeHtml(cam.info || "School")}</p>
-            <a href="${escapeAttr(cam.url)}" target="_blank" rel="noopener noreferrer" class="linkBtn">
+
+        // Build comprehensive school info
+        let schoolDetails = `<div style="padding:12px;background:rgba(20,20,20,0.95);border-radius:8px;">
+            <h3 style="margin:0 0 12px 0;color:#FFD700;font-size:18px;font-weight:bold;text-shadow:1px 1px 2px rgba(0,0,0,0.8);">🏫 ${escapeHtml(cam.name)}</h3>`;
+
+        if (cam.yearFounded) {
+          schoolDetails += `<p style="margin:0 0 8px 0;color:#7FFF00;font-size:13px;"><strong style="color:#00E5FF;">📅 Founded:</strong> ${escapeHtml(cam.yearFounded.toString())}</p>`;
+        }
+
+        if (cam.grades) {
+          schoolDetails += `<p style="margin:0 0 8px 0;color:#7FFF00;font-size:13px;"><strong style="color:#00E5FF;">📚 Grades:</strong> ${escapeHtml(cam.grades)}</p>`;
+        }
+
+        if (cam.enrollment) {
+          schoolDetails += `<p style="margin:0 0 8px 0;color:#7FFF00;font-size:13px;"><strong style="color:#00E5FF;">👥 Enrollment:</strong> ${escapeHtml(cam.enrollment.toString())} students</p>`;
+        }
+
+        if (cam.mascot) {
+          schoolDetails += `<p style="margin:0 0 8px 0;color:#7FFF00;font-size:13px;"><strong style="color:#00E5FF;">🦅 Mascot:</strong> ${escapeHtml(cam.mascot)}</p>`;
+        }
+
+        if (cam.colors) {
+          schoolDetails += `<p style="margin:0 0 8px 0;color:#7FFF00;font-size:13px;"><strong style="color:#00E5FF;">🎨 Colors:</strong> ${escapeHtml(cam.colors)}</p>`;
+        }
+
+        if (cam.sports) {
+          schoolDetails += `<p style="margin:0 0 8px 0;color:#7FFF00;font-size:13px;"><strong style="color:#00E5FF;">🏆 Sports:</strong> ${escapeHtml(cam.sports)}</p>`;
+        }
+
+        if (cam.achievements) {
+          schoolDetails += `<p style="margin:0 0 8px 0;color:#FFD700;font-size:13px;font-weight:bold;"><strong style="color:#00E5FF;">🌟 Achievements:</strong> ${escapeHtml(cam.achievements)}</p>`;
+        }
+
+        if (cam.programs) {
+          schoolDetails += `<p style="margin:0 0 8px 0;color:#7FFF00;font-size:13px;"><strong style="color:#00E5FF;">📖 Programs:</strong> ${escapeHtml(cam.programs)}</p>`;
+        }
+
+        if (cam.specialPrograms) {
+          schoolDetails += `<p style="margin:0 0 8px 0;color:#7FFF00;font-size:13px;"><strong style="color:#00E5FF;">✨ Special Programs:</strong> ${escapeHtml(cam.specialPrograms)}</p>`;
+        }
+
+        if (cam.address) {
+          schoolDetails += `<p style="margin:0 0 8px 0;color:#FFFFFF;font-size:13px;"><strong style="color:#00E5FF;">📍 Address:</strong> ${escapeHtml(cam.address)}</p>`;
+        }
+
+        if (cam.phone) {
+          schoolDetails += `<p style="margin:0 0 12px 0;color:#FFFFFF;font-size:13px;"><strong style="color:#00E5FF;">📞 Phone:</strong> ${escapeHtml(cam.phone)}</p>`;
+        }
+
+        schoolDetails += `<a href="${escapeAttr(cam.url)}" target="_blank" rel="noopener noreferrer" class="linkBtn" style="background:#FFD700;color:#000;font-weight:bold;padding:8px 16px;border-radius:6px;text-decoration:none;display:inline-block;">
               Visit Website ↗
             </a>
-          </div>
-        `;
+          </div>`;
+
+        panelHtml = schoolDetails;
       } else if (cam.type === "iframe") {
         media = { type: "iframe", src: cam.url, alt: cam.name };
       } else if (cam.type === "image") {
