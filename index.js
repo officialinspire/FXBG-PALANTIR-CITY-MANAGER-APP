@@ -95,7 +95,8 @@
 
     // Debug flags
     debug: {
-      rss: true  // Enable RSS feed ingestion debug logging
+      rss: true,  // Enable RSS feed ingestion debug logging
+      chips: true // Enable chip update debug logging
     },
 
     // RSS sources (each has maxAgeHours to enforce "current only")
@@ -758,6 +759,70 @@
           url: "https://www.webcamgalore.com/webcam/USA/King-George-Virginia/14217.html",
           thumb: "https://images.webcamgalore.com/webcamimages/120x90/14217.jpg",
           type: "webcamgalore"
+        },
+        // WeatherBug cameras covering the region
+        {
+          id: "weatherbug_spotsylvania",
+          name: "Spotsylvania County, VA",
+          lat: 38.1859,
+          lon: -77.6526,
+          url: "https://www.weatherbug.com/traffic-cam/?cam=CNVAB&zip=22553",
+          thumb: "https://cam.weatherbug.com/images/cams/CNVAB_thumb.jpg",
+          type: "weatherbug"
+        },
+        {
+          id: "weatherbug_richmond",
+          name: "Richmond, VA",
+          lat: 37.5407,
+          lon: -77.4360,
+          url: "https://www.weatherbug.com/traffic-cam/?zip=23219",
+          thumb: "https://cam.weatherbug.com/images/cams/RCHMX_thumb.jpg",
+          type: "weatherbug"
+        },
+        {
+          id: "weatherbug_chantilly",
+          name: "Chantilly, VA",
+          lat: 38.8941,
+          lon: -77.4311,
+          url: "https://www.weatherbug.com/traffic-cam/?zip=20151",
+          thumb: "https://cam.weatherbug.com/images/cams/KCANT_thumb.jpg",
+          type: "weatherbug"
+        },
+        {
+          id: "weatherbug_ashburn",
+          name: "Ashburn, VA",
+          lat: 39.0437,
+          lon: -77.4875,
+          url: "https://www.weatherbug.com/traffic-cam/?zip=20147",
+          thumb: "https://cam.weatherbug.com/images/cams/KASHA_thumb.jpg",
+          type: "weatherbug"
+        },
+        {
+          id: "weatherbug_dc",
+          name: "Washington, DC",
+          lat: 38.9072,
+          lon: -77.0369,
+          url: "https://www.weatherbug.com/traffic-cam/?zip=20001",
+          thumb: "https://cam.weatherbug.com/images/cams/KWADC_thumb.jpg",
+          type: "weatherbug"
+        },
+        {
+          id: "weatherbug_mclean",
+          name: "McLean, VA",
+          lat: 38.9338,
+          lon: -77.1772,
+          url: "https://www.weatherbug.com/traffic-cam/?zip=22101",
+          thumb: "https://cam.weatherbug.com/images/cams/KMCLX_thumb.jpg",
+          type: "weatherbug"
+        },
+        {
+          id: "weatherbug_national_harbor",
+          name: "National Harbor, MD",
+          lat: 38.7826,
+          lon: -77.0174,
+          url: "https://www.weatherbug.com/traffic-cam/?zip=20745",
+          thumb: "https://cam.weatherbug.com/images/cams/KNHMD_thumb.jpg",
+          type: "weatherbug"
         }
       ]
     },
@@ -1145,10 +1210,20 @@
       return "📷"; // keep traffic camera emoji
     }
 
+    // WeatherBug cameras
+    if (String(src).includes("weatherbug") || url.includes("weatherbug.com")) return "🌦️";
+
     // WetMet / marina / weather cams
     if (String(src).includes("wetmet") || url.includes("wetmet.net")) return "🌦️";
     if (name.includes("marina") || url.includes("marina")) return "⚓";
     if (name.includes("wharf") || url.includes("wharf")) return "🛟";
+
+    // WebcamGalore
+    if (String(src).includes("webcamgalore") || url.includes("webcamgalore.com")) return "📹";
+
+    // OxBlue / Hope Springs
+    if (String(src).includes("oxblue") || url.includes("oxblue.com")) return "🏗️";
+    if (String(src).includes("hope_springs") || name.includes("hope springs")) return "⚓";
 
     // default for other external cams
     return "🛰️";
@@ -1170,8 +1245,22 @@
 
     for (const id of idsToRename) {
       const el = mobileHeader.querySelector("#" + CSS.escape(id));
-      if (el) el.id = id + "Mobile";
+      if (el) {
+        el.id = id + "Mobile";
+        if (CONFIG.debug.chips) console.log(`[Chip Dedupe] Renamed ${id} to ${id}Mobile in mobile header`);
+      }
     }
+  }
+
+  // Helper: get chip element from active header (desktop or mobile)
+  function getChipElement(id) {
+    if (IS_MOBILE_UI) {
+      // On mobile, look for mobile-suffixed IDs first, then fallback to regular ID
+      const mobileEl = document.getElementById(id + "Mobile");
+      if (mobileEl) return mobileEl;
+    }
+    // On desktop or fallback, use regular ID (should be in desktop header)
+    return document.getElementById(id);
   }
 
   function centroidFromPolygon(poly) {
@@ -3434,7 +3523,8 @@ function selectItem(id) {
     try {
 
     if (!CONFIG.nws.enabled) {
-      $("weatherText").textContent = "Weather: Disabled";
+      const weatherTextEl = getChipElement("weatherText");
+      if (weatherTextEl) weatherTextEl.textContent = "Weather: Disabled";
       return;
     }
 
@@ -3442,7 +3532,8 @@ function selectItem(id) {
     const backoffCheck = checkSourceBackoff('nws');
     if (!backoffCheck.allowed) {
       console.log(`[NWS Backoff] Skipping (backoff: ${Math.round(backoffCheck.delayMs / 1000)}s remaining)`);
-      $("weatherText").textContent = "Weather: Waiting...";
+      const weatherTextEl = getChipElement("weatherText");
+      if (weatherTextEl) weatherTextEl.textContent = "Weather: Waiting...";
       return;
     }
 
@@ -3466,7 +3557,12 @@ function selectItem(id) {
 
     const currentText = now ? `${now.temperature}°${now.temperatureUnit} • ${now.shortForecast}` : "Weather: Unavailable";
     const threeDay = day3.length ? day3.map(p => `${p.name.replace("This ","").slice(0,10)} ${p.temperature}°${p.temperatureUnit}`).slice(0, 6).join(" · ") : "";
-    $("weatherText").textContent = threeDay ? `${currentText} — ${threeDay}` : currentText;
+    const weatherTextEl = getChipElement("weatherText");
+    if (weatherTextEl) {
+      const weatherText = threeDay ? `${currentText} — ${threeDay}` : currentText;
+      weatherTextEl.textContent = weatherText;
+      if (CONFIG.debug.chips) console.log(`[Chip Update] Weather: ${weatherText}`);
+    }
 
     // Alerts
     try {
@@ -3492,7 +3588,8 @@ function selectItem(id) {
     } catch (e) {
       if (!store._nwsErrorLogged) {
         console.warn("NWS weather fetch failed:", e.message || e);
-        $("weatherText").textContent = "Weather: Unable to connect (check network)";
+        const weatherTextEl = getChipElement("weatherText");
+        if (weatherTextEl) weatherTextEl.textContent = "Weather: Unable to connect (check network)";
         store._nwsErrorLogged = true;
       }
 
@@ -3956,24 +4053,20 @@ function selectItem(id) {
           </a>
         `;
       } else if (cam.type === "webcamgalore") {
-        // Inject WebcamGalore CSS once
-        if (!document.getElementById("webcamgaloreCSS")) {
-          const link = document.createElement("link");
-          link.id = "webcamgaloreCSS";
-          link.rel = "stylesheet";
-          link.href = "https://images.webcamgalore.com/wcglink.css";
-          document.head.appendChild(link);
+        // WebcamGalore cameras: use snapshot as media (consistent with traffic cameras)
+        if (cam.thumb) {
+          media = { type: "image", src: cam.thumb, alt: cam.name };
         }
-
-        // Render WebcamGalore card
-        const wcgId = cam.url.match(/\/(\d+)\.html/)?.[1] || "";
         panelHtml = `
-          <p>${escapeHtml(cam.name)} webcam</p>
-          <a href="${escapeAttr(cam.url)}" target="_blank" rel="noopener noreferrer" class="wcgcard">
-            <img src="${escapeAttr(cam.thumb)}" alt="${escapeAttr(cam.name)}" style="border-radius:4px;" />
-            <span>${escapeHtml(cam.name)}</span>
-          </a>
-          <p style="margin-top:8px;"><a href="${escapeAttr(cam.url)}" target="_blank" rel="noopener noreferrer" class="linkBtn">Open on WebcamGalore ↗</a></p>
+          <p style="margin-bottom:10px;color:rgba(255,255,255,0.88);font-size:13px;">${escapeHtml(cam.name)} webcam</p>
+        `;
+      } else if (cam.type === "weatherbug") {
+        // WeatherBug cameras: use thumbnail as snapshot (consistent with traffic cameras)
+        if (cam.thumb) {
+          media = { type: "image", src: cam.thumb, alt: cam.name };
+        }
+        panelHtml = `
+          <p style="margin-bottom:10px;color:rgba(255,255,255,0.88);font-size:13px;">${escapeHtml(cam.name)} WeatherBug camera</p>
         `;
       }
 
@@ -3986,6 +4079,9 @@ function selectItem(id) {
       } else if (cam.type === "webcamgalore") {
         sourceName = "WebcamGalore";
         sourceId = "webcamgalore";
+      } else if (cam.type === "weatherbug") {
+        sourceName = "WeatherBug Cameras";
+        sourceId = "weatherbug";
       } else if (cam.id.includes("oxblue")) {
         sourceName = "OxBlue";
         sourceId = "oxblue";
@@ -4745,14 +4841,17 @@ function selectItem(id) {
   // I‑95 indicator
   // -----------------------------
   function setI95Indicator(i95Incidents) {
-    const el = $("trafficText");
+    const el = getChipElement("trafficText");
     let status = "NO DATA";
     if (typeof i95Incidents === "number") {
       if (i95Incidents === 0) status = "NORMAL";
       else if (i95Incidents <= 2) status = `SLOWING (${i95Incidents})`;
       else status = `HEAVY (${i95Incidents})`;
     }
-    el.textContent = `I‑95: ${status}`;
+    if (el) {
+      el.textContent = `I‑95: ${status}`;
+      if (CONFIG.debug.chips) console.log(`[Chip Update] I-95: ${status} (${i95Incidents} incidents)`);
+    }
   }
 
   // -----------------------------
@@ -4773,11 +4872,14 @@ function selectItem(id) {
         store.air.timestamp = Date.now();
 
         // Update chip text
-        const airTextEl = $("airText");
-        if (airTextEl) airTextEl.textContent = `AQI: ${aqi}`;
+        const airTextEl = getChipElement("airText");
+        if (airTextEl) {
+          airTextEl.textContent = `AQI: ${aqi}`;
+          if (CONFIG.debug.chips) console.log(`[Chip Update] AQI: ${aqi}`);
+        }
 
         // Update dot color based on AQI ranges
-        const airDotEl = $("airDot");
+        const airDotEl = getChipElement("airDot");
         if (airDotEl) {
           let color;
           if (aqi <= 50) color = "#00e400";  // Good (green)
@@ -4793,12 +4895,12 @@ function selectItem(id) {
         console.log(`[Air Quality] AQI: ${aqi}`);
       } else {
         console.warn("[Air Quality] No valid AQI data received");
-        const airTextEl = $("airText");
+        const airTextEl = getChipElement("airText");
         if (airTextEl) airTextEl.textContent = "AQI: N/A";
       }
     } catch (err) {
       console.error("[Air Quality] Fetch failed:", err.message);
-      const airTextEl = $("airText");
+      const airTextEl = getChipElement("airText");
       if (airTextEl) airTextEl.textContent = "AQI: N/A";
     } finally {
       store.locks.air = false;
@@ -4808,10 +4910,14 @@ function selectItem(id) {
   // -----------------------------
   // Controls
   // -----------------------------
-  function setLastUpdate() { $("lastUpdate").textContent = fmtTime(new Date()); }
+  function setLastUpdate() {
+    const el = getChipElement("lastUpdate");
+    if (el) el.textContent = fmtTime(new Date());
+  }
 
   async function refreshAll() {
-    $("liveText").textContent = "Refreshing…";
+    const liveTextEl = getChipElement("liveText");
+    if (liveTextEl) liveTextEl.textContent = "Refreshing…";
 
     // Round 3: Initialize cycle budget tracking
     cycleStats.requestCount = 0;
@@ -4852,7 +4958,8 @@ function selectItem(id) {
       console.warn(`[DegradedMode] ${cycleStats.failureCount} sources failed, entering degraded mode`);
     }
 
-    $("liveText").textContent = "Live";
+    const liveTextEl = getChipElement("liveText");
+    if (liveTextEl) liveTextEl.textContent = "Live";
     setLastUpdate();
 
     // Round 3: Skip expensive operations in degraded mode
