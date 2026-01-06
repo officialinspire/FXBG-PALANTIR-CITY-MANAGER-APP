@@ -90,12 +90,29 @@ const ALLOWED_UPSTREAM_DOMAINS = [
   'data.cdc.gov',
   'cdc.gov',
 
+  // Air Quality
+  'api.waqi.info',
+  'waqi.info',
+
   // Geocoding
   'nominatim.openstreetmap.org',
 
   // External Cameras
   'wetmet.net',
   'api.wetmet.net',
+  'app.oxblue.com',
+  'oxblue.com',
+  'hsm.hopto.me',
+  'webcamgalore.com',
+  'www.webcamgalore.com',
+  'images.webcamgalore.com',
+
+  // Map Tiles
+  'cartodb-basemaps-a.global.ssl.fastly.net',
+  'cartodb-basemaps-b.global.ssl.fastly.net',
+  'cartodb-basemaps-c.global.ssl.fastly.net',
+  'cartodb-basemaps-d.global.ssl.fastly.net',
+  'global.ssl.fastly.net',
 
   // GIS / Map Services
   'maps.fredericksburgva.gov',
