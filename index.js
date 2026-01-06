@@ -1221,9 +1221,10 @@
     // WebcamGalore
     if (String(src).includes("webcamgalore") || url.includes("webcamgalore.com")) return "📹";
 
-    // OxBlue / Hope Springs
+    // OxBlue / Hope Springs - Use WeatherBug emoji for GMU Institute and Hope Springs Marina
+    if (String(src).includes("oxblue_gmu") || (String(src).includes("oxblue") && url.includes("gmuinstitute"))) return "🌦️";
+    if (String(src).includes("hope_springs") || name.toLowerCase().includes("hope springs")) return "🌦️";
     if (String(src).includes("oxblue") || url.includes("oxblue.com")) return "🏗️";
-    if (String(src).includes("hope_springs") || name.includes("hope springs")) return "⚓";
 
     // default for other external cams
     return "🛰️";
@@ -4975,7 +4976,7 @@ function selectItem(id) {
     console.log(`[Cycle] Completed: ${cycleStats.requestCount} requests, ${cycleStats.failureCount} failures, ${Math.round(cycleElapsed / 1000)}s elapsed`);
   }
 
-  $("btnRefresh").addEventListener("click", refreshAll);
+  // btnRefresh event listener will be attached in attachHeaderEventListeners()
 
   // -----------------------------
   // News Flash Dashboard
@@ -5065,21 +5066,7 @@ function selectItem(id) {
     });
   }
 
-  // News Flash panel toggle
-  $("btnNewsFlash").addEventListener("click", () => {
-    const panel = $("newsFlashPanel");
-    const isHidden = panel.classList.contains("newsFlashPanel--hidden");
-
-    if (isHidden) {
-      playClickSound('open');
-      panel.classList.remove("newsFlashPanel--hidden");
-      updateNewsFlash();
-      ensurePanelCloseVisible(panel);
-    } else {
-      playClickSound('close');
-      panel.classList.add("newsFlashPanel--hidden");
-    }
-  });
+  // News Flash panel toggle - moved to attachHeaderEventListeners()
 
   // News Flash close button
   $("newsFlashClose").addEventListener("click", () => {
@@ -5109,19 +5096,7 @@ function selectItem(id) {
   // -----------------------------
   // Radio Scanner Panel
   // -----------------------------
-  $("btnRadioScanner").addEventListener("click", () => {
-    const panel = $("radioPanel");
-    const isHidden = panel.classList.contains("radioPanel--hidden");
-
-    if (isHidden) {
-      playClickSound('open');
-      panel.classList.remove("radioPanel--hidden");
-      ensurePanelCloseVisible(panel);
-    } else {
-      playClickSound('close');
-      panel.classList.add("radioPanel--hidden");
-    }
-  });
+  // btnRadioScanner event listener moved to attachHeaderEventListeners()
 
   $("radioClose").addEventListener("click", () => {
     playClickSound('close');
@@ -5902,18 +5877,7 @@ function selectItem(id) {
     }
   });
 
-  // Wire header chips to dock tabs
-  $("chipLive").addEventListener("click", () => {
-    openDock("system");
-  });
-
-  $("chipWeather").addEventListener("click", () => {
-    openDock("overview");
-  });
-
-  $("chipTraffic").addEventListener("click", () => {
-    openDock("sources");
-  });
+  // Wire header chips to dock tabs - moved to attachHeaderEventListeners()
 
   // -----------------------------
   // Mobile Landscape Orientation Handling
@@ -6248,11 +6212,81 @@ function selectItem(id) {
     `;
   }
 
+  // Attach header event listeners (chips and buttons)
+  // Must be called AFTER initDesktopHeader() and dedupeHeaderIdsForDesktop()
+  function attachHeaderEventListeners() {
+    // Refresh button
+    const btnRefresh = $("btnRefresh");
+    if (btnRefresh) {
+      btnRefresh.addEventListener("click", refreshAll);
+    }
+
+    // News Flash button
+    const btnNewsFlash = $("btnNewsFlash");
+    if (btnNewsFlash) {
+      btnNewsFlash.addEventListener("click", () => {
+        const panel = $("newsFlashPanel");
+        const isHidden = panel.classList.contains("newsFlashPanel--hidden");
+
+        if (isHidden) {
+          playClickSound('open');
+          panel.classList.remove("newsFlashPanel--hidden");
+          updateNewsFlash();
+          ensurePanelCloseVisible(panel);
+        } else {
+          playClickSound('close');
+          panel.classList.add("newsFlashPanel--hidden");
+        }
+      });
+    }
+
+    // Radio Scanner button
+    const btnRadioScanner = $("btnRadioScanner");
+    if (btnRadioScanner) {
+      btnRadioScanner.addEventListener("click", () => {
+        const panel = $("radioPanel");
+        const isHidden = panel.classList.contains("radioPanel--hidden");
+
+        if (isHidden) {
+          playClickSound('open');
+          panel.classList.remove("radioPanel--hidden");
+          ensurePanelCloseVisible(panel);
+        } else {
+          playClickSound('close');
+          panel.classList.add("radioPanel--hidden");
+        }
+      });
+    }
+
+    // Header chips to dock tabs
+    const chipLive = $("chipLive");
+    if (chipLive) {
+      chipLive.addEventListener("click", () => {
+        openDock("system");
+      });
+    }
+
+    const chipWeather = $("chipWeather");
+    if (chipWeather) {
+      chipWeather.addEventListener("click", () => {
+        openDock("overview");
+      });
+    }
+
+    const chipTraffic = $("chipTraffic");
+    if (chipTraffic) {
+      chipTraffic.addEventListener("click", () => {
+        openDock("sources");
+      });
+    }
+  }
+
   // -----------------------------
   // Boot + timers
   // -----------------------------
   initDesktopHeader();
   dedupeHeaderIdsForDesktop();  // Fix duplicate IDs on desktop
+  attachHeaderEventListeners();  // Attach event listeners to header chips/buttons after header init
   ensureOverlayLegendControl();
   refreshAll();
   setInterval(pollRSS, CONFIG.polling.rss);
