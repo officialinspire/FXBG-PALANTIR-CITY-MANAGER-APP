@@ -4035,10 +4035,10 @@
       if (Math.abs(newTime - existingTime) > timeWindow) continue;
 
       // Check location proximity (if both have locations)
-      if (newItem.loc && existingItem.loc) {
+      if (newItem.lat && newItem.lon && existingItem.lat && existingItem.lon) {
         const distance = haversineDistance(
-          newItem.loc.lat, newItem.loc.lon,
-          existingItem.loc.lat, existingItem.loc.lon
+          newItem.lat, newItem.lon,
+          existingItem.lat, existingItem.lon
         );
         if (distance > distanceThreshold) continue;
 
@@ -4228,7 +4228,7 @@
   }
 
   function attachMarker(item) {
-    const m = L.marker([item.loc.lat, item.loc.lon], { icon: makeEmojiIcon(item.emoji, item.tone, item.sourceId) });
+    const m = L.marker([item.lat, item.lon], { icon: makeEmojiIcon(item.emoji, item.tone, item.sourceId) });
     m.on("click", () => selectItem(item.id));
     m.bindPopup(renderPopup(item), { closeButton: false });
     clusters.addLayer(m);
@@ -6454,7 +6454,8 @@ function selectItem(id) {
           summary: incident.description || `${incident.offenseType} reported at ${incident.locationRaw}`,
           timestamp: incident.incidentDateISO,
           published: incident.incidentDateISO,
-          loc: { lat: incident.latitude, lon: incident.longitude },
+          lat: incident.latitude,
+          lon: incident.longitude,
           emoji,
           tone: "warn",
           meta: incident
@@ -6859,8 +6860,8 @@ function selectItem(id) {
           // Select the item to show in the side panel
           selectItem(itemId);
           // Also zoom to the item on the map
-          if (item.loc) {
-            map.setView([item.loc.lat, item.loc.lon], 14);
+          if (item.lat && item.lon) {
+            map.setView([item.lat, item.lon], 14);
           }
         }
       });
