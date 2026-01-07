@@ -4228,7 +4228,7 @@
   }
 
   function attachMarker(item) {
-    const m = L.marker([item.lat, item.lon], { icon: makeEmojiIcon(item.emoji, item.tone, item.sourceId) });
+    const m = L.marker([item.loc.lat, item.loc.lon], { icon: makeEmojiIcon(item.emoji, item.tone, item.sourceId) });
     m.on("click", () => selectItem(item.id));
     m.bindPopup(renderPopup(item), { closeButton: false });
     clusters.addLayer(m);
