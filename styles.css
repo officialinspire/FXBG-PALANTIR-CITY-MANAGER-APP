@@ -570,7 +570,7 @@ body{
   right: 10px;
   width: 420px;
   max-height: calc(100vh - var(--topH) - var(--botH) - 40px);
-  z-index: 2500;
+  z-index: 10400; /* Above mobile header (10100) and dock (10300) */
   border: 1px solid var(--stroke);
   background: rgba(15, 23, 48, .92);
   backdrop-filter: blur(20px);
@@ -743,7 +743,7 @@ body{
   left: 10px;
   width: 580px;
   max-height: calc(100vh - var(--topH) - var(--botH) - 40px);
-  z-index: 2500;
+  z-index: 10400; /* Above mobile header (10100) and dock (10300) */
   border: 1px solid var(--stroke);
   background: rgba(15, 23, 48, .92);
   backdrop-filter: blur(20px);
@@ -1158,7 +1158,7 @@ body{
   max-height: 65vh;
   transform: translateY(120%);
   transition: transform 180ms ease;
-  z-index: 9999;
+  z-index: 10300; /* Above dock overlay (10200) and mobile header (10100) */
   border-radius: 16px;
   border: 1px solid rgba(255,255,255,0.18);
   background: rgba(10,10,14,0.92);
@@ -1241,7 +1241,7 @@ body{
 .dockOverlay {
   position: fixed;
   inset: 0;
-  z-index: 9998;
+  z-index: 10200; /* Above mobile header (10100) to prevent header from blocking interactions */
   background: rgba(0,0,0,0.35);
   opacity: 0;
   pointer-events: none;
@@ -1456,7 +1456,7 @@ html, body{
     left: calc(10px + var(--safeLeft));
     right: calc(10px + var(--safeRight));
     padding: 8px 10px;
-    z-index: 10100; /* above dockOverlay (9998) and panels (9999) to prevent blocking */
+    z-index: 10100; /* collapses when panels/dock open - panels are z-index: 10300+, overlay: 10200 */
   }
 
   .bottombar{
@@ -1779,7 +1779,7 @@ html, body{
     border-radius: 18px;
     max-width: var(--mobileHeaderMaxW);
     display: block; /* override grid layout */
-    z-index: 10100; /* above dockOverlay (9998) and panels (9999) to prevent blocking */
+    z-index: 10100; /* collapses when panels/dock open - panels are z-index: 10300+, overlay: 10200 */
   }
 
   /* TITLE block compact */
@@ -1914,7 +1914,7 @@ html, body{
   /* PANEL SAFETY: ensure close button never sits under header */
   /* Increase top padding in the panel/drawer content area */
   .panel, .drawer, .bottomSheet, .sidePanel{
-    z-index: 9999; /* above map */
+    z-index: 10500; /* above header (10100), dock (10300), and panels (10400) */
   }
   .panel .panelHeader, .drawer .panelHeader, .bottomSheet .panelHeader, .sidePanel .panelHeader, .panel__handle{
     padding-top: calc(14px + var(--safeTop));
@@ -2034,10 +2034,11 @@ html, body{
   #mobileHeader {
     transition: transform 220ms ease;
     will-change: transform;
-    z-index: 10100; /* above dockOverlay (9998) and panels (9999) to prevent blocking */
+    z-index: 10100; /* collapses when panels/dock open - panels are z-index: 10300+, overlay: 10200 */
   }
   #mobileHeader.mobileHeader--collapsed {
     transform: translateY(-110%);
+    pointer-events: none; /* ensure collapsed header doesn't block interactions */
   }
 }
 
