@@ -3303,7 +3303,7 @@
     if (overlay.minZoom && currentZoom < overlay.minZoom) {
       const msg = `[GIS] ${overlay.name} requires zoom level ${overlay.minZoom} or higher (current: ${currentZoom}). Please zoom in.`;
       console.warn(msg);
-      alert(`Cannot load ${overlay.name}:\nRequires zoom level ${overlay.minZoom}+\nCurrent zoom: ${currentZoom}\n\nPlease zoom in and try again.`);
+      // Silently skip - don't block UI with alerts
       return;
     }
 
@@ -3353,7 +3353,7 @@
         if (count > perf.maxFeaturesHard) {
           const msg = `[GIS] ${overlay.name}: ${count} features exceeds hard limit (${perf.maxFeaturesHard}). Please zoom in further.`;
           console.warn(msg);
-          alert(`Too many features to load:\n${overlay.name} has ${count} features in view\nLimit: ${perf.maxFeaturesHard}\n\nPlease zoom in further and try again.`);
+          // Silently skip - don't block UI with alerts
           store.gis.requests.delete(overlayId);
           return;
         }
@@ -3364,7 +3364,7 @@
           const msg = `[GIS] ${overlay.name}: ${count} features exceeds soft limit (${perf.maxFeaturesSoft}). Loading first ${perf.maxFeaturesSoft} features.`;
           console.warn(msg);
           loadLimit = perf.maxFeaturesSoft;
-          alert(`Large dataset warning:\n${overlay.name} has ${count} features\nLoading first ${loadLimit} features\n\nZoom in for better performance.`);
+          // Proceed silently - don't block UI with alerts
         }
 
         // Fetch features with viewport query
@@ -3553,22 +3553,35 @@
   // GIS Overlay Viewport Refresh (debounced)
   // -----------------------------
   let gisRefreshTimeout = null;
+  let gisRefreshInProgress = false;
+  let lastGisRefreshZoom = null;
 
   async function refreshEnabledOverlays() {
+    // Guard against concurrent refreshes
+    if (gisRefreshInProgress) {
+      console.log(`[GIS] Refresh already in progress, skipping`);
+      return;
+    }
+
     const enabledIds = Array.from(store.gis.enabled);
     if (enabledIds.length === 0) return;
 
-    console.log(`[GIS] Refreshing ${enabledIds.length} enabled overlays for new viewport`);
+    gisRefreshInProgress = true;
+    try {
+      console.log(`[GIS] Refreshing ${enabledIds.length} enabled overlays for new viewport`);
 
-    // Temporarily clear enabled set and layers to force refresh
-    const idsToRefresh = [...enabledIds];
-    for (const id of idsToRefresh) {
-      disableOverlay(id);
-    }
+      // Temporarily clear enabled set and layers to force refresh
+      const idsToRefresh = [...enabledIds];
+      for (const id of idsToRefresh) {
+        disableOverlay(id);
+      }
 
-    // Re-enable with new viewport
-    for (const id of idsToRefresh) {
-      await enableOverlay(id);
+      // Re-enable with new viewport
+      for (const id of idsToRefresh) {
+        await enableOverlay(id);
+      }
+    } finally {
+      gisRefreshInProgress = false;
     }
   }
 
@@ -3586,18 +3599,26 @@
 
     if (!shouldRefresh) return;
 
+    // Only refresh on significant zoom changes (not on pan/moveend)
+    const currentZoom = map.getZoom();
+    if (lastGisRefreshZoom !== null && Math.abs(currentZoom - lastGisRefreshZoom) < 1) {
+      // Zoom hasn't changed significantly, skip refresh
+      return;
+    }
+
     // Debounce the refresh
     if (gisRefreshTimeout) {
       clearTimeout(gisRefreshTimeout);
     }
 
     gisRefreshTimeout = setTimeout(() => {
+      lastGisRefreshZoom = map.getZoom();
       refreshEnabledOverlays();
     }, CONFIG.gisOverlays.perf.debounceMs);
   }
 
   // Wire up map events for viewport refresh
-  map.on('moveend', scheduleGisRefresh);
+  // NOTE: Only refresh on zoom changes, not on pan (moveend removed to prevent UI freezing)
   map.on('zoomend', scheduleGisRefresh);
 
   // -----------------------------
