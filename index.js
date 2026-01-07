@@ -1573,19 +1573,62 @@
     gisOverlays: {
       enabled: true,
       overlays: [
-        { id:"fred_routes",   name:"FRED Bus Routes", type:"arcgis", url:"https://maps.fredericksburgva.gov/arcgis/rest/services/OpenData/OpenData/MapServer/7",
+        // FXBG (Fredericksburg City)
+        { id:"fred_routes",   name:"FRED Bus Routes", group:"FXBG", type:"arcgis", url:"https://maps.fredericksburgva.gov/arcgis/rest/services/OpenData/OpenData/MapServer/7",
           style:{ color:"#00d1ff", weight:4, dashArray:"8 6", fillOpacity:0.0 } },
-        { id:"fred_trails",   name:"Trails",          type:"arcgis", url:"https://maps.fredericksburgva.gov/arcgis/rest/services/OpenData/OpenData/MapServer/9",
+        { id:"fred_trails",   name:"Trails",          group:"FXBG", type:"arcgis", url:"https://maps.fredericksburgva.gov/arcgis/rest/services/OpenData/OpenData/MapServer/9",
           style:{ color:"#7CFF6B", weight:3, dashArray:"2 8", fillOpacity:0.0 } },
-        { id:"fred_rail",     name:"Railroad",        type:"arcgis", url:"https://maps.fredericksburgva.gov/arcgis/rest/services/OpenData/OpenData/MapServer/8",
+        { id:"fred_rail",     name:"Railroad",        group:"FXBG", type:"arcgis", url:"https://maps.fredericksburgva.gov/arcgis/rest/services/OpenData/OpenData/MapServer/8",
           style:{ color:"#ffb300", weight:4, dashArray:null, fillOpacity:0.0 } },
-        { id:"fred_parks",    name:"Parks",           type:"arcgis", url:"https://maps.fredericksburgva.gov/arcgis/rest/services/OpenData/OpenData/MapServer/20",
+        { id:"fred_parks",    name:"Parks",           group:"FXBG", type:"arcgis", url:"https://maps.fredericksburgva.gov/arcgis/rest/services/OpenData/OpenData/MapServer/20",
           style:{ color:"#00ff9d", weight:2, dashArray:null, fillOpacity:0.08 } },
-        { id:"fred_wards",    name:"Council Wards",   type:"arcgis", url:"https://maps.fredericksburgva.gov/arcgis/rest/services/OpenData/OpenData/MapServer/21",
+        { id:"fred_wards",    name:"Council Wards",   group:"FXBG", type:"arcgis", url:"https://maps.fredericksburgva.gov/arcgis/rest/services/OpenData/OpenData/MapServer/21",
           style:{ color:"#a78bfa", weight:3, dashArray:"10 8", fillOpacity:0.06 } },
-        { id:"fred_zoning",   name:"Zoning",          type:"arcgis", url:"https://maps.fredericksburgva.gov/arcgis/rest/services/OpenData/OpenData/MapServer/22",
+        { id:"fred_zoning",   name:"Zoning",          group:"FXBG", type:"arcgis", url:"https://maps.fredericksburgva.gov/arcgis/rest/services/OpenData/OpenData/MapServer/22",
           style:{ color:"#ff4d6d", weight:2, dashArray:null, fillOpacity:0.05 } },
-        { id:"vdot_districts",name:"VDOT Districts",  type:"arcgis", url:"https://services.arcgis.com/p5v98VHDX9Atv3l7/arcgis/rest/services/VDOTAdministrativeBoundaries/FeatureServer/2",
+
+        // STAFFORD County
+        { id:"staff_parcels", name:"Parcels", group:"STAFFORD", type:"arcgis",
+          url:"https://services1.arcgis.com/qKiA6JuCrE2l72iL/ArcGIS/rest/services/Parcels/FeatureServer/0",
+          style:{ color:"#60a5fa", weight:1, dashArray:null, fillOpacity:0.03 } },
+        { id:"staff_zoning", name:"Zoning", group:"STAFFORD", type:"arcgis",
+          url:"https://services1.arcgis.com/qKiA6JuCrE2l72iL/ArcGIS/rest/services/Zoning/FeatureServer/0",
+          style:{ color:"#2563eb", weight:1, dashArray:null, fillOpacity:0.03 } },
+
+        // SPOTSYLVANIA County
+        { id:"spotsy_parcels", name:"Parcels", group:"SPOTSYLVANIA", type:"arcgis",
+          url:"https://gis.spotsylvania.va.us/arcgis/rest/services/Subdivisions/Subdivisions/FeatureServer/6",
+          style:{ color:"#f59e0b", weight:1, dashArray:null, fillOpacity:0.03 } },
+        { id:"spotsy_zoning", name:"Zoning", group:"SPOTSYLVANIA", type:"arcgis",
+          url:"https://gis.spotsylvania.va.us/arcgis/rest/services/GeoHub/GeoHub/FeatureServer/39",
+          style:{ color:"#ea580c", weight:1, dashArray:null, fillOpacity:0.03 } },
+
+        // KING GEORGE County
+        { id:"kg_parcels", name:"Parcels", group:"KING GEORGE", type:"arcgis",
+          url:"https://services2.arcgis.com/S8zMJrpz61FbvL5t/arcgis/rest/services/Parcels/FeatureServer/0",
+          style:{ color:"#34d399", weight:1, dashArray:null, fillOpacity:0.03 } },
+        { id:"kg_zoning", name:"Zoning", group:"KING GEORGE", type:"arcgis",
+          url:"https://services2.arcgis.com/S8zMJrpz61FbvL5t/arcgis/rest/services/Zoning/FeatureServer/0",
+          style:{ color:"#10b981", weight:1, dashArray:null, fillOpacity:0.03 } },
+
+        // CAROLINE County
+        { id:"caroline_parcels", name:"Parcels", group:"CAROLINE", type:"arcgis",
+          url:"https://parcelviewer.geodecisions.com/arcgis/rest/services/Caroline_CivQuest/caroline/MapServer/0",
+          style:{ color:"#a78bfa", weight:1, dashArray:null, fillOpacity:0.03 } },
+        { id:"caroline_zoning", name:"Zoning", group:"CAROLINE", type:"arcgis",
+          url:"https://parcelviewer.geodecisions.com/arcgis/rest/services/Caroline_CivQuest/caroline/MapServer/45",
+          style:{ color:"#8b5cf6", weight:1, dashArray:null, fillOpacity:0.03 } },
+
+        // CULPEPER County
+        { id:"culpeper_parcels", name:"Parcels", group:"CULPEPER", type:"arcgis",
+          url:"https://www.webgis.net/arcgis/rest/services/VA/CulpeperWebGIS_Pro/MapServer/202",
+          style:{ color:"#fb7185", weight:1, dashArray:null, fillOpacity:0.03 } },
+        { id:"culpeper_zoning", name:"Zoning", group:"CULPEPER", type:"arcgis",
+          url:"https://www.webgis.net/arcgis/rest/services/VA/CulpeperWebGIS_Pro/MapServer/215",
+          style:{ color:"#e11d48", weight:1, dashArray:null, fillOpacity:0.03 } },
+
+        // Regional (VDOT)
+        { id:"vdot_districts",name:"VDOT Districts",  group:"REGIONAL", type:"arcgis", url:"https://services.arcgis.com/p5v98VHDX9Atv3l7/arcgis/rest/services/VDOTAdministrativeBoundaries/FeatureServer/2",
           style:{ color:"#38bdf8", weight:2, dashArray:"6 6", fillOpacity:0.03 } }
       ]
     }
@@ -3044,6 +3087,12 @@
     const overlay = CONFIG.gisOverlays.overlays.find(o => o.id === overlayId);
     if (!overlay) return;
 
+    // Safeguard: check if URL is valid
+    if (!overlay.url || overlay.url.startsWith("TODO_")) {
+      console.warn(`[GIS] Overlay ${overlayId} has invalid or placeholder URL, skipping.`);
+      return;
+    }
+
     try {
       // Check cache first
       const cached = store.gis.cache.get(overlayId);
@@ -3209,6 +3258,27 @@
   const isMobileUI = () =>
     window.matchMedia?.("(max-width: 980px)")?.matches &&
     window.matchMedia?.("(orientation: landscape)")?.matches;
+
+  // Mobile header collapse helper (for NewsFlash/Radio panels)
+  function setMobileHeaderCollapsed(collapsed) {
+    if (!IS_MOBILE_UI) return;
+    const el = document.getElementById("mobileHeader");
+    if (!el) return;
+    el.classList.toggle("mobileHeader--collapsed", !!collapsed);
+  }
+
+  // Helper to restore header if no blocking panels are open
+  function restoreHeaderIfNoBlockingPanels() {
+    const newsPanel = $("newsFlashPanel");
+    const radioPanel = $("radioPanel");
+    const newsHidden = newsPanel?.classList.contains("newsFlashPanel--hidden") ?? true;
+    const radioHidden = radioPanel?.classList.contains("radioPanel--hidden") ?? true;
+
+    // If both panels are hidden, restore the header
+    if (newsHidden && radioHidden) {
+      setMobileHeaderCollapsed(false);
+    }
+  }
 
   // Ensure panel close button is always visible and tappable
   function ensurePanelCloseVisible(panelEl) {
@@ -5985,6 +6055,7 @@ function selectItem(id) {
   $("newsFlashClose").addEventListener("click", () => {
     playClickSound('close');
     $("newsFlashPanel").classList.add("newsFlashPanel--hidden");
+    restoreHeaderIfNoBlockingPanels(); // Restore header if no other panels are open
   });
 
   // News Flash filter buttons
@@ -6014,6 +6085,7 @@ function selectItem(id) {
   $("radioClose").addEventListener("click", () => {
     playClickSound('close');
     $("radioPanel").classList.add("radioPanel--hidden");
+    restoreHeaderIfNoBlockingPanels(); // Restore header if no other panels are open
   });
 
   // -----------------------------
@@ -6558,20 +6630,50 @@ function selectItem(id) {
       });
     }
 
-    // GIS Overlays
+    // GIS Overlays (grouped by municipality)
     if (CONFIG.gisOverlays.enabled) {
       html += `<div class="dockSectionTitle">Map Overlays</div>`;
-      html += `<div class="dockCard">`;
+
+      // Group overlays by municipality
+      const groups = {};
       CONFIG.gisOverlays.overlays.forEach(overlay => {
-        const isEnabled = store.gis.enabled.has(overlay.id);
-        html += `<div class="dockRow" style="padding: 8px 0;">`;
-        html += `<label style="display:flex;align-items:center;gap:8px;cursor:pointer;width:100%;">`;
-        html += `<input type="checkbox" data-overlay-id="${escapeAttr(overlay.id)}" ${isEnabled ? 'checked' : ''} style="cursor:pointer;">`;
-        html += `<span style="flex:1;">${escapeHtml(overlay.name)}</span>`;
-        html += `</label>`;
-        html += `</div>`;
+        const group = overlay.group || "OTHER";
+        if (!groups[group]) groups[group] = [];
+        groups[group].push(overlay);
       });
-      html += `</div>`;
+
+      // Get collapsed state from localStorage
+      let collapsedGroups = {};
+      try {
+        const stored = localStorage.getItem("fxbg_overlay_groups_collapsed");
+        if (stored) collapsedGroups = JSON.parse(stored);
+      } catch(e) {}
+
+      // Render each group as an accordion
+      Object.keys(groups).forEach(groupName => {
+        const overlays = groups[groupName];
+        const isCollapsed = collapsedGroups[groupName] === true;
+
+        html += `<div class="overlayGroup ${isCollapsed ? 'collapsed' : ''}" data-group="${escapeAttr(groupName)}">`;
+        html += `<div class="overlayGroup__toggle" data-group="${escapeAttr(groupName)}">`;
+        html += `<span class="overlayGroup__toggleTitle">${escapeHtml(groupName)} (${overlays.length})</span>`;
+        html += `<span class="overlayGroup__toggleIcon">▼</span>`;
+        html += `</div>`;
+        html += `<div class="overlayGroup__body">`;
+
+        overlays.forEach(overlay => {
+          const isEnabled = store.gis.enabled.has(overlay.id);
+          html += `<div class="dockRow">`;
+          html += `<label>`;
+          html += `<input type="checkbox" data-overlay-id="${escapeAttr(overlay.id)}" ${isEnabled ? 'checked' : ''}>`;
+          html += `<span>${escapeHtml(overlay.name)}</span>`;
+          html += `</label>`;
+          html += `</div>`;
+        });
+
+        html += `</div>`; // overlayGroup__body
+        html += `</div>`; // overlayGroup
+      });
     }
 
     return html;
@@ -6670,6 +6772,29 @@ function selectItem(id) {
             await enableOverlay(overlayId);
           } else {
             disableOverlay(overlayId);
+          }
+        });
+      });
+
+      // Bind accordion toggle handlers
+      dockPanelBody.querySelectorAll('.overlayGroup__toggle').forEach(toggle => {
+        toggle.addEventListener("click", (e) => {
+          const groupName = toggle.dataset.group;
+          const groupEl = toggle.closest('.overlayGroup');
+
+          // Toggle collapsed class
+          groupEl.classList.toggle('collapsed');
+
+          // Save collapsed state to localStorage
+          try {
+            let collapsedGroups = {};
+            const stored = localStorage.getItem("fxbg_overlay_groups_collapsed");
+            if (stored) collapsedGroups = JSON.parse(stored);
+
+            collapsedGroups[groupName] = groupEl.classList.contains('collapsed');
+            localStorage.setItem("fxbg_overlay_groups_collapsed", JSON.stringify(collapsedGroups));
+          } catch(e) {
+            console.warn("Failed to save accordion state:", e);
           }
         });
       });
@@ -7146,9 +7271,11 @@ function selectItem(id) {
           panel.classList.remove("newsFlashPanel--hidden");
           updateNewsFlash();
           ensurePanelCloseVisible(panel);
+          setMobileHeaderCollapsed(true); // Collapse mobile header when opening
         } else {
           playClickSound('close');
           panel.classList.add("newsFlashPanel--hidden");
+          restoreHeaderIfNoBlockingPanels(); // Restore header if no other panels are open
         }
       });
     }
@@ -7164,9 +7291,11 @@ function selectItem(id) {
           playClickSound('open');
           panel.classList.remove("radioPanel--hidden");
           ensurePanelCloseVisible(panel);
+          setMobileHeaderCollapsed(true); // Collapse mobile header when opening
         } else {
           playClickSound('close');
           panel.classList.add("radioPanel--hidden");
+          restoreHeaderIfNoBlockingPanels(); // Restore header if no other panels are open
         }
       });
     }
