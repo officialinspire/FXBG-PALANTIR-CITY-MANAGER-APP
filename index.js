@@ -7757,6 +7757,7 @@ function selectItem(id) {
   // UI Sync Helper (handles resize/orientation changes)
   // -----------------------------
   let __uiSyncTimer = null;
+  let __mobileListenersAttached = false;
 
   function syncUiMode() {
     const next = computeIsMobileUI();
@@ -7768,11 +7769,17 @@ function selectItem(id) {
     if (IS_MOBILE_UI) {
       // IMPORTANT: prevent duplicate IDs from desktop header interfering with mobile getElementById lookups
       if (desktopHeader) desktopHeader.innerHTML = "";
-      // If mobile panels were collapsed due to prior actions, leave as-is (existing logic manages collapse)
+      // Mobile mode: attach event listeners to mobile header elements (only once or when switching from desktop)
+      if (!__mobileListenersAttached || changed) {
+        attachHeaderEventListeners();
+        __mobileListenersAttached = true;
+      }
       return;
     }
 
     // Desktop mode: ensure IDs are deduped BEFORE building desktop header, then attach listeners
+    // (initDesktopHeader recreates HTML, clearing old listeners, so we always re-attach)
+    __mobileListenersAttached = false; // Reset flag when leaving mobile mode
     dedupeHeaderIdsForDesktop();
     initDesktopHeader();
     attachHeaderEventListeners();
