@@ -2025,6 +2025,20 @@ html, body{
 }
 
 /* ========================================
+   MOBILE HEADER COLLAPSE (for NewsFlash/Radio panels)
+   ======================================== */
+
+@media (max-width: 899px) {
+  #mobileHeader {
+    transition: transform 220ms ease;
+    will-change: transform;
+  }
+  #mobileHeader.mobileHeader--collapsed {
+    transform: translateY(-110%);
+  }
+}
+
+/* ========================================
    DESKTOP VS MOBILE UI SPLIT
    ======================================== */
 
@@ -2096,4 +2110,81 @@ html, body{
   .topbar.desktop-only .mini {
     text-align: right;
   }
+}
+
+/* ========================================
+   MAP OVERLAYS ACCORDION (grouped by municipality)
+   ======================================== */
+
+.overlayGroup {
+  margin-bottom: 8px;
+  border: 1px solid rgba(255,255,255,0.10);
+  background: rgba(255,255,255,0.04);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.overlayGroup__toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  cursor: pointer;
+  user-select: none;
+  transition: all 0.15s ease;
+  border-bottom: 1px solid rgba(255,255,255,0.08);
+}
+
+.overlayGroup__toggle:hover {
+  background: rgba(255,255,255,0.06);
+}
+
+.overlayGroup__toggleTitle {
+  font-weight: 800;
+  font-size: 12px;
+  letter-spacing: 0.3px;
+  color: rgba(255,255,255,0.92);
+}
+
+.overlayGroup__toggleIcon {
+  font-size: 14px;
+  transition: transform 0.2s ease;
+  color: rgba(255,255,255,0.7);
+}
+
+.overlayGroup.collapsed .overlayGroup__toggleIcon {
+  transform: rotate(-90deg);
+}
+
+.overlayGroup__body {
+  padding: 8px 8px 8px 20px;
+  transition: max-height 0.25s ease, opacity 0.2s ease;
+  overflow: hidden;
+}
+
+.overlayGroup.collapsed .overlayGroup__body {
+  max-height: 0 !important;
+  opacity: 0;
+  padding-top: 0;
+  padding-bottom: 0;
+}
+
+.overlayGroup__body .dockRow {
+  padding: 6px 0;
+  border-top: none;
+}
+
+.overlayGroup__body .dockRow label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  width: 100%;
+  font-size: 13px;
+}
+
+.overlayGroup__body .dockRow input[type="checkbox"] {
+  cursor: pointer;
+  width: 16px;
+  height: 16px;
 }
