@@ -1594,6 +1594,9 @@
         { id:"staff_zoning", name:"Zoning", group:"STAFFORD", type:"arcgis",
           url:"https://services1.arcgis.com/qKiA6JuCrE2l72iL/ArcGIS/rest/services/Zoning/FeatureServer/0",
           style:{ color:"#2563eb", weight:1, dashArray:null, fillOpacity:0.03 } },
+        { id:"staff_structures", name:"Structures (Buildings)", group:"STAFFORD", type:"arcgis",
+          url:"https://services1.arcgis.com/qKiA6JuCrE2l72iL/ArcGIS/rest/services/Structures/FeatureServer/0",
+          style:{ color:"#7dd3fc", weight:2, dashArray:null, fillOpacity:0.05 } },
 
         // SPOTSYLVANIA County
         { id:"spotsy_parcels", name:"Parcels", group:"SPOTSYLVANIA", type:"arcgis",
@@ -1602,6 +1605,15 @@
         { id:"spotsy_zoning", name:"Zoning", group:"SPOTSYLVANIA", type:"arcgis",
           url:"https://gis.spotsylvania.va.us/arcgis/rest/services/GeoHub/GeoHub/FeatureServer/39",
           style:{ color:"#ea580c", weight:1, dashArray:null, fillOpacity:0.03 } },
+        { id:"spotsy_roads", name:"Roads", group:"SPOTSYLVANIA", type:"arcgis",
+          url:"https://gis.spotsylvania.va.us/arcgis/rest/services/GeoHub/GeoHub/MapServer/7",
+          style:{ color:"#fbbf24", weight:2, dashArray:"4 4", fillOpacity:0.0 } },
+        { id:"spotsy_addresses", name:"Address Points", group:"SPOTSYLVANIA", type:"arcgis",
+          url:"https://gis.spotsylvania.va.us/arcgis/rest/services/GeoHub/GeoHub/FeatureServer/0",
+          style:{ color:"#fb923c", weight:1, dashArray:null, fillOpacity:0.02 } },
+        { id:"spotsy_emergency", name:"Emergency Response Facilities", group:"SPOTSYLVANIA", type:"arcgis",
+          url:"https://gis.spotsylvania.va.us/arcgis/rest/services/GeoHub/GeoHub/MapServer/3",
+          style:{ color:"#dc2626", weight:3, dashArray:null, fillOpacity:0.08 } },
 
         // KING GEORGE County
         { id:"kg_parcels", name:"Parcels", group:"KING GEORGE", type:"arcgis",
@@ -1610,6 +1622,9 @@
         { id:"kg_zoning", name:"Zoning", group:"KING GEORGE", type:"arcgis",
           url:"https://services2.arcgis.com/S8zMJrpz61FbvL5t/arcgis/rest/services/Zoning/FeatureServer/0",
           style:{ color:"#10b981", weight:1, dashArray:null, fillOpacity:0.03 } },
+        { id:"kg_water_towers", name:"Water Towers", group:"KING GEORGE", type:"arcgis",
+          url:"https://services2.arcgis.com/S8zMJrpz61FbvL5t/arcgis/rest/services/Water_Towers/FeatureServer/0",
+          style:{ color:"#06b6d4", weight:3, dashArray:null, fillOpacity:0.08 } },
 
         // CAROLINE County
         { id:"caroline_parcels", name:"Parcels", group:"CAROLINE", type:"arcgis",
@@ -1618,6 +1633,18 @@
         { id:"caroline_zoning", name:"Zoning", group:"CAROLINE", type:"arcgis",
           url:"https://parcelviewer.geodecisions.com/arcgis/rest/services/Caroline_CivQuest/caroline/MapServer/45",
           style:{ color:"#8b5cf6", weight:1, dashArray:null, fillOpacity:0.03 } },
+        { id:"caroline_roads", name:"Roads", group:"CAROLINE", type:"arcgis",
+          url:"https://parcelviewer.geodecisions.com/arcgis/rest/services/Caroline/Public/MapServer/16",
+          style:{ color:"#c4b5fd", weight:2, dashArray:"4 4", fillOpacity:0.0 } },
+        { id:"caroline_addresses", name:"Addresses", group:"CAROLINE", type:"arcgis",
+          url:"https://parcelviewer.geodecisions.com/arcgis/rest/services/Caroline/Public/MapServer/23",
+          style:{ color:"#d8b4fe", weight:1, dashArray:null, fillOpacity:0.02 } },
+        { id:"caroline_fire", name:"Fire Stations", group:"CAROLINE", type:"arcgis",
+          url:"https://parcelviewer.geodecisions.com/arcgis/rest/services/Caroline/Public/MapServer/69",
+          style:{ color:"#dc2626", weight:3, dashArray:null, fillOpacity:0.08 } },
+        { id:"caroline_schools", name:"Schools", group:"CAROLINE", type:"arcgis",
+          url:"https://parcelviewer.geodecisions.com/arcgis/rest/services/Caroline/Public/MapServer/72",
+          style:{ color:"#7c3aed", weight:3, dashArray:null, fillOpacity:0.08 } },
 
         // CULPEPER County
         { id:"culpeper_parcels", name:"Parcels", group:"CULPEPER", type:"arcgis",
@@ -6038,6 +6065,7 @@ function selectItem(id) {
           // Close the news flash panel
           playClickSound('close');
           $("newsFlashPanel").classList.add("newsFlashPanel--hidden");
+          restoreHeaderIfNoBlockingPanels(); // Restore header if no other panels are open
           // Select the item to show in the side panel
           selectItem(itemId);
           // Also zoom to the item on the map
