@@ -1572,6 +1572,16 @@
     // GIS Overlays (Fredericksburg OpenData + VDOT)
     gisOverlays: {
       enabled: true,
+      // QQMS GIS Performance Config
+      perf: {
+        viewportMode: true,                                   // Only load features in current viewport
+        debounceMs: 450,                                      // Debounce map move/zoom refresh
+        maxFeaturesSoft: IS_MOBILE_UI ? 5000 : 12000,        // Soft limit (warn user)
+        maxFeaturesHard: IS_MOBILE_UI ? 9000 : 25000,        // Hard limit (refuse load)
+        cacheTtlMs: 20 * 60 * 1000,                          // Cache TTL: 20 minutes
+        maxCacheEntries: 40,                                  // Max cache entries (LRU eviction)
+        bboxRounding: 3                                       // Round bbox to 3 decimals for cache keys
+      },
       overlays: [
         // FXBG (Fredericksburg City)
         { id:"fred_routes",   name:"FRED Bus Routes", group:"FXBG", type:"arcgis", url:"https://maps.fredericksburgva.gov/arcgis/rest/services/OpenData/OpenData/MapServer/7",
@@ -1590,18 +1600,21 @@
         // STAFFORD County
         { id:"staff_parcels", name:"Parcels", group:"STAFFORD", type:"arcgis",
           url:"https://services1.arcgis.com/qKiA6JuCrE2l72iL/ArcGIS/rest/services/Parcels/FeatureServer/0",
-          style:{ color:"#60a5fa", weight:1, dashArray:null, fillOpacity:0.03 } },
+          style:{ color:"#60a5fa", weight:1, dashArray:null, fillOpacity:0.03 },
+          minZoom: 15, heavy: true },
         { id:"staff_zoning", name:"Zoning", group:"STAFFORD", type:"arcgis",
           url:"https://services1.arcgis.com/qKiA6JuCrE2l72iL/ArcGIS/rest/services/Zoning/FeatureServer/0",
           style:{ color:"#2563eb", weight:1, dashArray:null, fillOpacity:0.03 } },
         { id:"staff_structures", name:"Structures (Buildings)", group:"STAFFORD", type:"arcgis",
           url:"https://services1.arcgis.com/qKiA6JuCrE2l72iL/ArcGIS/rest/services/Structures/FeatureServer/0",
-          style:{ color:"#7dd3fc", weight:2, dashArray:null, fillOpacity:0.05 } },
+          style:{ color:"#7dd3fc", weight:2, dashArray:null, fillOpacity:0.05 },
+          minZoom: 16, heavy: true },
 
         // SPOTSYLVANIA County
         { id:"spotsy_parcels", name:"Parcels", group:"SPOTSYLVANIA", type:"arcgis",
           url:"https://gis.spotsylvania.va.us/arcgis/rest/services/Subdivisions/Subdivisions/FeatureServer/6",
-          style:{ color:"#f59e0b", weight:1, dashArray:null, fillOpacity:0.03 } },
+          style:{ color:"#f59e0b", weight:1, dashArray:null, fillOpacity:0.03 },
+          minZoom: 15, heavy: true },
         { id:"spotsy_zoning", name:"Zoning", group:"SPOTSYLVANIA", type:"arcgis",
           url:"https://gis.spotsylvania.va.us/arcgis/rest/services/GeoHub/GeoHub/FeatureServer/39",
           style:{ color:"#ea580c", weight:1, dashArray:null, fillOpacity:0.03 } },
@@ -1618,7 +1631,8 @@
         // KING GEORGE County
         { id:"kg_parcels", name:"Parcels", group:"KING GEORGE", type:"arcgis",
           url:"https://services2.arcgis.com/S8zMJrpz61FbvL5t/arcgis/rest/services/Parcels/FeatureServer/0",
-          style:{ color:"#34d399", weight:1, dashArray:null, fillOpacity:0.03 } },
+          style:{ color:"#34d399", weight:1, dashArray:null, fillOpacity:0.03 },
+          minZoom: 15, heavy: true },
         { id:"kg_zoning", name:"Zoning", group:"KING GEORGE", type:"arcgis",
           url:"https://services2.arcgis.com/S8zMJrpz61FbvL5t/arcgis/rest/services/Zoning/FeatureServer/0",
           style:{ color:"#10b981", weight:1, dashArray:null, fillOpacity:0.03 } },
@@ -2553,6 +2567,20 @@
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort("Request timeout"), timeoutMs);
 
+        // If caller provided an AbortSignal, wire it to our internal controller
+        if (opts.signal) {
+          const externalSignal = opts.signal;
+          // If external signal is already aborted, abort our controller immediately
+          if (externalSignal.aborted) {
+            controller.abort(externalSignal.reason || "External abort");
+          } else {
+            // Listen for external abort and propagate to our controller
+            externalSignal.addEventListener('abort', () => {
+              controller.abort(externalSignal.reason || "External abort");
+            }, { once: true });
+          }
+        }
+
         // Build Accept header based on expected response type. Many upstream
         // endpoints are sensitive to overly strict Accept values, so always
         // allow any type as a fallback ("*/*").
@@ -3064,23 +3092,122 @@
   map.addLayer(clusters);
 
   // -----------------------------
-  // GIS Overlays (ArcGIS layers)
+  // GIS Overlays (ArcGIS layers) - QQMS GIS Safeguards
   // -----------------------------
-  function buildArcgisGeojsonUrl(layerUrl, offset = 0) {
-    return `${layerUrl}/query?where=1%3D1&outFields=*&f=geojson&outSR=4326&resultOffset=${offset}&resultRecordCount=2000`;
+  /**
+   * QQMS GIS SAFEGUARDS:
+   * - Viewport-only loading: only fetch features visible in current map bounds
+   * - Feature count checks: query count before fetching, enforce soft/hard limits
+   * - Zoom gates: heavy layers (parcels, structures) require minimum zoom level
+   * - Chunked rendering: add features in batches to prevent UI freezing
+   * - Request cancellation: abort in-flight requests when overlays disabled
+   * - Bounded caching: cache per viewport with TTL and LRU eviction
+   */
+
+  /**
+   * Get rounded bounding box from map for cache key stability
+   */
+  function getMapBbox() {
+    const bounds = map.getBounds();
+    const decimals = CONFIG.gisOverlays.perf.bboxRounding;
+    const factor = Math.pow(10, decimals);
+    return {
+      xmin: Math.floor(bounds.getWest() * factor) / factor,
+      ymin: Math.floor(bounds.getSouth() * factor) / factor,
+      xmax: Math.ceil(bounds.getEast() * factor) / factor,
+      ymax: Math.ceil(bounds.getNorth() * factor) / factor
+    };
   }
 
-  async function fetchArcgisAllFeatures(layerUrl) {
+  /**
+   * Build ArcGIS REST API query URL with viewport and parameters
+   */
+  function buildArcgisQueryUrl(layerUrl, options = {}) {
+    const {
+      bbox = null,          // {xmin, ymin, xmax, ymax}
+      outFields = '*',      // comma-separated field list
+      returnCountOnly = false,
+      resultOffset = 0,
+      resultRecordCount = 2000
+    } = options;
+
+    const params = new URLSearchParams({
+      where: '1=1',
+      f: 'geojson',
+      outSR: '4326',
+      returnGeometry: returnCountOnly ? 'false' : 'true',
+      outFields: outFields
+    });
+
+    if (bbox) {
+      params.set('geometry', `${bbox.xmin},${bbox.ymin},${bbox.xmax},${bbox.ymax}`);
+      params.set('geometryType', 'esriGeometryEnvelope');
+      params.set('inSR', '4326');
+      params.set('spatialRel', 'esriSpatialRelIntersects');
+    }
+
+    if (returnCountOnly) {
+      params.set('returnCountOnly', 'true');
+    } else {
+      params.set('resultOffset', resultOffset.toString());
+      params.set('resultRecordCount', resultRecordCount.toString());
+    }
+
+    return `${layerUrl}/query?${params.toString()}`;
+  }
+
+  /**
+   * Fetch feature count for a layer in the given bbox
+   */
+  async function fetchArcgisCount(layerUrl, bbox, signal) {
+    const url = buildArcgisQueryUrl(layerUrl, { bbox, returnCountOnly: true });
+    try {
+      const result = await fetchWithProxies(url, {
+        expect: 'json',
+        signal,
+        headers: {
+          'Accept': 'application/geo+json,application/json,*/*',
+          'Referer': layerUrl.includes('fredericksburgva.gov')
+            ? 'https://maps.fredericksburgva.gov/'
+            : 'https://www.virginiaroads.org/'
+        },
+        timeoutMs: 15000
+      });
+      return result?.count ?? result?.properties?.count ?? 0;
+    } catch (e) {
+      if (e.name === 'AbortError') throw e;
+      console.warn(`[GIS] Count query failed for ${layerUrl}:`, e);
+      return 0;
+    }
+  }
+
+  /**
+   * Fetch features from a layer within the viewport, with pagination
+   * Stops when maxFeatures is reached
+   */
+  async function fetchArcgisViewportGeojson(layerUrl, bbox, outFields, maxFeatures, signal) {
     const allFeatures = [];
     let offset = 0;
-    const maxIterations = 50; // Safety limit to prevent infinite loops
-    let iteration = 0;
+    const pageSize = 2000;
+    const maxIterations = Math.ceil(maxFeatures / pageSize);
 
-    while (iteration < maxIterations) {
-      const url = buildArcgisGeojsonUrl(layerUrl, offset);
+    for (let i = 0; i < maxIterations; i++) {
+      if (signal?.aborted) {
+        console.log(`[GIS] Request aborted for ${layerUrl}`);
+        break;
+      }
+
+      const url = buildArcgisQueryUrl(layerUrl, {
+        bbox,
+        outFields,
+        resultOffset: offset,
+        resultRecordCount: pageSize
+      });
+
       try {
         const geojson = await fetchWithProxies(url, {
           expect: 'json',
+          signal,
           headers: {
             'Accept': 'application/geo+json,application/json,*/*',
             'Referer': layerUrl.includes('fredericksburgva.gov')
@@ -3095,16 +3222,67 @@
 
         allFeatures.push(...features);
 
-        if (features.length < 2000) break; // Last page
-        offset += 2000;
+        // Stop if we've reached the cap
+        if (allFeatures.length >= maxFeatures) {
+          console.log(`[GIS] Reached feature cap (${maxFeatures}) for ${layerUrl}`);
+          break;
+        }
+
+        // If we got less than pageSize, we've reached the end
+        if (features.length < pageSize) break;
+
+        offset += pageSize;
       } catch (e) {
+        if (e.name === 'AbortError') {
+          console.log(`[GIS] Request aborted for ${layerUrl}`);
+          throw e;
+        }
         console.error(`[GIS] Failed to fetch ${layerUrl} at offset ${offset}:`, e);
         break;
       }
-      iteration++;
     }
 
-    return { type: 'FeatureCollection', features: allFeatures };
+    return {
+      type: 'FeatureCollection',
+      features: allFeatures.slice(0, maxFeatures) // Ensure hard cap
+    };
+  }
+
+  /**
+   * Add features to layer in chunks to prevent UI freezing
+   */
+  async function addFeaturesChunked(leafletLayer, features, overlayName) {
+    const batchSize = IS_MOBILE_UI ? 250 : 600;
+    const totalBatches = Math.ceil(features.length / batchSize);
+
+    console.log(`[GIS] Adding ${features.length} features in ${totalBatches} batches for ${overlayName}`);
+
+    for (let i = 0; i < totalBatches; i++) {
+      const start = i * batchSize;
+      const end = Math.min(start + batchSize, features.length);
+      const batch = features.slice(start, end);
+
+      const batchCollection = {
+        type: 'FeatureCollection',
+        features: batch
+      };
+
+      // Add batch to layer
+      leafletLayer.addData(batchCollection);
+
+      // Yield to browser between batches
+      if (i < totalBatches - 1) {
+        await new Promise(resolve => {
+          if (typeof requestIdleCallback !== 'undefined') {
+            requestIdleCallback(resolve, { timeout: 100 });
+          } else {
+            setTimeout(resolve, 0);
+          }
+        });
+      }
+    }
+
+    console.log(`[GIS] Finished adding all features for ${overlayName}`);
   }
 
   async function enableOverlay(overlayId) {
@@ -3120,28 +3298,108 @@
       return;
     }
 
+    // Zoom gate: enforce minimum zoom for heavy layers
+    const currentZoom = map.getZoom();
+    if (overlay.minZoom && currentZoom < overlay.minZoom) {
+      const msg = `[GIS] ${overlay.name} requires zoom level ${overlay.minZoom} or higher (current: ${currentZoom}). Please zoom in.`;
+      console.warn(msg);
+      alert(`Cannot load ${overlay.name}:\nRequires zoom level ${overlay.minZoom}+\nCurrent zoom: ${currentZoom}\n\nPlease zoom in and try again.`);
+      return;
+    }
+
+    // Abort any existing request for this overlay
+    if (store.gis.requests.has(overlayId)) {
+      const existing = store.gis.requests.get(overlayId);
+      existing.controller.abort("Refreshing overlay");
+      store.gis.requests.delete(overlayId);
+    }
+
+    const controller = new AbortController();
+    const signal = controller.signal;
+
     try {
+      // Get viewport bbox
+      const bbox = getMapBbox();
+      const bboxStr = `${bbox.xmin.toFixed(3)},${bbox.ymin.toFixed(3)},${bbox.xmax.toFixed(3)},${bbox.ymax.toFixed(3)}`;
+
+      // Build cache key: overlayId|z=zoom|b=bbox
+      const cacheKey = `${overlayId}|z=${currentZoom}|b=${bboxStr}`;
+
       // Check cache first
-      const cached = store.gis.cache.get(overlayId);
+      const cached = store.gis.cache.get(cacheKey);
       const cacheAge = cached ? Date.now() - (cached.timestamp || 0) : Infinity;
-      const cacheTtl = 24 * 60 * 60 * 1000; // 24 hours
+      const cacheTtl = CONFIG.gisOverlays.perf.cacheTtlMs;
 
       let geojson;
+      let fromCache = false;
+
       if (cached && cacheAge < cacheTtl) {
         geojson = cached.geojson;
-        console.log(`[GIS] Using cached data for ${overlay.name}`);
+        fromCache = true;
+        console.log(`[GIS] Using cached data for ${overlay.name} (age: ${Math.round(cacheAge/1000)}s)`);
       } else {
-        console.log(`[GIS] Fetching ${overlay.name}...`);
-        geojson = await fetchArcgisAllFeatures(overlay.url);
-        store.gis.cache.set(overlayId, { geojson, timestamp: Date.now() });
+        console.log(`[GIS] Fetching ${overlay.name} for viewport (zoom ${currentZoom})...`);
+
+        // Track this request for cancellation
+        store.gis.requests.set(overlayId, { controller, cacheKey });
+
+        // Query feature count first
+        const count = await fetchArcgisCount(overlay.url, bbox, signal);
+        console.log(`[GIS] ${overlay.name}: ${count} features in viewport`);
+
+        const perf = CONFIG.gisOverlays.perf;
+
+        // Hard limit: refuse if too many features
+        if (count > perf.maxFeaturesHard) {
+          const msg = `[GIS] ${overlay.name}: ${count} features exceeds hard limit (${perf.maxFeaturesHard}). Please zoom in further.`;
+          console.warn(msg);
+          alert(`Too many features to load:\n${overlay.name} has ${count} features in view\nLimit: ${perf.maxFeaturesHard}\n\nPlease zoom in further and try again.`);
+          store.gis.requests.delete(overlayId);
+          return;
+        }
+
+        // Soft limit: warn but proceed with capped load
+        let loadLimit = count;
+        if (count > perf.maxFeaturesSoft) {
+          const msg = `[GIS] ${overlay.name}: ${count} features exceeds soft limit (${perf.maxFeaturesSoft}). Loading first ${perf.maxFeaturesSoft} features.`;
+          console.warn(msg);
+          loadLimit = perf.maxFeaturesSoft;
+          alert(`Large dataset warning:\n${overlay.name} has ${count} features\nLoading first ${loadLimit} features\n\nZoom in for better performance.`);
+        }
+
+        // Fetch features with viewport query
+        geojson = await fetchArcgisViewportGeojson(
+          overlay.url,
+          bbox,
+          '*', // outFields
+          loadLimit,
+          signal
+        );
+
         console.log(`[GIS] Loaded ${geojson.features.length} features for ${overlay.name}`);
+
+        // Cache the result with TTL
+        store.gis.cache.set(cacheKey, { geojson, timestamp: Date.now() });
+
+        // Enforce cache size limit (LRU eviction)
+        if (store.gis.cache.size > perf.maxCacheEntries) {
+          const entries = Array.from(store.gis.cache.entries());
+          entries.sort((a, b) => (a[1].timestamp || 0) - (b[1].timestamp || 0));
+          const toDelete = entries.slice(0, store.gis.cache.size - perf.maxCacheEntries);
+          toDelete.forEach(([key]) => store.gis.cache.delete(key));
+          console.log(`[GIS] Evicted ${toDelete.length} old cache entries`);
+        }
+
+        // Clean up request tracking
+        store.gis.requests.delete(overlayId);
       }
 
       // Get style from overlay config
       const st = overlay?.style || { color:"#22c55e", weight:2, dashArray:null, fillOpacity:0.05 };
 
-      // Create Leaflet layer
-      const leafletLayer = L.geoJSON(geojson, {
+      // Create empty Leaflet layer with Canvas renderer for better performance
+      const leafletLayer = L.geoJSON(null, {
+        renderer: L.canvas({ padding: 0.5 }),
         style: (feature) => {
           const geomType = feature.geometry?.type;
           if (geomType === 'Polygon' || geomType === 'MultiPolygon') {
@@ -3190,21 +3448,43 @@
         }
       });
 
+      // Add to map immediately so UI feels responsive
       leafletLayer.addTo(map);
       store.gis.layers.set(overlayId, leafletLayer);
       store.gis.enabled.add(overlayId);
       updateOverlayLegendUI();
+
+      // Add features in chunks to prevent UI freezing
+      if (geojson.features.length > 0) {
+        await addFeaturesChunked(leafletLayer, geojson.features, overlay.name);
+      }
+
     } catch (e) {
-      console.error(`[GIS] Failed to enable overlay ${overlayId}:`, e);
+      if (e.name === 'AbortError') {
+        console.log(`[GIS] Overlay ${overlayId} request was aborted`);
+      } else {
+        console.error(`[GIS] Failed to enable overlay ${overlayId}:`, e);
+      }
+      store.gis.requests.delete(overlayId);
     }
   }
 
   function disableOverlay(overlayId) {
+    // Cancel any in-flight request
+    if (store.gis.requests.has(overlayId)) {
+      const req = store.gis.requests.get(overlayId);
+      req.controller.abort("Overlay disabled");
+      store.gis.requests.delete(overlayId);
+      console.log(`[GIS] Aborted in-flight request for ${overlayId}`);
+    }
+
+    // Remove layer from map
     const layer = store.gis.layers.get(overlayId);
     if (layer) {
       map.removeLayer(layer);
       store.gis.layers.delete(overlayId);
     }
+
     store.gis.enabled.delete(overlayId);
     updateOverlayLegendUI();
   }
@@ -3268,6 +3548,57 @@
       console.warn("Legend update failed:", e);
     }
   }
+
+  // -----------------------------
+  // GIS Overlay Viewport Refresh (debounced)
+  // -----------------------------
+  let gisRefreshTimeout = null;
+
+  async function refreshEnabledOverlays() {
+    const enabledIds = Array.from(store.gis.enabled);
+    if (enabledIds.length === 0) return;
+
+    console.log(`[GIS] Refreshing ${enabledIds.length} enabled overlays for new viewport`);
+
+    // Temporarily clear enabled set and layers to force refresh
+    const idsToRefresh = [...enabledIds];
+    for (const id of idsToRefresh) {
+      disableOverlay(id);
+    }
+
+    // Re-enable with new viewport
+    for (const id of idsToRefresh) {
+      await enableOverlay(id);
+    }
+  }
+
+  function scheduleGisRefresh() {
+    if (!CONFIG.gisOverlays.enabled) return;
+
+    const enabledIds = Array.from(store.gis.enabled);
+    if (enabledIds.length === 0) return;
+
+    // Check if any enabled overlay is heavy or if viewportMode is on
+    const shouldRefresh = enabledIds.some(id => {
+      const overlay = CONFIG.gisOverlays.overlays.find(o => o.id === id);
+      return overlay?.heavy || CONFIG.gisOverlays.perf.viewportMode;
+    });
+
+    if (!shouldRefresh) return;
+
+    // Debounce the refresh
+    if (gisRefreshTimeout) {
+      clearTimeout(gisRefreshTimeout);
+    }
+
+    gisRefreshTimeout = setTimeout(() => {
+      refreshEnabledOverlays();
+    }, CONFIG.gisOverlays.perf.debounceMs);
+  }
+
+  // Wire up map events for viewport refresh
+  map.on('moveend', scheduleGisRefresh);
+  map.on('zoomend', scheduleGisRefresh);
 
   // -----------------------------
   // Panel UI
@@ -3545,7 +3876,12 @@
     locks: { rss:false, nws:false, arcgis:false, virginiaCrashData:false, va511:false, openUV:false, cdc:false, air:false },
     lastByCategory: new Map(),
     lastFetch: { externalCameras: 0 },
-    gis: { enabled: new Set(), layers: new Map(), cache: new Map() },
+    gis: {
+      enabled: new Set(),
+      layers: new Map(),
+      cache: new Map(),
+      requests: new Map()  // Track in-flight requests for cancellation: overlayId -> { controller, cacheKey }
+    },
     air: { aqi: null, timestamp: null }  // Air quality data cache
   };
 
