@@ -40,6 +40,108 @@ http://localhost:8000
 ### OPTIONS (CORS Preflight)
 - Responds with `204 No Content` and appropriate CORS headers
 
+### Crime Reports API (FXBG PD)
+- **GET /api/fxbg/crime-reports/incidents?months=6** — Retrieve crime incidents
+  - Returns JSON with crime reports for the specified time period
+  - Cached in `./data/fxbg-crime-reports/incidents.json`
+  - Generates sample data if no real data exists (for testing)
+
+- **GET /api/fxbg/crime-reports/refresh?months=6** — Trigger refresh of crime reports
+  - Initiates PDF scraping or API fetch (placeholder implementation)
+  - Real implementation would scrape FXBG PD crime report PDFs
+
+---
+
+## Crime Reports Feature
+
+### Overview
+The Crime Reports feature displays FXBG PD crime incidents as a **marker overlay** (NOT part of ArcGIS GIS overlays). It operates independently with its own toggle control in both desktop and mobile headers.
+
+### User Interaction
+
+**CRIME Button Controls:**
+1. **Single click/tap** → Toggle overlay ON/OFF
+2. **Right-click (desktop)** → Open Crime Reports menu panel WITHOUT toggling
+3. **Long-press (mobile, 550ms)** → Open Crime Reports menu panel WITHOUT toggling
+4. **Fallback behavior:** When toggling ON via single click, auto-open menu panel (controlled by `menuAutoOpen` setting, default: true)
+
+**Active State Indicator:**
+- When enabled, CRIME button shows subtle active state (pink glow, slightly lighter background)
+- CSS class `.active` and `aria-pressed="true"` attribute applied
+- Visual indicator without increasing header height
+
+### Crime Reports Menu Panel
+
+**Controls:**
+- **Enable Overlay** — Toggle checkbox to show/hide crime markers
+- **Time Window** — Dropdown: 7/30/90/180 days (filters which incidents appear on map)
+- **Sort By** — Toggle buttons: Newest/Oldest (affects list ordering)
+- **Auto-open menu on enable** — Checkbox to control automatic panel opening
+- **Refresh PDFs** — Button to trigger backend refresh (calls `/api/fxbg/crime-reports/refresh`)
+
+**Incidents List:**
+- Shows top 50 incidents within selected time window
+- Each item displays: emoji, offense type, date, location
+- Click item → enables overlay (if disabled), zooms to marker, closes panel
+
+### Implementation Details
+
+**State Management:**
+- State stored in `store.crime` object:
+  ```js
+  {
+    enabled: boolean,      // Overlay ON/OFF
+    windowDays: number,    // Time window filter (7/30/90/180)
+    sort: string,          // "newest" or "oldest"
+    menuAutoOpen: boolean, // Auto-open menu on enable
+    ids: Set,              // Set of crime item IDs
+    markersOnMap: Set      // Set of currently visible marker IDs
+  }
+  ```
+- Persisted to localStorage key: `"fxbg.crimeUI"`
+- Defaults: `{ enabled: true, windowDays: 30, sort: "newest", menuAutoOpen: true }`
+
+**Marker Overlay Logic:**
+- Crime incidents are stored as regular items in `store.itemsById` with category `"police_crime"`
+- Item ID format: `"crime:<incident.id>"`
+- Markers created via existing `attachMarker()` workflow
+- Visibility controlled by `applyCrimeOverlayVisibility()`:
+  - Checks `store.crime.enabled` flag
+  - Filters by `windowDays` time window
+  - Adds/removes markers from cluster layer dynamically
+
+**Emoji Mapping:**
+- Each crime type mapped to specific emoji for visual categorization
+- Mapping in `CRIME_EMOJI_MAP` constant
+- Normalization function `normalizeOffenseKey()` handles various offense descriptions
+- Default fallback: 🚓 (police car)
+
+**Data Flow:**
+1. `pollFxbgCrimeReports()` fetches incidents from `/api/fxbg/crime-reports/incidents`
+2. Each incident converted to store item with:
+   - `category: "police_crime"` (appears in News Flash)
+   - `sourceId: "fxbg-crime-reports"`
+   - Title format: `"[CRIME REPORT] <offense> — <location>"`
+   - Emoji assigned via `crimeEmojiFor(incident)`
+3. Markers attached via `attachMarker(item)`
+4. `applyCrimeOverlayVisibility()` manages cluster layer membership
+
+**Polling:**
+- Interval: 5 minutes (configurable in `CONFIG.fxbgCrimeReports.polling`)
+- Integrated into `refreshAll()` via `Promise.allSettled`
+- Fetches last 6 months of data by default (configurable in `CONFIG.fxbgCrimeReports.months`)
+
+**Backend Data:**
+- Incidents stored in: `./data/fxbg-crime-reports/incidents.json`
+- Sample data auto-generated on first request (for testing without real PDF scraping)
+- Geocode cache shared with other features: `./data/geocode_cache.json`
+
+### File Changes Summary
+- `proxy-server.js` — Added `/api/fxbg/crime-reports/*` routes + sample data generator
+- `index.js` — Added Crime state, polling, overlay logic, panel functions, event listeners
+- `index.html` — Added CRIME button to headers + Crime Reports panel markup
+- `styles.css` — Added `.crime-btn.active` styles + `.crimePanel` and related styles
+
 ---
 
 ## Quick Manual Smoke Test Checklist

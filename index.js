@@ -117,6 +117,14 @@
       chips: true // Enable chip update debug logging
     },
 
+    // FXBG PD Crime Reports configuration
+    fxbgCrimeReports: {
+      enabled: true,
+      months: 6,                        // Fetch last 6 months of reports
+      polling: 5 * 60 * 1000,           // Poll every 5 minutes
+      maxAgeHours: 720                  // 30 days for map display
+    },
+
     // RSS sources (each has maxAgeHours to enforce "current only")
     // NOTE: Many .gov RSS feeds (fredericksburgva.gov, spotsylvania.va.us) are currently
     // returning empty responses (0 bytes) or blocking automated requests with 403 Forbidden
@@ -1737,6 +1745,82 @@
     { re: /(podcast|episode|audio|interview|broadcast)/i, emoji: "🎙️", category: "events", tone: "good" },
     { re: /(event|festival|parade|concert|market)/i, emoji: "🎉", category: "events", tone: "good" }
   ];
+
+  // -----------------------------
+  // Crime Reports UI State & Persistence
+  // -----------------------------
+  const CRIME_UI_DEFAULTS = {
+    enabled: true,
+    windowDays: 30,
+    sort: "newest",
+    menuAutoOpen: true
+  };
+
+  function loadCrimeUI() {
+    try {
+      const stored = localStorage.getItem("fxbg.crimeUI");
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        return { ...CRIME_UI_DEFAULTS, ...parsed };
+      }
+    } catch (err) {
+      console.warn("[Crime UI] Failed to load from localStorage:", err);
+    }
+    return { ...CRIME_UI_DEFAULTS };
+  }
+
+  function saveCrimeUI(state) {
+    try {
+      localStorage.setItem("fxbg.crimeUI", JSON.stringify(state));
+    } catch (err) {
+      console.warn("[Crime UI] Failed to save to localStorage:", err);
+    }
+  }
+
+  // Crime emoji mapping
+  const CRIME_EMOJI_MAP = {
+    theft: "👜",
+    larceny_from_vehicle: "🧤",
+    vehicle_theft: "🚗",
+    burglary: "🚪",
+    robbery: "🦹",
+    assault: "🥊",
+    shots_fired: "🔫",
+    drugs: "💊",
+    fraud: "🧾",
+    vandalism: "🧱",
+    trespass: "🚷",
+    missing_person: "🧍",
+    weapon: "⚔️",
+    sex_offense: "🚫",
+    default: "🚓"
+  };
+
+  function normalizeOffenseKey(offenseCategoryRaw, description) {
+    const text = (offenseCategoryRaw || description || "").toLowerCase();
+
+    if (text.includes("larceny") && text.includes("vehicle")) return "larceny_from_vehicle";
+    if (text.includes("vehicle") && text.includes("theft")) return "vehicle_theft";
+    if (text.includes("burglary")) return "burglary";
+    if (text.includes("robbery")) return "robbery";
+    if (text.includes("assault")) return "assault";
+    if (text.includes("shots") || text.includes("firearm") || text.includes("gunfire")) return "shots_fired";
+    if (text.includes("drug") || text.includes("narcotic")) return "drugs";
+    if (text.includes("fraud") || text.includes("forgery")) return "fraud";
+    if (text.includes("vandal") || text.includes("damage")) return "vandalism";
+    if (text.includes("trespass")) return "trespass";
+    if (text.includes("missing")) return "missing_person";
+    if (text.includes("weapon")) return "weapon";
+    if (text.includes("sex") || text.includes("sexual")) return "sex_offense";
+    if (text.includes("theft") || text.includes("larceny")) return "theft";
+
+    return "default";
+  }
+
+  function crimeEmojiFor(incident) {
+    const key = normalizeOffenseKey(incident.offenseCategory, incident.description);
+    return CRIME_EMOJI_MAP[key] || CRIME_EMOJI_MAP.default;
+  }
 
   // -----------------------------
   // Utilities
@@ -3908,7 +3992,7 @@
     itemsById: new Map(),
     seenKeys: new Set(),
     markersById: new Map(),
-    locks: { rss:false, nws:false, arcgis:false, virginiaCrashData:false, va511:false, openUV:false, cdc:false, air:false },
+    locks: { rss:false, nws:false, arcgis:false, virginiaCrashData:false, va511:false, openUV:false, cdc:false, air:false, crime:false },
     lastByCategory: new Map(),
     lastFetch: { externalCameras: 0 },
     gis: {
@@ -3917,7 +4001,8 @@
       cache: new Map(),
       requests: new Map()  // Track in-flight requests for cancellation: overlayId -> { controller, cacheKey }
     },
-    air: { aqi: null, timestamp: null }  // Air quality data cache
+    air: { aqi: null, timestamp: null },  // Air quality data cache
+    crime: null  // Will be initialized with loadCrimeUI()
   };
 
   /**
@@ -6290,6 +6375,307 @@ function selectItem(id) {
   }
 
   // -----------------------------
+  // Crime Reports (FXBG PD)
+  // -----------------------------
+
+  /**
+   * Apply crime overlay visibility based on enabled state and time window
+   */
+  function applyCrimeOverlayVisibility() {
+    if (!store.crime) return;
+
+    const now = Date.now();
+    const cutoff = now - store.crime.windowDays * 86400000;
+
+    for (const id of store.crime.ids) {
+      const item = store.itemsById.get(id);
+      const marker = store.markersById.get(id);
+      if (!item || !marker) continue;
+
+      const ts = new Date(item.timestamp || item.published || 0).getTime();
+      const inWindow = !isNaN(ts) && ts >= cutoff;
+      const shouldShow = store.crime.enabled && inWindow;
+
+      if (shouldShow) {
+        if (!store.crime.markersOnMap.has(id)) {
+          clusters.addLayer(marker);
+          store.crime.markersOnMap.add(id);
+        }
+      } else {
+        if (store.crime.markersOnMap.has(id)) {
+          clusters.removeLayer(marker);
+          store.crime.markersOnMap.delete(id);
+        }
+      }
+    }
+  }
+
+  /**
+   * Poll FXBG PD Crime Reports API
+   */
+  async function pollFxbgCrimeReports() {
+    if (!CONFIG.fxbgCrimeReports.enabled) return;
+    if (store.locks.crime) return;
+
+    store.locks.crime = true;
+
+    try {
+      const months = CONFIG.fxbgCrimeReports.months;
+      const url = `/api/fxbg/crime-reports/incidents?months=${months}`;
+
+      const res = await fetch(url);
+      if (!res.ok) {
+        console.warn(`[Crime Reports] API returned ${res.status}`);
+        return;
+      }
+
+      const json = await res.json();
+      if (!json.ok || !json.incidents) {
+        console.warn("[Crime Reports] Invalid API response");
+        return;
+      }
+
+      const incidents = json.incidents;
+      console.log(`[Crime Reports] Loaded ${incidents.length} incidents`);
+
+      // Process incidents and create markers
+      for (const incident of incidents) {
+        if (!incident.latitude || !incident.longitude) continue;
+
+        const id = `crime:${incident.id}`;
+        const emoji = crimeEmojiFor(incident);
+
+        const item = {
+          id,
+          category: "police_crime",
+          sourceId: "fxbg-crime-reports",
+          sourceName: "FXBG PD Crime Reports",
+          title: `[CRIME REPORT] ${incident.offenseType} — ${incident.locationRaw}`,
+          summary: incident.description || `${incident.offenseType} reported at ${incident.locationRaw}`,
+          timestamp: incident.incidentDateISO,
+          published: incident.incidentDateISO,
+          loc: { lat: incident.latitude, lon: incident.longitude },
+          emoji,
+          tone: "warn",
+          meta: incident
+        };
+
+        // Upsert to store
+        store.itemsById.set(id, item);
+        store.crime.ids.add(id);
+
+        // Attach marker if not exists
+        if (!store.markersById.has(id)) {
+          attachMarker(item);
+        }
+      }
+
+      // Apply visibility based on current settings
+      applyCrimeOverlayVisibility();
+
+      console.log(`[Crime Reports] Total crime items in store: ${store.crime.ids.size}`);
+
+    } catch (err) {
+      console.error("[Crime Reports] Poll error:", err);
+    } finally {
+      store.locks.crime = false;
+    }
+  }
+
+  /**
+   * Update CRIME button active state (visual indicator)
+   */
+  function updateCrimeButtonActiveState() {
+    const btnCrime = $("btnCrime") || $("btnCrimeMobile");
+    if (!btnCrime || !store.crime) return;
+
+    if (store.crime.enabled) {
+      btnCrime.classList.add("active");
+      btnCrime.setAttribute("aria-pressed", "true");
+    } else {
+      btnCrime.classList.remove("active");
+      btnCrime.setAttribute("aria-pressed", "false");
+    }
+  }
+
+  /**
+   * Toggle Crime overlay ON/OFF
+   */
+  function toggleCrimeOverlay(fromUser = true) {
+    if (!store.crime) return;
+
+    store.crime.enabled = !store.crime.enabled;
+
+    // Save to localStorage
+    saveCrimeUI({
+      enabled: store.crime.enabled,
+      windowDays: store.crime.windowDays,
+      sort: store.crime.sort,
+      menuAutoOpen: store.crime.menuAutoOpen
+    });
+
+    // Apply visibility
+    applyCrimeOverlayVisibility();
+
+    // Update button state
+    updateCrimeButtonActiveState();
+
+    // Auto-open menu if enabled and menuAutoOpen is true
+    if (store.crime.enabled && store.crime.menuAutoOpen && fromUser) {
+      openCrimeMenuPanel();
+    }
+
+    console.log(`[Crime Overlay] ${store.crime.enabled ? "Enabled" : "Disabled"}`);
+  }
+
+  /**
+   * Open Crime Reports menu panel
+   */
+  function openCrimeMenuPanel() {
+    const panel = $("crimePanel");
+    if (!panel) {
+      console.warn("[Crime Panel] Panel element not found");
+      return;
+    }
+
+    playClickSound('open');
+    panel.classList.remove("crimePanel--hidden");
+    updateCrimeMenuPanel();
+    setMobileHeaderCollapsed(true);
+  }
+
+  /**
+   * Close Crime Reports menu panel
+   */
+  function closeCrimeMenuPanel() {
+    const panel = $("crimePanel");
+    if (!panel) return;
+
+    playClickSound('close');
+    panel.classList.add("crimePanel--hidden");
+    restoreHeaderIfNoBlockingPanels();
+  }
+
+  /**
+   * Update Crime Reports menu panel content
+   */
+  function updateCrimeMenuPanel() {
+    if (!store.crime) return;
+
+    // Update enable toggle
+    const enableToggle = $("crimeEnableToggle");
+    if (enableToggle) {
+      enableToggle.checked = store.crime.enabled;
+    }
+
+    // Update window days dropdown
+    const windowDropdown = $("crimeWindowDays");
+    if (windowDropdown) {
+      windowDropdown.value = String(store.crime.windowDays);
+    }
+
+    // Update sort toggle
+    const sortNewest = $("crimeSortNewest");
+    const sortOldest = $("crimeSortOldest");
+    if (sortNewest && sortOldest) {
+      if (store.crime.sort === "newest") {
+        sortNewest.classList.add("filterBtn--active");
+        sortOldest.classList.remove("filterBtn--active");
+      } else {
+        sortNewest.classList.remove("filterBtn--active");
+        sortOldest.classList.add("filterBtn--active");
+      }
+    }
+
+    // Update menu auto-open toggle
+    const menuAutoOpenToggle = $("crimeMenuAutoOpen");
+    if (menuAutoOpenToggle) {
+      menuAutoOpenToggle.checked = store.crime.menuAutoOpen;
+    }
+
+    // Update incidents list
+    updateCrimeIncidentsList();
+  }
+
+  /**
+   * Update Crime Reports incidents list in panel
+   */
+  function updateCrimeIncidentsList() {
+    const listEl = $("crimeIncidentsList");
+    if (!listEl || !store.crime) return;
+
+    // Get filtered incidents
+    const now = Date.now();
+    const cutoff = now - store.crime.windowDays * 86400000;
+
+    const incidents = Array.from(store.crime.ids)
+      .map(id => store.itemsById.get(id))
+      .filter(item => item && item.timestamp)
+      .filter(item => {
+        const ts = new Date(item.timestamp).getTime();
+        return !isNaN(ts) && ts >= cutoff;
+      })
+      .sort((a, b) => {
+        const aTime = new Date(a.timestamp).getTime();
+        const bTime = new Date(b.timestamp).getTime();
+        return store.crime.sort === "newest" ? bTime - aTime : aTime - bTime;
+      })
+      .slice(0, 50);
+
+    if (incidents.length === 0) {
+      listEl.innerHTML = `<div class="crime-list-empty">No crime reports in selected time window.</div>`;
+      return;
+    }
+
+    const html = incidents.map(item => {
+      const date = new Date(item.timestamp).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+      const offenseType = item.meta?.offenseType || "Crime Report";
+      const location = item.meta?.locationRaw || "Unknown location";
+
+      return `
+        <div class="crime-list-item" data-id="${escapeAttr(item.id)}">
+          <div class="crime-list-item__emoji">${escapeHtml(item.emoji)}</div>
+          <div class="crime-list-item__content">
+            <div class="crime-list-item__title">${escapeHtml(offenseType)}</div>
+            <div class="crime-list-item__meta">
+              <span>${escapeHtml(date)}</span>
+              <span>•</span>
+              <span>${escapeHtml(location)}</span>
+            </div>
+          </div>
+        </div>
+      `;
+    }).join("");
+
+    listEl.innerHTML = html;
+
+    // Attach click listeners
+    document.querySelectorAll(".crime-list-item").forEach(el => {
+      el.addEventListener("click", () => {
+        const id = el.getAttribute("data-id");
+        if (id) {
+          // Ensure overlay is enabled
+          if (!store.crime.enabled) {
+            store.crime.enabled = true;
+            saveCrimeUI({
+              enabled: store.crime.enabled,
+              windowDays: store.crime.windowDays,
+              sort: store.crime.sort,
+              menuAutoOpen: store.crime.menuAutoOpen
+            });
+            applyCrimeOverlayVisibility();
+            updateCrimeButtonActiveState();
+          }
+
+          // Select and zoom to item
+          selectItem(id);
+          closeCrimeMenuPanel();
+        }
+      });
+    });
+  }
+
+  // -----------------------------
   // Controls
   // -----------------------------
   function setLastUpdate() {
@@ -6348,7 +6734,8 @@ function selectItem(id) {
       CONFIG.openUV.enabled ? fetchOpenUV().catch(e => console.warn("OpenUV refresh partial", e)) : Promise.resolve(),
       CONFIG.cdc.enabled ? fetchCDC().catch(e => console.warn("CDC refresh partial", e)) : Promise.resolve(),
       CONFIG.air.enabled ? fetchAirQuality().catch(e => console.warn("Air quality refresh partial", e)) : Promise.resolve(),
-      CONFIG.externalCameras.enabled ? pollExternalCameras().catch(e => console.warn("External cameras refresh partial", e)) : Promise.resolve()
+      CONFIG.externalCameras.enabled ? pollExternalCameras().catch(e => console.warn("External cameras refresh partial", e)) : Promise.resolve(),
+      CONFIG.fxbgCrimeReports.enabled ? pollFxbgCrimeReports().catch(e => console.warn("Crime Reports refresh partial", e)) : Promise.resolve()
     ]);
 
     clearTimeout(fallbackTimeout); // Clear timeout since promises completed
@@ -6517,6 +6904,94 @@ function selectItem(id) {
     playClickSound('close');
     $("radioPanel").classList.add("radioPanel--hidden");
     restoreHeaderIfNoBlockingPanels(); // Restore header if no other panels are open
+  });
+
+  // -----------------------------
+  // Crime Reports Panel Event Listeners
+  // -----------------------------
+  $("crimeClose").addEventListener("click", closeCrimeMenuPanel);
+
+  // Enable toggle
+  $("crimeEnableToggle").addEventListener("change", (e) => {
+    if (!store.crime) return;
+    store.crime.enabled = e.target.checked;
+    saveCrimeUI({
+      enabled: store.crime.enabled,
+      windowDays: store.crime.windowDays,
+      sort: store.crime.sort,
+      menuAutoOpen: store.crime.menuAutoOpen
+    });
+    applyCrimeOverlayVisibility();
+    updateCrimeButtonActiveState();
+  });
+
+  // Window days dropdown
+  $("crimeWindowDays").addEventListener("change", (e) => {
+    if (!store.crime) return;
+    store.crime.windowDays = parseInt(e.target.value, 10);
+    saveCrimeUI({
+      enabled: store.crime.enabled,
+      windowDays: store.crime.windowDays,
+      sort: store.crime.sort,
+      menuAutoOpen: store.crime.menuAutoOpen
+    });
+    applyCrimeOverlayVisibility();
+    updateCrimeIncidentsList();
+  });
+
+  // Sort toggles
+  $("crimeSortNewest").addEventListener("click", () => {
+    if (!store.crime) return;
+    store.crime.sort = "newest";
+    saveCrimeUI({
+      enabled: store.crime.enabled,
+      windowDays: store.crime.windowDays,
+      sort: store.crime.sort,
+      menuAutoOpen: store.crime.menuAutoOpen
+    });
+    updateCrimeMenuPanel();
+  });
+
+  $("crimeSortOldest").addEventListener("click", () => {
+    if (!store.crime) return;
+    store.crime.sort = "oldest";
+    saveCrimeUI({
+      enabled: store.crime.enabled,
+      windowDays: store.crime.windowDays,
+      sort: store.crime.sort,
+      menuAutoOpen: store.crime.menuAutoOpen
+    });
+    updateCrimeMenuPanel();
+  });
+
+  // Menu auto-open toggle
+  $("crimeMenuAutoOpen").addEventListener("change", (e) => {
+    if (!store.crime) return;
+    store.crime.menuAutoOpen = e.target.checked;
+    saveCrimeUI({
+      enabled: store.crime.enabled,
+      windowDays: store.crime.windowDays,
+      sort: store.crime.sort,
+      menuAutoOpen: store.crime.menuAutoOpen
+    });
+  });
+
+  // Refresh button
+  $("crimeRefresh").addEventListener("click", async () => {
+    try {
+      const months = CONFIG.fxbgCrimeReports.months;
+      const res = await fetch(`/api/fxbg/crime-reports/refresh?months=${months}`);
+      if (res.ok) {
+        console.log("[Crime Reports] Refresh initiated");
+        // Wait a bit then reload incidents
+        setTimeout(() => {
+          pollFxbgCrimeReports();
+          updateCrimeMenuPanel();
+        }, 2000);
+      }
+    } catch (err) {
+      console.error("[Crime Reports] Refresh error:", err);
+    }
   });
 
   // -----------------------------
@@ -7667,6 +8142,10 @@ function selectItem(id) {
       </div>
 
       <div class="topbar__right">
+        <button class="btn crime-btn" id="btnCrime" title="FXBG PD Crime Reports" aria-pressed="false">
+          <span class="btn__icon">🚓</span>
+          <span class="btn__label">Crime</span>
+        </button>
         <button class="btn" id="btnNewsFlash" title="Regional News Flash Dashboard">
           <span class="btn__icon">📰</span>
           <span class="btn__label">News Flash</span>
@@ -7694,6 +8173,66 @@ function selectItem(id) {
     const btnRefresh = $("btnRefresh");
     if (btnRefresh) {
       btnRefresh.addEventListener("click", refreshAll);
+    }
+
+    // Crime Reports button
+    const btnCrime = $("btnCrime");
+    if (btnCrime) {
+      // Single click: toggle overlay
+      btnCrime.addEventListener("click", () => {
+        toggleCrimeOverlay(true);
+      });
+
+      // Right-click (desktop): open menu without toggling
+      btnCrime.addEventListener("contextmenu", (e) => {
+        e.preventDefault();
+        openCrimeMenuPanel();
+      });
+
+      // Long-press (mobile): open menu without toggling
+      let pressTimer = null;
+      let suppressNextClick = false;
+
+      btnCrime.addEventListener("pointerdown", (e) => {
+        pressTimer = setTimeout(() => {
+          openCrimeMenuPanel();
+          suppressNextClick = true;
+          pressTimer = null;
+        }, 550); // 550ms for long-press
+      });
+
+      btnCrime.addEventListener("pointerup", () => {
+        if (pressTimer) {
+          clearTimeout(pressTimer);
+          pressTimer = null;
+        }
+      });
+
+      btnCrime.addEventListener("pointercancel", () => {
+        if (pressTimer) {
+          clearTimeout(pressTimer);
+          pressTimer = null;
+        }
+      });
+
+      btnCrime.addEventListener("pointermove", () => {
+        if (pressTimer) {
+          clearTimeout(pressTimer);
+          pressTimer = null;
+        }
+      });
+
+      // Intercept click if suppressNextClick is true
+      const originalClickHandler = btnCrime.onclick;
+      btnCrime.onclick = (e) => {
+        if (suppressNextClick) {
+          suppressNextClick = false;
+          e.stopPropagation();
+          e.preventDefault();
+          return false;
+        }
+        if (originalClickHandler) originalClickHandler.call(btnCrime, e);
+      };
     }
 
     // News Flash button
@@ -7808,6 +8347,18 @@ function selectItem(id) {
   // -----------------------------
   // Boot + timers
   // -----------------------------
+
+  // Initialize Crime Reports state from localStorage
+  const crimeUI = loadCrimeUI();
+  store.crime = {
+    enabled: crimeUI.enabled,
+    windowDays: crimeUI.windowDays,
+    sort: crimeUI.sort,
+    menuAutoOpen: crimeUI.menuAutoOpen,
+    ids: new Set(),
+    markersOnMap: new Set()
+  };
+
   syncUiMode();
   ensureOverlayLegendControl();
 
@@ -7823,4 +8374,5 @@ function selectItem(id) {
   setInterval(fetchOpenUV, CONFIG.polling.openUV);
   setInterval(fetchCDC, CONFIG.polling.cdc);
   setInterval(fetchAirQuality, CONFIG.air.refreshMs);
+  setInterval(pollFxbgCrimeReports, CONFIG.fxbgCrimeReports.polling);
 })();

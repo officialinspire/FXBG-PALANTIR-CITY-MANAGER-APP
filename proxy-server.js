@@ -1058,6 +1058,69 @@ function serveStatic(req, res) {
 // Track server start time for uptime
 const SERVER_START_TIME = Date.now();
 
+/**
+ * Generate sample crime incidents for testing
+ * Real implementation would scrape FXBG PD crime reports PDFs
+ */
+function generateSampleIncidents(months) {
+  const offenseTypes = [
+    { type: "Larceny from Vehicle", category: "larceny_from_vehicle" },
+    { type: "Theft", category: "theft" },
+    { type: "Motor Vehicle Theft", category: "vehicle_theft" },
+    { type: "Burglary", category: "burglary" },
+    { type: "Robbery", category: "robbery" },
+    { type: "Assault", category: "assault" },
+    { type: "Shots Fired", category: "shots_fired" },
+    { type: "Drug Violation", category: "drugs" },
+    { type: "Fraud", category: "fraud" },
+    { type: "Vandalism", category: "vandalism" }
+  ];
+
+  const locations = [
+    { name: "William St", lat: 38.3032, lon: -77.4605 },
+    { name: "Lafayette Blvd", lat: 38.2995, lon: -77.4620 },
+    { name: "Carl D Silver Pkwy", lat: 38.3200, lon: -77.5100 },
+    { name: "Jefferson Davis Hwy", lat: 38.2850, lon: -77.4800 },
+    { name: "Plank Rd", lat: 38.3050, lon: -77.5150 },
+    { name: "Dixon St", lat: 38.3050, lon: -77.4650 },
+    { name: "Princess Anne St", lat: 38.3015, lon: -77.4590 },
+    { name: "Westwood Shopping Center", lat: 38.3180, lon: -77.5080 }
+  ];
+
+  const incidents = [];
+  const now = Date.now();
+
+  // Generate incidents spread over the requested months
+  const totalDays = months * 30;
+  const incidentCount = Math.min(50, months * 8); // ~8 incidents per month, max 50
+
+  for (let i = 0; i < incidentCount; i++) {
+    const daysAgo = Math.floor(Math.random() * totalDays);
+    const incidentDate = new Date(now - daysAgo * 24 * 60 * 60 * 1000);
+
+    const offense = offenseTypes[Math.floor(Math.random() * offenseTypes.length)];
+    const location = locations[Math.floor(Math.random() * locations.length)];
+
+    // Add slight randomness to location
+    const latOffset = (Math.random() - 0.5) * 0.01;
+    const lonOffset = (Math.random() - 0.5) * 0.01;
+
+    incidents.push({
+      id: `crime-${Date.now()}-${i}`,
+      offenseType: offense.type,
+      offenseCategory: offense.category,
+      locationRaw: location.name,
+      description: `${offense.type} reported at ${location.name}`,
+      incidentDateISO: incidentDate.toISOString(),
+      latitude: location.lat + latOffset,
+      longitude: location.lon + lonOffset,
+      reportedDate: incidentDate.toISOString()
+    });
+  }
+
+  return incidents.sort((a, b) => new Date(b.incidentDateISO) - new Date(a.incidentDateISO));
+}
+
 const server = http.createServer(async (req, res) => {
   try {
     if (req.method === "OPTIONS") return send(res, 204, "");
@@ -1179,6 +1242,77 @@ const server = http.createServer(async (req, res) => {
       };
 
       return send(res, 200, JSON.stringify(debugInfo, null, 2), { "Content-Type": "application/json" });
+    }
+
+    // Crime Reports API endpoints
+    if (urlObj.pathname === "/api/fxbg/crime-reports/refresh") {
+      const months = parseInt(urlObj.searchParams.get("months") || "6", 10);
+      try {
+        // Ensure data directory exists
+        const dataDir = path.join(__dirname, "data", "fxbg-crime-reports");
+        await fsp.mkdir(dataDir, { recursive: true });
+
+        // For now, return a success response indicating refresh initiated
+        // Real implementation would scrape PDFs or call an API
+        const response = {
+          ok: true,
+          message: "Crime reports refresh initiated",
+          months: months,
+          timestamp: new Date().toISOString(),
+          note: "This is a placeholder. Actual PDF scraping would happen here."
+        };
+
+        console.log(`[Crime Reports API] Refresh requested for ${months} months`);
+        return send(res, 200, JSON.stringify(response, null, 2), { "Content-Type": "application/json" });
+      } catch (err) {
+        console.error("[Crime Reports API] Refresh error:", err);
+        return send(res, 500, JSON.stringify({ ok: false, error: err.message }), { "Content-Type": "application/json" });
+      }
+    }
+
+    if (urlObj.pathname === "/api/fxbg/crime-reports/incidents") {
+      const months = parseInt(urlObj.searchParams.get("months") || "6", 10);
+      try {
+        // Check for cached incidents data
+        const dataDir = path.join(__dirname, "data", "fxbg-crime-reports");
+        const incidentsFile = path.join(dataDir, "incidents.json");
+
+        let incidents = [];
+
+        // Try to load existing incidents
+        try {
+          const data = await fsp.readFile(incidentsFile, "utf8");
+          incidents = JSON.parse(data);
+        } catch (err) {
+          // No cached data, generate sample incidents for testing
+          console.log("[Crime Reports API] No cached data, generating sample incidents");
+          incidents = generateSampleIncidents(months);
+
+          // Save sample data
+          await fsp.mkdir(dataDir, { recursive: true });
+          await fsp.writeFile(incidentsFile, JSON.stringify(incidents, null, 2), "utf8");
+        }
+
+        // Filter by date range
+        const cutoffDate = new Date();
+        cutoffDate.setMonth(cutoffDate.getMonth() - months);
+
+        const filtered = incidents.filter(inc => {
+          const incDate = new Date(inc.incidentDateISO);
+          return incDate >= cutoffDate;
+        });
+
+        console.log(`[Crime Reports API] Returning ${filtered.length} incidents (${months} months)`);
+        return send(res, 200, JSON.stringify({
+          ok: true,
+          count: filtered.length,
+          months: months,
+          incidents: filtered
+        }, null, 2), { "Content-Type": "application/json" });
+      } catch (err) {
+        console.error("[Crime Reports API] Incidents error:", err);
+        return send(res, 500, JSON.stringify({ ok: false, error: err.message }), { "Content-Type": "application/json" });
+      }
     }
 
     if (urlObj.pathname === "/proxy") {
