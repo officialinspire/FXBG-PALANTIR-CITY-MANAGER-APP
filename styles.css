@@ -2058,6 +2058,16 @@ html, body{
   .mobile-only  { display: block; }
 }
 
+/* JS-authoritative UI mode classes (fixes mobile ghost desktop header overlay) */
+.ui-mobile .desktop-only { display: none !important; }
+.ui-mobile .mobile-only  { display: block !important; }
+
+.ui-desktop .desktop-only { display: block !important; }
+.ui-desktop .mobile-only  { display: none !important; }
+
+/* Specific safeguard: desktop header must never overlay in mobile mode */
+.ui-mobile #desktopHeader { display: none !important; }
+
 /* Desktop header: keep old 3-column grid as default */
 .topbar.desktop-only {
   display: grid;
