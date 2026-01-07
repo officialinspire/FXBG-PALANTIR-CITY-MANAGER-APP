@@ -94,6 +94,10 @@
       </div>
 
       <div class="topbarRow topbarRow--actions" id="topbarActionsRow">
+        <button class="btn crime-btn" id="btnCrime" title="FXBG PD Crime Reports" aria-pressed="false">
+          <span class="btn__icon">🚓</span>
+          <span class="btn__label">Crime</span>
+        </button>
         <button class="btn" id="btnNewsFlash" title="Regional News Flash Dashboard">
           <span class="btn__icon">📰</span>
           <span class="btn__label">News Flash</span>
@@ -249,6 +253,56 @@
                 <input id="radioVolume" type="range" min="0" max="1" step="0.05" value="0.8" aria-label="Volume" />
               </div>
             </div>
+          </div>
+        </div>
+      </aside>
+
+      <!-- Crime Reports Panel -->
+      <aside class="crimePanel crimePanel--hidden" id="crimePanel" aria-label="Crime Reports">
+        <div class="crimePanel__header">
+          <div class="crimePanel__title">
+            <span class="crimePanel__emoji">🚓</span>
+            <span>FXBG PD Crime Reports</span>
+          </div>
+          <button class="iconBtn" id="crimeClose" title="Close">✖️</button>
+        </div>
+        <div class="crimePanel__body">
+          <div class="crimePanel__controls">
+            <label class="crime-control-row">
+              <span>Enable Overlay</span>
+              <input type="checkbox" id="crimeEnableToggle" />
+            </label>
+
+            <label class="crime-control-row">
+              <span>Time Window</span>
+              <select id="crimeWindowDays">
+                <option value="7">Last 7 days</option>
+                <option value="30" selected>Last 30 days</option>
+                <option value="90">Last 90 days</option>
+                <option value="180">Last 180 days</option>
+              </select>
+            </label>
+
+            <div class="crime-control-row">
+              <span>Sort By</span>
+              <div class="crime-sort-buttons">
+                <button class="filterBtn filterBtn--active" id="crimeSortNewest">Newest</button>
+                <button class="filterBtn" id="crimeSortOldest">Oldest</button>
+              </div>
+            </div>
+
+            <label class="crime-control-row">
+              <span>Auto-open menu on enable</span>
+              <input type="checkbox" id="crimeMenuAutoOpen" checked />
+            </label>
+
+            <div class="crime-control-row crime-actions">
+              <button class="btn btnSmall" id="crimeRefresh">Refresh PDFs</button>
+            </div>
+          </div>
+
+          <div class="crime-incidents-list" id="crimeIncidentsList">
+            <div class="crime-list-empty">Loading crime reports...</div>
           </div>
         </div>
       </aside>
