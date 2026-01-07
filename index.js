@@ -6283,6 +6283,27 @@ function selectItem(id) {
     if (el) el.textContent = fmtTime(new Date());
   }
 
+  // Ensure chips have valid states (not stuck at "Loading...")
+  function ensureChipsHaveState() {
+    const weatherTextEl = getChipElement("weatherText");
+    if (weatherTextEl && weatherTextEl.textContent === "Weather: Loading…") {
+      weatherTextEl.textContent = "Weather: Unavailable";
+      console.warn("[ChipFallback] Weather chip stuck at Loading, set to Unavailable");
+    }
+
+    const trafficTextEl = getChipElement("trafficText");
+    if (trafficTextEl && trafficTextEl.textContent === "I‑95: Loading…") {
+      trafficTextEl.textContent = "I‑95: NO DATA";
+      console.warn("[ChipFallback] Traffic chip stuck at Loading, set to NO DATA");
+    }
+
+    const airTextEl = getChipElement("airText");
+    if (airTextEl && airTextEl.textContent === "AQI: …") {
+      airTextEl.textContent = "AQI: N/A";
+      console.warn("[ChipFallback] AQI chip stuck at Loading, set to N/A");
+    }
+  }
+
   async function refreshAll() {
     const liveTextEl = getChipElement("liveText");
     if (liveTextEl) liveTextEl.textContent = "Refreshing…";
@@ -6299,6 +6320,12 @@ function selectItem(id) {
     store.seenKeys.clear();
     clusters.clearLayers();
 
+    // Set fallback timeout to ensure chips update even if all fetches hang
+    const fallbackTimeout = setTimeout(() => {
+      console.warn("[RefreshAll] Fallback timeout reached (30s) - ensuring chip states are set");
+      ensureChipsHaveState();
+    }, 30000); // 30 second fallback
+
     // Load RSS feeds and other APIs first (in parallel)
     await Promise.allSettled([
       pollRSS().catch(e => console.warn("RSS refresh partial", e)),
@@ -6309,6 +6336,8 @@ function selectItem(id) {
       CONFIG.air.enabled ? fetchAirQuality().catch(e => console.warn("Air quality refresh partial", e)) : Promise.resolve(),
       CONFIG.externalCameras.enabled ? pollExternalCameras().catch(e => console.warn("External cameras refresh partial", e)) : Promise.resolve()
     ]);
+
+    clearTimeout(fallbackTimeout); // Clear timeout since promises completed
 
     // Check budget before proceeding to crash data (budget enforcement)
     const budgetCheck = checkCycleBudget();
@@ -6325,6 +6354,9 @@ function selectItem(id) {
       cycleStats.degradedMode = true;
       console.warn(`[DegradedMode] ${cycleStats.failureCount} sources failed, entering degraded mode`);
     }
+
+    // Ensure chips have valid fallback states (not stuck at "Loading...")
+    ensureChipsHaveState();
 
     if (liveTextEl) liveTextEl.textContent = "Live";
     setLastUpdate();
@@ -7715,6 +7747,10 @@ function selectItem(id) {
   dedupeHeaderIdsForDesktop();  // Fix duplicate IDs on desktop
   attachHeaderEventListeners();  // Attach event listeners to header chips/buttons after header init
   ensureOverlayLegendControl();
+
+  // Set a short timeout to ensure chips update even if refreshAll hangs
+  setTimeout(ensureChipsHaveState, 10000); // 10 seconds after boot
+
   refreshAll();
   setInterval(pollRSS, CONFIG.polling.rss);
   setInterval(fetchNWS, CONFIG.polling.nws);
