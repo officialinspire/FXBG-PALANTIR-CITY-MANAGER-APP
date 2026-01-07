@@ -1678,7 +1678,20 @@
   // -----------------------------
   // Desktop vs Mobile UI Detection
   // -----------------------------
-  const IS_MOBILE_UI = window.matchMedia("(max-width: 899px)").matches;
+  function computeIsMobileUI() {
+    // Prefer capability-based detection: small screen + coarse pointer (phones/tablets)
+    const mqlCoarse = window.matchMedia && window.matchMedia("(max-width: 899px) and (pointer: coarse)").matches;
+    if (mqlCoarse) return true;
+
+    // UA fallback for iPhone/Android/iPad (some iPads report differently depending on settings)
+    const ua = navigator.userAgent || "";
+    const uaMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini|Mobi/i.test(ua);
+
+    // If it's a narrow window but pointer is fine (desktop), treat as desktop
+    return uaMobile && window.matchMedia && window.matchMedia("(max-width: 899px)").matches;
+  }
+
+  let IS_MOBILE_UI = computeIsMobileUI();
 
   // -----------------------------
   // Categories
@@ -7741,11 +7754,42 @@ function selectItem(id) {
   }
 
   // -----------------------------
+  // UI Sync Helper (handles resize/orientation changes)
+  // -----------------------------
+  let __uiSyncTimer = null;
+
+  function syncUiMode() {
+    const next = computeIsMobileUI();
+    const changed = next !== IS_MOBILE_UI;
+    IS_MOBILE_UI = next;
+
+    const desktopHeader = document.getElementById("desktopHeader");
+
+    if (IS_MOBILE_UI) {
+      // IMPORTANT: prevent duplicate IDs from desktop header interfering with mobile getElementById lookups
+      if (desktopHeader) desktopHeader.innerHTML = "";
+      // If mobile panels were collapsed due to prior actions, leave as-is (existing logic manages collapse)
+      return;
+    }
+
+    // Desktop mode: ensure IDs are deduped BEFORE building desktop header, then attach listeners
+    dedupeHeaderIdsForDesktop();
+    initDesktopHeader();
+    attachHeaderEventListeners();
+  }
+
+  function scheduleSyncUiMode() {
+    clearTimeout(__uiSyncTimer);
+    __uiSyncTimer = setTimeout(syncUiMode, 150);
+  }
+
+  window.addEventListener("resize", scheduleSyncUiMode);
+  window.addEventListener("orientationchange", () => setTimeout(syncUiMode, 250));
+
+  // -----------------------------
   // Boot + timers
   // -----------------------------
-  initDesktopHeader();
-  dedupeHeaderIdsForDesktop();  // Fix duplicate IDs on desktop
-  attachHeaderEventListeners();  // Attach event listeners to header chips/buttons after header init
+  syncUiMode();
   ensureOverlayLegendControl();
 
   // Set a short timeout to ensure chips update even if refreshAll hangs

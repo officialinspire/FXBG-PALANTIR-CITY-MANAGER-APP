@@ -2039,78 +2039,54 @@ html, body{
 }
 
 /* ========================================
-   DESKTOP VS MOBILE UI SPLIT
+   DESKTOP VS MOBILE UI SPLIT (FIXED)
+   - Desktop is default (including narrow desktop windows)
+   - Mobile UI only on small screens with coarse pointer (phones/tablets)
    ======================================== */
 
-/* Default: show mobile UI, hide desktop UI */
-.desktop-only {
-  display: none;
+/* Default: show desktop UI, hide mobile UI */
+.desktop-only { display: block; }
+.mobile-only  { display: none; }
+
+/* Mobile breakpoint: small screen + coarse pointer => show mobile UI */
+@media (max-width: 899px) and (pointer: coarse) {
+  .desktop-only { display: none; }
+  .mobile-only  { display: block; }
 }
 
-.mobile-only {
-  display: block;
+/* Desktop header: keep old 3-column grid as default */
+.topbar.desktop-only {
+  display: grid;
+  grid-template-columns: 1.05fr 2.9fr 1.05fr;
+  gap: 10px;
+  align-items: center;
+  padding: 10px 12px;
 }
 
-/* Desktop breakpoint: show desktop UI, hide mobile UI */
-@media (min-width: 900px) {
-  .desktop-only {
-    display: block;
-  }
-
-  .mobile-only {
-    display: none;
-  }
-
-  /* Desktop header: restore old 3-column grid layout */
+/* Make desktop header usable in narrow desktop windows (still desktop UI) */
+@media (max-width: 899px) and (pointer: fine) {
   .topbar.desktop-only {
-    display: grid;
-    grid-template-columns: 1.05fr 2.9fr 1.05fr;
-    gap: 10px;
-    align-items: center;
-    padding: 10px 12px;
-    min-height: var(--topH);
-    height: auto;
+    grid-template-columns: 1fr;
+    grid-template-rows: auto auto auto;
+    gap: 8px;
+    padding: 8px 10px;
   }
-
-  /* Desktop header sections */
-  .topbar.desktop-only .topbar__left {
-    display: flex;
-    gap: 10px;
-    align-items: center;
-    min-width: 0;
-  }
-
-  .topbar.desktop-only .topbar__center {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 10px;
-    align-items: center;
-    justify-content: center;
-    min-width: 0;
-  }
-
+  .topbar.desktop-only .topbar__left,
+  .topbar.desktop-only .topbar__center,
   .topbar.desktop-only .topbar__right {
-    display: flex;
-    gap: 10px;
-    align-items: center;
-    justify-content: flex-end;
+    width: 100%;
+    justify-content: space-between;
   }
-
-  /* Desktop: chips in a single row, no topbarRow wrappers */
-  .topbar.desktop-only .chip {
-    min-height: 40px;
-    max-width: 360px;
-  }
-
-  /* Desktop: buttons and mini widget properly sized */
-  .topbar.desktop-only .btn {
-    min-height: 44px;
-  }
-
-  .topbar.desktop-only .mini {
-    text-align: right;
+  .topbar.desktop-only .topbar__center {
+    flex-wrap: wrap;
+    gap: 8px;
   }
 }
+
+/* Keep existing sizing tweaks */
+.topbar.desktop-only .chip { font-size: 12px; padding: 8px 10px; border-radius: 14px; }
+.topbar.desktop-only .btn  { font-size: 12px; padding: 8px 10px; border-radius: 14px; }
+.topbar.desktop-only .mini { font-size: 11px; padding: 6px 9px; }
 
 /* ========================================
    MAP OVERLAYS ACCORDION (grouped by municipality)
