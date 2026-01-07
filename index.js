@@ -16,6 +16,24 @@
 
 (() => {
   // -----------------------------
+  // Desktop vs Mobile UI Detection
+  // -----------------------------
+  function computeIsMobileUI() {
+    // Prefer capability-based detection: small screen + coarse pointer (phones/tablets)
+    const mqlCoarse = window.matchMedia && window.matchMedia("(max-width: 899px) and (pointer: coarse)").matches;
+    if (mqlCoarse) return true;
+
+    // UA fallback for iPhone/Android/iPad (some iPads report differently depending on settings)
+    const ua = navigator.userAgent || "";
+    const uaMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini|Mobi/i.test(ua);
+
+    // If it's a narrow window but pointer is fine (desktop), treat as desktop
+    return uaMobile && window.matchMedia && window.matchMedia("(max-width: 899px)").matches;
+  }
+
+  let IS_MOBILE_UI = computeIsMobileUI();
+
+  // -----------------------------
   // Config
   // -----------------------------
   const CONFIG = {
@@ -1674,24 +1692,6 @@
       ]
     }
   };
-
-  // -----------------------------
-  // Desktop vs Mobile UI Detection
-  // -----------------------------
-  function computeIsMobileUI() {
-    // Prefer capability-based detection: small screen + coarse pointer (phones/tablets)
-    const mqlCoarse = window.matchMedia && window.matchMedia("(max-width: 899px) and (pointer: coarse)").matches;
-    if (mqlCoarse) return true;
-
-    // UA fallback for iPhone/Android/iPad (some iPads report differently depending on settings)
-    const ua = navigator.userAgent || "";
-    const uaMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini|Mobi/i.test(ua);
-
-    // If it's a narrow window but pointer is fine (desktop), treat as desktop
-    return uaMobile && window.matchMedia && window.matchMedia("(max-width: 899px)").matches;
-  }
-
-  let IS_MOBILE_UI = computeIsMobileUI();
 
   // -----------------------------
   // Categories
