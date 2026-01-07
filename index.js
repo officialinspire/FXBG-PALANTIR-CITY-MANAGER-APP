@@ -3665,9 +3665,10 @@
     const radioPanel = $("radioPanel");
     const newsHidden = newsPanel?.classList.contains("newsFlashPanel--hidden") ?? true;
     const radioHidden = radioPanel?.classList.contains("radioPanel--hidden") ?? true;
+    const dockOpen = dockState?.isOpen ?? false;
 
-    // If both panels are hidden, restore the header
-    if (newsHidden && radioHidden) {
+    // If both panels are hidden AND dock is closed, restore the header
+    if (newsHidden && radioHidden && !dockOpen) {
       setMobileHeaderCollapsed(false);
     }
   }
@@ -7240,6 +7241,9 @@ function selectItem(id) {
     dockPanel.setAttribute("aria-hidden", "false");
     dockOverlay.setAttribute("aria-hidden", "false");
 
+    // Collapse mobile header when opening dock (prevents header from blocking dock panel)
+    setMobileHeaderCollapsed(true);
+
     // Update button active states
     dockButtons.forEach(btn => {
       if (btn.dataset.dock === tab) {
@@ -7268,6 +7272,9 @@ function selectItem(id) {
       btn.classList.remove("isActive");
       btn.setAttribute("aria-pressed", "false");
     });
+
+    // Restore mobile header if no other panels are blocking
+    restoreHeaderIfNoBlockingPanels();
   }
 
   // Toggle dock
