@@ -7771,6 +7771,11 @@ function selectItem(id) {
     const changed = next !== IS_MOBILE_UI;
     IS_MOBILE_UI = next;
 
+    // Force CSS to match JS-selected UI mode (prevents ghost desktop header overlay on some mobile browsers)
+    const root = document.documentElement;
+    root.classList.toggle("ui-mobile", IS_MOBILE_UI);
+    root.classList.toggle("ui-desktop", !IS_MOBILE_UI);
+
     const desktopHeader = document.getElementById("desktopHeader");
 
     if (IS_MOBILE_UI) {
