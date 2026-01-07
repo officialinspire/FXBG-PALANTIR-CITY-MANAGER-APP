@@ -1456,6 +1456,7 @@ html, body{
     left: calc(10px + var(--safeLeft));
     right: calc(10px + var(--safeRight));
     padding: 8px 10px;
+    z-index: 10100; /* above dockOverlay (9998) and panels (9999) to prevent blocking */
   }
 
   .bottombar{
@@ -1778,6 +1779,7 @@ html, body{
     border-radius: 18px;
     max-width: var(--mobileHeaderMaxW);
     display: block; /* override grid layout */
+    z-index: 10100; /* above dockOverlay (9998) and panels (9999) to prevent blocking */
   }
 
   /* TITLE block compact */
@@ -2032,6 +2034,7 @@ html, body{
   #mobileHeader {
     transition: transform 220ms ease;
     will-change: transform;
+    z-index: 10100; /* above dockOverlay (9998) and panels (9999) to prevent blocking */
   }
   #mobileHeader.mobileHeader--collapsed {
     transform: translateY(-110%);
