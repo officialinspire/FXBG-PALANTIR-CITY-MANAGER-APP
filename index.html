@@ -91,6 +91,11 @@
           <span class="dot" id="airDot"></span>
           <span id="airText">AQI: …</span>
         </div>
+
+        <div class="chip" id="chipCameras" title="VA 511 Traffic Camera Status">
+          <span class="dot" id="camerasDot"></span>
+          <span id="camerasText">Cameras: …</span>
+        </div>
       </div>
 
       <div class="topbarRow topbarRow--actions" id="topbarActionsRow">
@@ -332,6 +337,12 @@
       <div id="dockOverlay" class="dockOverlay" aria-hidden="true"></div>
     </section>
   </main>
+
+  <!-- Floating Health Badge (bottom-left corner) -->
+  <div id="healthBadge" class="healthBadge" title="Click for diagnostics">
+    <span class="healthBadge__dot" id="healthBadgeDot"></span>
+    <span class="healthBadge__text" id="healthBadgeText">Health: ...</span>
+  </div>
 
   <footer class="bottombar">
     <div class="dock" id="dock">

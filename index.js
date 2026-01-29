@@ -2396,10 +2396,28 @@
 
       const health = this.computeHealth();
 
-      // Update UI
+      // Update main Live chip UI
       liveChip.className = `chip ${health.color}`;
       liveText.textContent = health.status;
       liveChip.title = health.title;
+
+      // Update floating health badge
+      const healthBadgeDot = document.getElementById('healthBadgeDot');
+      const healthBadgeText = document.getElementById('healthBadgeText');
+      if (healthBadgeDot && healthBadgeText) {
+        // Set badge dot color based on health status
+        healthBadgeDot.className = 'healthBadge__dot';
+        if (health.status === 'Live') {
+          healthBadgeDot.classList.add('healthBadge__dot--ok');
+          healthBadgeText.textContent = `Feeds: OK`;
+        } else if (health.status === 'Partial') {
+          healthBadgeDot.classList.add('healthBadge__dot--warn');
+          healthBadgeText.textContent = `Feeds: ${this.recentErrors.size} issue(s)`;
+        } else {
+          healthBadgeDot.classList.add('healthBadge__dot--error');
+          healthBadgeText.textContent = `Feeds: ${this.recentErrors.size} error(s)`;
+        }
+      }
 
       // Reset stale count after update (it's a transient indicator)
       // Round 3: Also clear stale age when resetting count
@@ -4982,9 +5000,10 @@ function selectItem(id) {
     };
 
     // Try primary camera endpoint first, then fallbacks if it fails
+    // NOTE: Iteris CDN endpoints use JSONP format (*.geojsonp files with callback wrapper)
     const cameraEndpoints = [
       { url: CONFIG.va511.camerasGeojson, format: 'json', name: 'primary' },
-      { url: CONFIG.va511.camerasGeojsonFallback, format: 'json', name: 'fallback1' },
+      { url: CONFIG.va511.camerasGeojsonFallback, format: 'jsonp', name: 'fallback1' },  // Iteris CDN uses JSONP
       { url: CONFIG.va511.camerasGeojsonFallback2, format: 'jsonp', name: 'fallback2' }
     ];
 
@@ -5046,7 +5065,7 @@ function selectItem(id) {
       } // End urlVariant loop
     } // End endpoint loop
 
-    // If all endpoints failed, log error and apply backoff
+    // If all endpoints failed, log error and apply backoff, then load manual fallback cameras
     if (!camerasLoaded) {
       recordSourceFailure('va511-cameras', 'fetch_error');
       recordFeedError('va511-cameras');
@@ -5058,6 +5077,19 @@ function selectItem(id) {
         console.warn("  → Manual camera data will be used as fallback");
         store._511CamerasErrorLogged = true;
       }
+
+      // Load manual fallback cameras for FXBG metro area
+      const manualCamerasLoaded = loadManualFallbackCameras();
+      if (manualCamerasLoaded > 0) {
+        console.log(`[VA511 Fallback] Loaded ${manualCamerasLoaded} manual fallback cameras`);
+        setCameraStatus('STALE', manualCamerasLoaded);
+      } else {
+        setCameraStatus('ERROR', 0);
+      }
+    } else {
+      // Cameras loaded successfully from API
+      const cameraCount = Array.from(store.itemsById.values()).filter(item => item.sourceId === 'va511-cameras').length;
+      setCameraStatus('OK', cameraCount);
     }
 
     } // End backoff check for cameras
@@ -5277,10 +5309,12 @@ function selectItem(id) {
       let media = null;
 
       // Always prefer snapshot images for cameras (video feeds often don't work)
-      // NOTE: VDOT cameras now hosted on vdotcameras.com - proxy updated to allow direct access
+      // NOTE: Camera snapshots routed through proxy to avoid 403 from anti-hotlink referrer rules
+      // vdotcameras.com and snapshot.vdotcameras.com block direct hotlinking
       if (cleanedCamUrl) {
-        // Use direct camera URL (proxy allows vdotcameras.com domain)
-        media = { type: "image", src: cleanedCamUrl, originalSrc: cleanedCamUrl, alt: name };
+        // Route through proxy to avoid 403 anti-hotlink blocking
+        const proxiedCamUrl = `/proxy?url=${encodeURIComponent(cleanedCamUrl)}`;
+        media = { type: "image", src: proxiedCamUrl, originalSrc: cleanedCamUrl, alt: name };
       }
 
       // Debug logging for first 5 cameras to help troubleshoot
@@ -6305,6 +6339,95 @@ function selectItem(id) {
   }
 
   // -----------------------------
+  // Camera status indicator
+  // -----------------------------
+  function setCameraStatus(status, count = 0) {
+    const textEl = getChipElement("camerasText");
+    const dotEl = getChipElement("camerasDot");
+
+    let displayText = "Cameras: …";
+    let dotColor = "#888";
+
+    switch (status) {
+      case 'OK':
+        displayText = `Cameras: OK (${count})`;
+        dotColor = "#00e400"; // Green
+        break;
+      case 'STALE':
+        displayText = `Cameras: STALE (${count})`;
+        dotColor = "#ffaa00"; // Orange
+        break;
+      case 'ERROR':
+        displayText = "Cameras: ERROR";
+        dotColor = "#ff4444"; // Red
+        break;
+      default:
+        displayText = "Cameras: …";
+        dotColor = "#888";
+    }
+
+    if (textEl) {
+      textEl.textContent = displayText;
+      if (CONFIG.debug.chips) console.log(`[Chip Update] ${displayText}`);
+    }
+    if (dotEl) {
+      dotEl.style.backgroundColor = dotColor;
+    }
+  }
+
+  // Manual fallback cameras for FXBG metro area (used when VA511 endpoints are unavailable)
+  const MANUAL_FALLBACK_CAMERAS = [
+    { name: "I-95 at Falmouth", lat: 38.3245, lon: -77.4565, description: "I-95 northbound at Falmouth/US-1" },
+    { name: "I-95 at Rappahannock River", lat: 38.2945, lon: -77.4605, description: "I-95 crossing Rappahannock River" },
+    { name: "I-95 at Route 3", lat: 38.3032, lon: -77.4785, description: "I-95 at Route 3 interchange" },
+    { name: "I-95 at Massaponax", lat: 38.2456, lon: -77.4678, description: "I-95 at Massaponax/Route 608" },
+    { name: "Route 1 at Central Park", lat: 38.2912, lon: -77.5234, description: "US-1 at Central Park Blvd" },
+    { name: "Route 3 at Salem Church", lat: 38.3089, lon: -77.5012, description: "Route 3 at Salem Church Rd" },
+    { name: "Route 17 at Warrenton Rd", lat: 38.3234, lon: -77.4523, description: "Route 17 at Warrenton Rd" },
+    { name: "I-95 at Courthouse Rd", lat: 38.3678, lon: -77.4512, description: "I-95 at Courthouse Rd exit" },
+    { name: "I-95 at Garrisonville", lat: 38.4123, lon: -77.4345, description: "I-95 at Garrisonville Rd" },
+    { name: "Route 1 at Fredericksburg", lat: 38.3015, lon: -77.4605, description: "US-1 in downtown Fredericksburg" }
+  ];
+
+  function loadManualFallbackCameras() {
+    let added = 0;
+
+    for (const cam of MANUAL_FALLBACK_CAMERAS) {
+      const lat = Number(cam.lat);
+      const lon = Number(cam.lon);
+      if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
+
+      const key = `va511_cam_fallback::${cam.name}::${lat.toFixed(5)},${lon.toFixed(5)}`;
+      if (store.seenKeys.has(key)) continue;
+      store.seenKeys.add(key);
+
+      const item = {
+        id: key,
+        category: "camera",
+        title: cam.name,
+        summary: cam.description || "Traffic camera (fallback data)",
+        sourceName: "511 Virginia (Manual Fallback)",
+        sourceId: "va511-cameras",
+        url: `https://511.vdot.virginia.gov/map?lat=${lat.toFixed(5)}&lon=${lon.toFixed(5)}&zoom=15&layers=cameras`,
+        timestamp: new Date().toISOString(),
+        lat,
+        lon,
+        emoji: "📷",
+        tone: "neutral",
+        media: null, // No live images available for manual fallback
+        dedupeKey: key,
+        message: cam.description || "Traffic camera feed unavailable - location marked for reference.",
+        panelHtml: `<p style="color:#ffaa00;font-size:12px;">⚠️ Live feed unavailable. Camera location shown for reference only.</p>`
+      };
+
+      store.itemsById.set(item.id, item);
+      added++;
+    }
+
+    return added;
+  }
+
+  // -----------------------------
   // I‑95 indicator
   // -----------------------------
   function setI95Indicator(i95Incidents) {
@@ -6895,6 +7018,37 @@ function selectItem(id) {
     newsFlashJurisdiction = e.target.value;
     updateNewsFlash();
   });
+
+  // -----------------------------
+  // Health Badge - Click to show diagnostics
+  // -----------------------------
+  const healthBadge = $("healthBadge");
+  if (healthBadge) {
+    healthBadge.addEventListener("click", async () => {
+      // Open the System tab in the dock
+      const systemTab = document.querySelector('[data-dock="system"]');
+      if (systemTab) {
+        systemTab.click();
+      }
+
+      // Fetch and show diagnostics in console
+      try {
+        console.log("[Diagnostics] Fetching upstream status...");
+        const response = await fetch("/api/diag/upstreams");
+        const data = await response.json();
+        console.log("[Diagnostics] Results:", data);
+
+        // Show alert with summary
+        const summary = data.upstreams.map(u =>
+          `${u.status === 'ok' ? '\u2714' : '\u2718'} ${u.name}: ${u.status}${u.latencyMs ? ` (${u.latencyMs}ms)` : ''}`
+        ).join('\n');
+
+        console.log(`\n=== Upstream Health Check ===\n${summary}\n=============================`);
+      } catch (e) {
+        console.warn("[Diagnostics] Failed to fetch:", e.message);
+      }
+    });
+  }
 
   // -----------------------------
   // Radio Scanner Panel
