@@ -1,0 +1,25 @@
+{
+  "name": "fxbg-palantir-city-manager",
+  "version": "1.0.0",
+  "description": "Real-time situational awareness dashboard for Fredericksburg, VA metro area",
+  "main": "proxy-server.js",
+  "scripts": {
+    "start": "node proxy-server.js",
+    "dev": "node proxy-server.js"
+  },
+  "dependencies": {
+    "pdf-parse": "^1.1.1"
+  },
+  "engines": {
+    "node": ">=14.0.0"
+  },
+  "keywords": [
+    "fredericksburg",
+    "virginia",
+    "dashboard",
+    "situational-awareness",
+    "traffic",
+    "crime-reports"
+  ],
+  "license": "MIT"
+}

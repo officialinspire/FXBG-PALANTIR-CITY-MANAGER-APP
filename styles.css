@@ -2359,3 +2359,53 @@ html, body{
     transform: translateY(110%);
   }
 }
+
+/* Health Badge - Floating indicator */
+.healthBadge {
+  position: fixed;
+  bottom: calc(var(--botH) + 12px);
+  left: 12px;
+  z-index: 900;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  background: rgba(15, 23, 48, 0.9);
+  border: 1px solid var(--stroke);
+  border-radius: 20px;
+  backdrop-filter: blur(10px);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.healthBadge:hover {
+  background: rgba(25, 35, 60, 0.95);
+  border-color: var(--accent);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+.healthBadge__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #888;
+  flex-shrink: 0;
+}
+
+.healthBadge__dot--ok { background: var(--good); }
+.healthBadge__dot--warn { background: var(--warn); }
+.healthBadge__dot--error { background: var(--bad); }
+
+.healthBadge__text {
+  white-space: nowrap;
+}
+
+/* Hide health badge on very small screens */
+@media (max-width: 480px) {
+  .healthBadge {
+    padding: 4px 8px;
+    font-size: 10px;
+  }
+}
