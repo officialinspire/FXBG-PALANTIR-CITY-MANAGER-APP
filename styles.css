@@ -197,6 +197,20 @@ body{
 }
 .btn__label{ font-size: 12px; font-weight: 700; letter-spacing: .05em; }
 
+.btn--ghost{
+  padding: 6px 10px;
+  border-radius: 10px;
+  background: rgba(255,255,255,.08);
+  box-shadow: none;
+  border: 1px solid rgba(255,255,255,.18);
+  font-size: 12px;
+}
+.btn--ghost:hover{
+  background: rgba(255,255,255,.14);
+  border-color: rgba(126, 240, 255, .35);
+  box-shadow: none;
+}
+
 .mini{ text-align: right; }
 .mini__label{ font-size: 11px; color: var(--muted2); }
 .mini__value{ font-size: 12px; font-weight: 700; }
@@ -2405,23 +2419,29 @@ html, body{
 /* Diagnostics Drawer */
 .diagnosticsDrawer {
   position: fixed;
-  right: 16px;
-  bottom: calc(var(--botH) + 18px);
+  top: 16px;
+  right: 0;
+  bottom: 16px;
   width: min(420px, calc(100vw - 32px));
-  max-height: calc(100vh - 140px);
+  max-height: calc(100vh - 32px);
   background: rgba(15, 23, 48, 0.96);
   border: 1px solid var(--stroke);
-  border-radius: 18px;
+  border-radius: 18px 0 0 18px;
   box-shadow: 0 20px 40px rgba(0, 0, 0, 0.45);
   backdrop-filter: blur(12px);
   display: flex;
   flex-direction: column;
   z-index: 4200;
   overflow: hidden;
+  transform: translateX(0);
+  opacity: 1;
+  transition: transform 0.25s ease, opacity 0.2s ease;
 }
 
 .diagnosticsDrawer--hidden {
-  display: none;
+  transform: translateX(110%);
+  opacity: 0;
+  pointer-events: none;
 }
 
 .diagnosticsDrawer__header {
@@ -2449,6 +2469,38 @@ html, body{
   overflow: auto;
   display: grid;
   gap: 14px;
+}
+
+.diagnosticsDrawer__actions{
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.diagnosticsBanner{
+  border-radius: 12px;
+  border: 1px solid rgba(255, 107, 138, 0.4);
+  background: rgba(255, 107, 138, 0.12);
+  padding: 10px 12px;
+  color: var(--bad);
+  display: grid;
+  gap: 6px;
+}
+
+.diagnosticsBanner--hidden{
+  display: none;
+}
+
+.diagnosticsBanner__title{
+  font-weight: 700;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.diagnosticsBanner__text{
+  font-size: 12px;
+  color: var(--txt);
 }
 
 .diagnosticsSection {
@@ -2510,6 +2562,12 @@ html, body{
   color: var(--warn);
 }
 
+.diagnosticsBadge--stale {
+  background: rgba(255, 216, 107, 0.15);
+  border-color: rgba(255, 216, 107, 0.5);
+  color: var(--warn);
+}
+
 .diagnosticsBadge--error {
   background: rgba(255, 107, 138, 0.15);
   border-color: rgba(255, 107, 138, 0.5);
@@ -2530,17 +2588,19 @@ html, body{
 
 @media (max-width: 899px) {
   .diagnosticsDrawer {
-    left: 12px;
-    right: 12px;
-    bottom: 96px;
-    width: auto;
-    max-height: calc(100vh - 160px);
+    left: 0;
+    right: 0;
+    top: 0;
+    bottom: 0;
+    width: 100%;
+    max-height: 100vh;
+    border-radius: 0;
   }
 }
 
 @media (max-width: 600px) {
   .diagnosticsDrawer {
-    bottom: 88px;
+    border-radius: 0;
   }
 }
 

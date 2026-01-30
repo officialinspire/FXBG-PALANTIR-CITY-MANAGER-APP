@@ -676,7 +676,7 @@
       lat: 38.3032,
       lon: -77.4605,
       token: null, // Configured server-side via .env
-      baseUrl: "/api/air-quality",
+      baseUrl: "/api/waqi",
       refreshMs: 10 * 60 * 1000  // 10 minutes
     },
 
@@ -7050,6 +7050,12 @@ function selectItem(id) {
   const diagnosticsSummary = $("diagnosticsSummary");
   const diagnosticsUpstreams = $("diagnosticsUpstreams");
   const diagnosticsCache = $("diagnosticsCache");
+  const diagnosticsRequiredBanner = $("diagnosticsRequiredBanner");
+  const diagnosticsRequiredText = $("diagnosticsRequiredText");
+  const diagnosticsRefresh = $("diagnosticsRefresh");
+  const diagnosticsCopy = $("diagnosticsCopy");
+
+  let lastDiagnosticsPayload = null;
 
   function setDiagnosticsDrawerOpen(isOpen) {
     if (!diagnosticsDrawer || !diagnosticsOverlay) return;
@@ -7132,18 +7138,26 @@ function selectItem(id) {
     }
 
     diagnosticsUpstreams.innerHTML = upstreams.map(upstream => {
-      const status = upstream.status || "unknown";
-      const badgeClass = status === "ok" ? "diagnosticsBadge--ok" : status === "blocked" || status === "rate_limited" ? "diagnosticsBadge--warn" : "diagnosticsBadge--error";
-      const latency = Number.isFinite(upstream.latencyMs) ? `${upstream.latencyMs}ms` : "—";
+      const status = (upstream.status || "unknown").toLowerCase();
+      const badgeClass = status === "ok"
+        ? "diagnosticsBadge--ok"
+        : status === "stale"
+          ? "diagnosticsBadge--stale"
+          : "diagnosticsBadge--error";
+      const latency = Number.isFinite(upstream.ms) ? `${upstream.ms}ms` : "—";
+      const contentType = upstream.contentType ? ` • ${escapeHtml(upstream.contentType)}` : "";
+      const errorHint = upstream.errorCode ? ` • ${escapeHtml(upstream.errorCode)}` : "";
+      const requiredLabel = upstream.required ? " • Required" : "";
+      const lastSuccess = upstream.lastSuccess ? ` • Last OK ${new Date(upstream.lastSuccess).toLocaleTimeString()}` : "";
       return `
         <div class="diagnosticsRow">
           <div>
             <div class="diagnosticsRow__title">${escapeHtml(upstream.name || "Unknown")}</div>
-            <div>${escapeHtml(upstream.url || "")}</div>
+            <div>${escapeHtml(upstream.url || "")}${requiredLabel}</div>
+            <div style="font-size:11px;color:var(--muted2);margin-top:4px;">${latency}${contentType}${errorHint}${lastSuccess}</div>
           </div>
           <div style="text-align:right;">
             <div class="diagnosticsBadge ${badgeClass}">${status.toUpperCase()}</div>
-            <div style="font-size:11px;color:var(--muted2);margin-top:4px;">${latency}</div>
           </div>
         </div>
       `;
@@ -7198,6 +7212,25 @@ function selectItem(id) {
     renderDiagnosticsSummary(healthRes.data || null);
     renderDiagnosticsUpstreams(upstreamRes.data?.upstreams || null);
     renderDiagnosticsCache(cacheRes.data || null);
+
+    lastDiagnosticsPayload = {
+      fetchedAt: new Date().toISOString(),
+      health: healthRes.data || null,
+      upstreams: upstreamRes.data || null,
+      cache: cacheRes.data || null
+    };
+
+    if (diagnosticsRequiredBanner && diagnosticsRequiredText) {
+      const requiredFailures = (upstreamRes.data?.upstreams || [])
+        .filter(upstream => upstream.required && String(upstream.status).toLowerCase() !== "ok");
+      if (requiredFailures.length > 0) {
+        diagnosticsRequiredText.textContent = requiredFailures.map(upstream => upstream.name).join(", ");
+        diagnosticsRequiredBanner.classList.remove("diagnosticsBanner--hidden");
+      } else {
+        diagnosticsRequiredBanner.classList.add("diagnosticsBanner--hidden");
+        diagnosticsRequiredText.textContent = "";
+      }
+    }
   }
 
   const healthBadge = $("healthBadge");
@@ -7214,22 +7247,6 @@ function selectItem(id) {
         console.warn("[Diagnostics] Drawer update failed:", err);
       });
 
-      // Fetch and show diagnostics in console
-      try {
-        console.log("[Diagnostics] Fetching upstream status...");
-        const response = await fetch("/api/diag/upstreams");
-        const data = await response.json();
-        console.log("[Diagnostics] Results:", data);
-
-        // Show alert with summary
-        const summary = data.upstreams.map(u =>
-          `${u.status === 'ok' ? '\u2714' : '\u2718'} ${u.name}: ${u.status}${u.latencyMs ? ` (${u.latencyMs}ms)` : ''}`
-        ).join('\n');
-
-        console.log(`\n=== Upstream Health Check ===\n${summary}\n=============================`);
-      } catch (e) {
-        console.warn("[Diagnostics] Failed to fetch:", e.message);
-      }
     });
   }
 
@@ -7237,6 +7254,28 @@ function selectItem(id) {
   if (diagnosticsClose) {
     diagnosticsClose.addEventListener("click", () => {
       setDiagnosticsDrawerOpen(false);
+    });
+  }
+  if (diagnosticsRefresh) {
+    diagnosticsRefresh.addEventListener("click", () => {
+      refreshDiagnosticsDrawer().catch(err => {
+        console.warn("[Diagnostics] Drawer refresh failed:", err);
+      });
+    });
+  }
+  if (diagnosticsCopy) {
+    diagnosticsCopy.addEventListener("click", async () => {
+      if (!lastDiagnosticsPayload) return;
+      const text = JSON.stringify(lastDiagnosticsPayload, null, 2);
+      try {
+        await navigator.clipboard.writeText(text);
+        diagnosticsCopy.textContent = "Copied!";
+        setTimeout(() => {
+          diagnosticsCopy.textContent = "Copy report";
+        }, 1500);
+      } catch (err) {
+        console.warn("[Diagnostics] Clipboard copy failed:", err);
+      }
     });
   }
   if (diagnosticsOverlay) {
