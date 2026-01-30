@@ -2481,11 +2481,21 @@ const server = http.createServer(async (req, res) => {
     // Crime Reports API endpoints
     if (urlObj.pathname === "/api/fxbg/crime-reports/refresh") {
       const months = parseInt(urlObj.searchParams.get("months") || "6", 10);
+      // DEBUG: Log start timestamp
+      const debugStartTime = Date.now();
+      console.log(`[DEBUG Crime Refresh API] START at ${new Date(debugStartTime).toISOString()}`);
       try {
         console.log(`[Crime Reports API] Refresh requested for ${months} months`);
 
         // Run the real PDF scraping and parsing
         const result = await refreshCrimeReports(months);
+
+        // DEBUG: Log result details
+        const debugEndTime = Date.now();
+        const debugDuration = debugEndTime - debugStartTime;
+        console.log(`[DEBUG Crime Refresh API] result.success=${result.success}, result.message="${result.message}"`);
+        console.log(`[DEBUG Crime Refresh API] pdfCount=${result.pdfCount || 0}, geocoded=${result.geocoded || 0}, count=${result.count || 0}`);
+        console.log(`[DEBUG Crime Refresh API] END at ${new Date(debugEndTime).toISOString()}, duration=${debugDuration}ms (${(debugDuration/1000).toFixed(1)}s)`);
 
         const response = {
           ok: result.success,
@@ -2499,6 +2509,9 @@ const server = http.createServer(async (req, res) => {
 
         return send(res, result.success ? 200 : 500, JSON.stringify(response, null, 2), { "Content-Type": "application/json" });
       } catch (err) {
+        // DEBUG: Log error with timing
+        const debugEndTime = Date.now();
+        console.log(`[DEBUG Crime Refresh API] ERROR after ${debugEndTime - debugStartTime}ms:`, err.message);
         console.error("[Crime Reports API] Refresh error:", err);
         return send(res, 500, JSON.stringify({ ok: false, error: err.message }), { "Content-Type": "application/json" });
       }
@@ -2556,6 +2569,15 @@ const server = http.createServer(async (req, res) => {
 
         // Check if data is stale (older than 7 days)
         const isStale = lastUpdated && (Date.now() - new Date(lastUpdated).getTime() > 7 * 24 * 60 * 60 * 1000);
+
+        // DEBUG: Log dataSource, lastUpdated, and isStale
+        console.log(`[DEBUG Crime Incidents API] dataSource="${dataSource}" (scraped = real PDF data, sample = generated test data)`);
+        console.log(`[DEBUG Crime Incidents API] lastUpdated=${lastUpdated || "null"}, isStale=${isStale}`);
+        if (lastUpdated) {
+          const ageMs = Date.now() - new Date(lastUpdated).getTime();
+          const ageHours = (ageMs / 1000 / 60 / 60).toFixed(1);
+          console.log(`[DEBUG Crime Incidents API] Data age: ${ageHours} hours (stale threshold: 168 hours / 7 days)`);
+        }
 
         console.log(`[Crime Reports API] Returning ${filtered.length} incidents (${months} months, source: ${dataSource})`);
         return send(res, 200, JSON.stringify({

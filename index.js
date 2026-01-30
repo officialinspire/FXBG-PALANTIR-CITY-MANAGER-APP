@@ -7367,16 +7367,32 @@ function selectItem(id) {
 
   // Refresh button
   $("crimeRefresh").addEventListener("click", async () => {
+    // DEBUG: Log when click occurs
+    console.log("[DEBUG Crime Refresh] Click detected at", new Date().toISOString());
     try {
       const months = CONFIG.fxbgCrimeReports.months;
       const res = await fetch(`/api/fxbg/crime-reports/refresh?months=${months}`);
-      if (res.ok) {
+      // DEBUG: Log response status
+      console.log("[DEBUG Crime Refresh] Response status:", res.status, res.statusText);
+      // DEBUG: Log response body
+      const json = await res.json();
+      console.log("[DEBUG Crime Refresh] Response body:", JSON.stringify(json, null, 2));
+      if (res.ok && json.ok) {
         console.log("[Crime Reports] Refresh initiated");
         // Wait a bit then reload incidents
-        setTimeout(() => {
-          pollFxbgCrimeReports();
+        // DEBUG: Log when incidents poll starts
+        console.log("[DEBUG Crime Refresh] Starting incidents poll in 2s...");
+        setTimeout(async () => {
+          console.log("[DEBUG Crime Refresh] Polling incidents NOW");
+          await pollFxbgCrimeReports();
+          // DEBUG: Log how many items are now in store
+          const crimeItems = store.items.filter(it => it.sourceId === "fxbg-crime-reports");
+          console.log("[DEBUG Crime Refresh] Crime items in store after poll:", crimeItems.length);
           updateCrimeMenuPanel();
         }, 2000);
+      } else {
+        // DEBUG: Log when refresh failed
+        console.warn("[DEBUG Crime Refresh] Refresh returned ok=false or HTTP error:", json.message || json.error);
       }
     } catch (err) {
       console.error("[Crime Reports] Refresh error:", err);
