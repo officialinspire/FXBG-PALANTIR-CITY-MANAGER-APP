@@ -6,24 +6,61 @@ Real-time situational awareness dashboard for Fredericksburg, VA metro area.
 
 **CRITICAL: The proxy server MUST be running for markers/waypoints to load!**
 
-### 1. Configure API Keys
-Create a `.env` file in the repo root (see `.env.example`):
+### 1. Install Dependencies
 ```bash
+npm install
+```
+
+### 2. Configure Environment
+Create a `.env` file in the repo root:
+```bash
+# Required
+LOG_DIR=logs
+
+# Optional (for UV index and air quality data)
 OPENUV_API_KEY=your-openuv-key
 WAQI_TOKEN=your-waqi-token
 ```
 
-### 2. Start the Server
+Or copy the example: `cp .env.example .env`
+
+### 3. Run Doctor Check
 ```bash
-node proxy-server.js
+npm run doctor
+```
+This verifies your environment is correctly configured.
+
+### 4. Start the Server
+```bash
+npm run dev    # Starts on port 8000
+# or
+npm start      # Uses PORT from .env or default 8000
 ```
 
-### 3. Open in Browser
+### 5. Open in Browser
 ```
 http://localhost:8000
 ```
 
 The proxy server handles all external API requests (RSS feeds, 511 Virginia traffic, NWS weather, ArcGIS crash data) to bypass CORS restrictions.
+
+### Verify Endpoints (curl)
+```bash
+# Health check
+curl -s "http://localhost:8000/api/health" | head -c 800
+
+# Crime reports status
+curl -s "http://localhost:8000/api/fxbg/crime-reports/status"
+
+# Refresh crime reports
+curl -s "http://localhost:8000/api/fxbg/crime-reports/refresh?months=6" | head -c 1000
+
+# Force refresh (bypass cache)
+curl -s "http://localhost:8000/api/fxbg/crime-reports/refresh?months=6&force=1" | head -c 1000
+
+# Upstreams health
+curl -s "http://localhost:8000/api/health/upstreams"
+```
 
 ## 🔧 Recent Fixes (v15)
 
