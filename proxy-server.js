@@ -17,37 +17,36 @@ const fs = require("fs");
 const fsp = require("fs/promises");
 const path = require("path");
 const os = require("os");
+const dotenv = require("dotenv");
 
 // -----------------------------
 // Environment & Logging Setup
 // -----------------------------
 const ENV_PATH = path.join(__dirname, ".env");
-const LOG_DIR = path.join(__dirname, "logs");
+dotenv.config({ path: ENV_PATH });
+
+const REQUIRED_ENV = ["PORT", "LOG_DIR", "OPENUV_API_KEY", "WAQI_TOKEN"];
+
+function validateConfig() {
+  const missing = REQUIRED_ENV.filter((key) => !process.env[key]);
+  const port = Number(process.env.PORT);
+  if (!Number.isFinite(port) || port <= 0) {
+    missing.push("PORT");
+  }
+
+  if (missing.length === 0) {
+    return port;
+  }
+
+  const message = `Missing required environment variables: ${[...new Set(missing)].join(", ")}. Set them in .env or export them before starting.`;
+  console.error(`[config] ${message}`);
+  process.exit(1);
+}
+
+const PORT = validateConfig();
+const LOG_DIR = path.resolve(__dirname, process.env.LOG_DIR);
 const APP_LOG_PATH = path.join(LOG_DIR, "app.log");
 const UPSTREAM_LOG_PATH = path.join(LOG_DIR, "upstreams.log");
-
-function loadEnvFile(filePath) {
-  try {
-    if (!fs.existsSync(filePath)) return;
-    const raw = fs.readFileSync(filePath, "utf8");
-    raw.split(/\r?\n/).forEach((line) => {
-      const trimmed = line.trim();
-      if (!trimmed || trimmed.startsWith("#")) return;
-      const eqIndex = trimmed.indexOf("=");
-      if (eqIndex === -1) return;
-      const key = trimmed.slice(0, eqIndex).trim();
-      let value = trimmed.slice(eqIndex + 1).trim();
-      if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
-        value = value.slice(1, -1);
-      }
-      if (!Object.prototype.hasOwnProperty.call(process.env, key)) {
-        process.env[key] = value;
-      }
-    });
-  } catch (err) {
-    console.warn("[env] Failed to load .env:", err.message);
-  }
-}
 
 function ensureLogDir() {
   try {
@@ -58,27 +57,28 @@ function ensureLogDir() {
 }
 
 ensureLogDir();
-loadEnvFile(ENV_PATH);
 
 const appLogStream = fs.createWriteStream(APP_LOG_PATH, { flags: "a" });
 const upstreamLogStream = fs.createWriteStream(UPSTREAM_LOG_PATH, { flags: "a" });
 
-function logLine(stream, level, message) {
-  const timestamp = new Date().toISOString();
-  const line = `[${timestamp}] [${level}] ${message}${os.EOL}`;
+function writeLog(stream, payload) {
+  const entry = {
+    ts: new Date().toISOString(),
+    ...payload
+  };
   try {
-    stream.write(line);
+    stream.write(`${JSON.stringify(entry)}${os.EOL}`);
   } catch (err) {
     console.warn("[logs] Failed to write log:", err.message);
   }
 }
 
-function logApp(message, level = "INFO") {
-  logLine(appLogStream, level, message);
+function logApp(payload) {
+  writeLog(appLogStream, payload);
 }
 
-function logUpstream(message, level = "INFO") {
-  logLine(upstreamLogStream, level, message);
+function logUpstream(payload) {
+  writeLog(upstreamLogStream, payload);
 }
 
 function redactUrl(rawUrl) {
@@ -98,14 +98,28 @@ function redactUrl(rawUrl) {
   }
 }
 
+function requestLogUrl(urlObj) {
+  if (urlObj.pathname === "/proxy") {
+    const target = urlObj.searchParams.get("url");
+    return target ? redactUrl(target) : "/proxy";
+  }
+  return urlObj.pathname;
+}
+
 function logProxyOutcome({ url, status, cacheState, upstreamHost, elapsedMs, error }) {
   const safeUrl = redactUrl(url);
-  const statusText = status ? `status=${status}` : "status=unknown";
-  const cacheText = cacheState ? `cache=${cacheState}` : "cache=unknown";
-  const elapsedText = Number.isFinite(elapsedMs) ? `elapsedMs=${elapsedMs}` : "elapsedMs=—";
-  const hostText = upstreamHost ? `host=${upstreamHost}` : "host=unknown";
-  const errorText = error ? `error=${error}` : "";
-  logUpstream(`[proxy] ${statusText} ${cacheText} ${elapsedText} ${hostText} url=${safeUrl} ${errorText}`.trim());
+  logUpstream({
+    level: "INFO",
+    kind: "proxy",
+    msg: "proxy_fetch",
+    url: safeUrl,
+    status,
+    ms: elapsedMs,
+    errorCode: error || undefined,
+    cacheState,
+    contentType: undefined,
+    bytes: undefined
+  });
 }
 
 function safeJsonParse(raw, fallback = null, context = "json") {
@@ -113,9 +127,127 @@ function safeJsonParse(raw, fallback = null, context = "json") {
   try {
     return JSON.parse(raw);
   } catch (err) {
-    logApp(`Failed to parse ${context}: ${err.message}`, "WARN");
+    logApp({
+      level: "WARN",
+      kind: "parse_failure",
+      msg: `Failed to parse ${context}`,
+      errorCode: err.message
+    });
     return fallback;
   }
+}
+
+const PAYLOAD_LIMITS = {
+  json: 2 * 1024 * 1024,
+  text: 3 * 1024 * 1024,
+  image: 5 * 1024 * 1024,
+  binary: 5 * 1024 * 1024
+};
+
+class UpstreamError extends Error {
+  constructor(code, message) {
+    super(message);
+    this.code = code;
+  }
+}
+
+function inferExpectedType(acceptHeader) {
+  const accept = String(acceptHeader || "").toLowerCase();
+  if (!accept || accept === "*/*") return null;
+  if (accept.includes("application/json") || accept.includes("+json") || accept.includes("geojson")) {
+    return "json";
+  }
+  if (accept.includes("text/html")) {
+    return "html";
+  }
+  if (accept.includes("text/plain") || accept.includes("text/")) {
+    return "text";
+  }
+  if (accept.includes("image/")) {
+    return "image";
+  }
+  return null;
+}
+
+function resolvePayloadLimit(contentType, expectedType) {
+  if (expectedType && PAYLOAD_LIMITS[expectedType]) return PAYLOAD_LIMITS[expectedType];
+  const ct = String(contentType || "").toLowerCase();
+  if (ct.startsWith("image/")) return PAYLOAD_LIMITS.image;
+  if (ct.includes("json")) return PAYLOAD_LIMITS.json;
+  if (ct.startsWith("text/") || ct.includes("xml")) return PAYLOAD_LIMITS.text;
+  return PAYLOAD_LIMITS.binary;
+}
+
+function isJsonContentType(contentType) {
+  const ct = String(contentType || "").toLowerCase();
+  return ct.includes("application/json") || ct.includes("+json");
+}
+
+function isHtmlContentType(contentType) {
+  const ct = String(contentType || "").toLowerCase();
+  return ct.includes("text/html") || ct.includes("text/plain");
+}
+
+function validateContentType(expectedType, contentType, bodyBuffer) {
+  if (!expectedType) return { ok: true };
+  const ct = String(contentType || "").toLowerCase();
+  if (expectedType === "json") {
+    if (isJsonContentType(ct)) return { ok: true };
+    if (bodyBuffer && bodyBuffer.length > 0) {
+      try {
+        JSON.parse(bodyBuffer.toString("utf8"));
+        return { ok: true };
+      } catch {
+        return { ok: false, errorCode: "unexpected_content_type" };
+      }
+    }
+    return { ok: false, errorCode: "empty_body" };
+  }
+  if (expectedType === "html") {
+    return isHtmlContentType(ct) ? { ok: true } : { ok: false, errorCode: "unexpected_content_type" };
+  }
+  if (expectedType === "image") {
+    return ct.startsWith("image/") ? { ok: true } : { ok: false, errorCode: "unexpected_content_type" };
+  }
+  if (expectedType === "jsonp") {
+    const ok = ct.includes("text/javascript") || ct.includes("application/javascript") || ct.includes("text/plain") || isJsonContentType(ct);
+    return ok ? { ok: true } : { ok: false, errorCode: "unexpected_content_type" };
+  }
+  if (expectedType === "text") {
+    const ok = ct.startsWith("text/") || ct.includes("xml") || ct.includes("application/javascript") || ct.includes("text/javascript");
+    return ok ? { ok: true } : { ok: false, errorCode: "unexpected_content_type" };
+  }
+  return { ok: true };
+}
+
+async function readResponseBodyWithLimit(response, limitBytes) {
+  const contentLength = Number(response.headers.get("content-length"));
+  if (Number.isFinite(contentLength) && limitBytes && contentLength > limitBytes) {
+    throw new UpstreamError("payload_too_large", `Payload exceeds ${limitBytes} bytes`);
+  }
+
+  if (!response.body || !response.body.getReader) {
+    return Buffer.from(await response.arrayBuffer());
+  }
+
+  const reader = response.body.getReader();
+  const chunks = [];
+  let received = 0;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (value) {
+      received += value.byteLength;
+      if (limitBytes && received > limitBytes) {
+        await reader.cancel();
+        throw new UpstreamError("payload_too_large", `Payload exceeds ${limitBytes} bytes`);
+      }
+      chunks.push(Buffer.from(value));
+    }
+  }
+
+  return Buffer.concat(chunks, received);
 }
 
 // PDF parsing (for crime reports)
@@ -126,33 +258,10 @@ try {
   console.warn("[Crime Reports] pdf-parse not installed. Run 'npm install' to enable PDF parsing.");
 }
 
-const REQUIRED_ENV = ["OPENUV_API_KEY", "WAQI_TOKEN"];
-const SKIP_CONFIG_VALIDATION = process.env.SKIP_CONFIG_VALIDATION === "1";
-
-function validateConfig() {
-  const missing = REQUIRED_ENV.filter((key) => !process.env[key]);
-  if (missing.length === 0) return true;
-
-  const message = `Missing required environment variables: ${missing.join(", ")}. Set them in .env or export them before starting.`;
-  console.error(`[config] ${message}`);
-  logApp(message, "ERROR");
-
-  if (SKIP_CONFIG_VALIDATION) {
-    console.warn("[config] SKIP_CONFIG_VALIDATION=1 set; continuing without required keys.");
-    logApp("SKIP_CONFIG_VALIDATION=1 set; continuing without required keys.", "WARN");
-    return false;
-  }
-
-  process.exit(1);
-}
-
-validateConfig();
-
 const OPENUV_API_KEY = process.env.OPENUV_API_KEY || "";
 const WAQI_TOKEN = process.env.WAQI_TOKEN || "";
 
 const HOST = process.env.BIND || "0.0.0.0";
-const PORT = Number(process.env.PORT || 8000);
 const PUBLIC_DIR = __dirname;
 
 // Simple mime map
@@ -257,6 +366,45 @@ const ALLOWED_UPSTREAM_DOMAINS = [
   'www.httpbin.org',
 ];
 
+const REQUIRED_UPSTREAMS = [
+  {
+    name: "VA511 Cameras API",
+    url: "https://511.vdot.virginia.gov/services/map/layers/map/cams",
+    expect: ["application/json"],
+    required: true
+  },
+  {
+    name: "VA511 Traffic Events API",
+    url: "https://511.vdot.virginia.gov/services/map/layers/map/events",
+    expect: ["application/json"],
+    required: true
+  },
+  {
+    name: "NWS Points API",
+    url: "https://api.weather.gov/points/38.3032,-77.4605",
+    expect: ["application/json"],
+    required: true
+  },
+  {
+    name: "Fredericksburg Crime Reports Page",
+    url: "https://www.fredericksburgva.gov/1426/Crime-Reports",
+    expect: ["text/html"],
+    required: false
+  },
+  {
+    name: "Snapshot Camera CDN",
+    url: "https://snapshot.vdotcameras.com",
+    expect: ["image/"],
+    required: false
+  }
+];
+
+const DIAG_TIMEOUT_MS = 8000;
+const DIAG_CONCURRENCY = 3;
+const DIAG_CACHE_TTL_MS = 30_000;
+const diagCache = { ts: 0, data: null };
+const upstreamLastSuccess = new Map();
+
 /**
  * Private IP ranges to block (RFC 1918 + loopback + link-local)
  */
@@ -347,13 +495,15 @@ function checkUrlAllowed(targetUrl) {
 }
 
 function send(res, status, body, headers = {}) {
+  const buffer = Buffer.isBuffer(body) ? body : Buffer.from(body || "");
   res.writeHead(status, {
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Cache-TTL-MS, X-Timeout-MS, X-Access-Token, X-Api-Key, X-Requested-With, Accept",
+    "Content-Length": buffer.length,
     ...headers,
   });
-  res.end(body);
+  res.end(buffer);
 }
 
 // -------- Proxy cache + rate limits --------
@@ -811,8 +961,155 @@ function generateRequestId() {
   return Math.random().toString(36).substring(2, 10);
 }
 
+function buildProxyErrorEntry({
+  status = 502,
+  errorCode,
+  upstreamHost,
+  message,
+  elapsedMs,
+  requestId
+}) {
+  const body = Buffer.from(JSON.stringify({
+    ok: false,
+    error: errorCode || "upstream_error",
+    upstream: upstreamHost || "unknown",
+    status,
+    message: message || "Upstream error"
+  }));
+  return {
+    ts: nowMs(),
+    ttlMs: 5000,
+    status,
+    headers: {
+      "Content-Type": "application/json",
+      "X-Proxy-Error": errorCode || "upstream_error",
+      "X-Proxy-Upstream-Host": upstreamHost || "unknown",
+      "X-Proxy-Cache-State": "miss",
+      "X-Proxy-Elapsed-MS": String(elapsedMs || 0),
+      "X-Proxy-Request-ID": requestId || generateRequestId()
+    },
+    body
+  };
+}
+
+function expectedTypeFromExpectList(expectList = []) {
+  const list = expectList.map(entry => String(entry).toLowerCase());
+  if (list.some(entry => entry.includes("json"))) return "json";
+  if (list.some(entry => entry.includes("text/html") || entry.includes("text/plain"))) return "html";
+  if (list.some(entry => entry.includes("image/"))) return "image";
+  return null;
+}
+
+async function fetchUpstreamWithLimits(url, { expectedType = null, timeoutMs = DIAG_TIMEOUT_MS } = {}) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort("timeout"), timeoutMs);
+  const start = Date.now();
+  try {
+    const response = await fetch(url, {
+      method: "GET",
+      redirect: "follow",
+      headers: {
+        "Accept": expectedType === "json" ? "application/json,*/*" : "*/*",
+        "User-Agent": "FXBG-PALANTIR-CityManager/1.0 (diagnostics)"
+      },
+      signal: controller.signal
+    });
+    const contentType = response.headers.get("content-type") || "";
+    const limitBytes = resolvePayloadLimit(contentType, expectedType);
+    const bodyBuffer = await readResponseBodyWithLimit(response, limitBytes);
+    const validation = validateContentType(expectedType, contentType, bodyBuffer);
+    if (!validation.ok) {
+      throw new UpstreamError(validation.errorCode, `Unexpected content type: ${contentType || "unknown"}`);
+    }
+    return {
+      ok: response.ok,
+      status: response.status,
+      contentType,
+      bytes: bodyBuffer.length,
+      ms: Date.now() - start
+    };
+  } catch (err) {
+    if (err instanceof UpstreamError) {
+      throw err;
+    }
+    const code = err.name === "AbortError" || err === "timeout" ? "timeout" : "fetch_failed";
+    throw new UpstreamError(code, err.message || "Upstream fetch failed");
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+async function mapWithConcurrency(items, limit, mapper) {
+  const results = [];
+  let index = 0;
+  const workers = Array.from({ length: limit }, async () => {
+    while (index < items.length) {
+      const current = index;
+      index += 1;
+      results[current] = await mapper(items[current], current);
+    }
+  });
+  await Promise.all(workers);
+  return results;
+}
+
+async function validateRequiredUpstreams() {
+  const failures = [];
+  for (const upstream of REQUIRED_UPSTREAMS) {
+    const expectedType = expectedTypeFromExpectList(upstream.expect);
+    let success = false;
+    let lastError = null;
+    for (let attempt = 1; attempt <= 2; attempt += 1) {
+      try {
+        const result = await fetchUpstreamWithLimits(upstream.url, {
+          expectedType,
+          timeoutMs: DIAG_TIMEOUT_MS
+        });
+        if (result.status === 200) {
+          success = true;
+          upstreamLastSuccess.set(upstream.name, new Date().toISOString());
+          logApp({
+            level: "INFO",
+            kind: "upstream_validation",
+            msg: "Required upstream ok",
+            url: redactUrl(upstream.url),
+            status: result.status,
+            ms: result.ms,
+            contentType: result.contentType,
+            bytes: result.bytes
+          });
+          break;
+        }
+        lastError = new UpstreamError(`http_${result.status}`, `HTTP ${result.status}`);
+      } catch (err) {
+        lastError = err;
+      }
+    }
+
+    if (!success) {
+      const errorCode = lastError?.code || "unreachable";
+      logApp({
+        level: upstream.required ? "ERROR" : "WARN",
+        kind: "upstream_validation",
+        msg: "Required upstream failed",
+        url: redactUrl(upstream.url),
+        errorCode
+      });
+      if (upstream.required) {
+        failures.push(`${upstream.name} (${errorCode})`);
+      }
+    }
+  }
+
+  if (failures.length > 0) {
+    console.error(`[startup] Required upstreams failed: ${failures.join(", ")}`);
+    process.exit(1);
+  }
+}
+
 async function proxyFetch(targetUrl, reqHeaders) {
   const accept = String(reqHeaders["accept"] || "");
+  const expectedType = inferExpectedType(accept);
   const key = cacheKey(targetUrl, accept);
   const requestId = generateRequestId();
   const startTime = Date.now();
@@ -1084,8 +1381,76 @@ async function proxyFetch(targetUrl, reqHeaders) {
         return entry404;
       }
 
-      const buf = Buffer.from(await upstream.arrayBuffer());
       const contentType = upstream.headers.get("content-type") || "application/octet-stream";
+      let buf;
+      try {
+        const limitBytes = resolvePayloadLimit(contentType, expectedType);
+        buf = await readResponseBodyWithLimit(upstream, limitBytes);
+      } catch (err) {
+        if (err instanceof UpstreamError && err.code === "payload_too_large") {
+          logApp({
+            level: "WARN",
+            kind: "payload_violation",
+            msg: "Proxy payload limit exceeded",
+            url: redactUrl(targetUrl),
+            contentType,
+            errorCode: err.code
+          });
+          const elapsed = Date.now() - startTime;
+          const errorEntry = buildProxyErrorEntry({
+            status: 413,
+            errorCode: err.code,
+            upstreamHost,
+            message: err.message,
+            elapsedMs: elapsed,
+            requestId
+          });
+          const qqmsHeaders = qqms.generateHeaders(targetUrl, errorEntry, false);
+          errorEntry.headers = { ...errorEntry.headers, ...qqmsHeaders };
+          logProxyOutcome({
+            url: targetUrl,
+            status: 413,
+            cacheState: "miss",
+            upstreamHost,
+            elapsedMs: elapsed,
+            error: err.code
+          });
+          return errorEntry;
+        }
+        throw err;
+      }
+
+      const validation = validateContentType(expectedType, contentType, buf);
+      if (!validation.ok) {
+        logApp({
+          level: "WARN",
+          kind: "parse_failure",
+          msg: "Proxy content type mismatch",
+          url: redactUrl(targetUrl),
+          contentType,
+          errorCode: validation.errorCode
+        });
+        const elapsed = Date.now() - startTime;
+        const errorEntry = buildProxyErrorEntry({
+          status: 502,
+          errorCode: validation.errorCode,
+          upstreamHost,
+          message: `Unexpected content type: ${contentType || "unknown"}`,
+          elapsedMs: elapsed,
+          requestId
+        });
+        const qqmsHeaders = qqms.generateHeaders(targetUrl, errorEntry, false);
+        errorEntry.headers = { ...errorEntry.headers, ...qqmsHeaders };
+        logProxyOutcome({
+          url: targetUrl,
+          status: 502,
+          cacheState: "miss",
+          upstreamHost,
+          elapsedMs: elapsed,
+          error: validation.errorCode
+        });
+        return errorEntry;
+      }
 
       // Log empty responses for debugging
       if (buf.length === 0) {
@@ -1290,6 +1655,10 @@ async function saveGeocodeCache() {
 function httpsGet(url, options = {}) {
   return new Promise((resolve, reject) => {
     const urlObj = new URL(url);
+    const expectedType = options.expectedType || null;
+    const limitBytes = Number.isFinite(options.maxBytes)
+      ? options.maxBytes
+      : resolvePayloadLimit("", expectedType);
     const reqOptions = {
       hostname: urlObj.hostname,
       port: urlObj.port || 443,
@@ -1312,10 +1681,31 @@ function httpsGet(url, options = {}) {
         return httpsGet(redirectUrl, options).then(resolve).catch(reject);
       }
 
+      const contentType = res.headers["content-type"] || "";
+      const contentLength = Number(res.headers["content-length"] || 0);
+      if (contentLength && limitBytes && contentLength > limitBytes) {
+        res.destroy();
+        return reject(new UpstreamError("payload_too_large", `Payload exceeds ${limitBytes} bytes`));
+      }
+
       const chunks = [];
-      res.on("data", chunk => chunks.push(chunk));
+      let received = 0;
+      res.on("data", chunk => {
+        received += chunk.length;
+        if (limitBytes && received > limitBytes) {
+          res.destroy();
+          return reject(new UpstreamError("payload_too_large", `Payload exceeds ${limitBytes} bytes`));
+        }
+        chunks.push(chunk);
+      });
       res.on("end", () => {
-        const buffer = Buffer.concat(chunks);
+        const buffer = Buffer.concat(chunks, received || undefined);
+        if (expectedType && expectedType !== "binary") {
+          const validation = validateContentType(expectedType, contentType, buffer);
+          if (!validation.ok) {
+            return reject(new UpstreamError(validation.errorCode, `Unexpected content type: ${contentType || "unknown"}`));
+          }
+        }
         resolve({
           statusCode: res.statusCode,
           headers: res.headers,
@@ -1341,7 +1731,9 @@ async function fetchCrimeReportPdfLinks() {
   try {
     const response = await httpsGet(FXBG_CRIME_REPORTS_URL, {
       accept: "text/html",
-      timeout: 30000
+      timeout: 30000,
+      expectedType: "html",
+      maxBytes: PAYLOAD_LIMITS.text
     });
 
     if (response.statusCode !== 200) {
@@ -1398,6 +1790,12 @@ async function fetchCrimeReportPdfLinks() {
     return pdfLinks;
   } catch (e) {
     console.error("[Crime Reports] Failed to fetch crime reports page:", e.message);
+    logApp({
+      level: "ERROR",
+      kind: "payload_violation",
+      msg: "Crime reports page fetch failed",
+      errorCode: e.code || e.message
+    });
     return [];
   }
 }
@@ -1413,7 +1811,9 @@ async function downloadAndParsePdf(pdfUrl) {
     console.log(`[Crime Reports] Downloading PDF: ${pdfUrl}`);
     const response = await httpsGet(pdfUrl, {
       accept: "application/pdf",
-      timeout: 60000
+      timeout: 60000,
+      expectedType: "binary",
+      maxBytes: PAYLOAD_LIMITS.binary
     });
 
     if (response.statusCode !== 200) {
@@ -1439,6 +1839,13 @@ async function downloadAndParsePdf(pdfUrl) {
     };
   } catch (e) {
     console.error(`[Crime Reports] Failed to parse PDF ${pdfUrl}:`, e.message);
+    logApp({
+      level: "WARN",
+      kind: "parse_failure",
+      msg: "Crime report PDF parse failed",
+      url: redactUrl(pdfUrl),
+      errorCode: e.code || e.message
+    });
     return null;
   }
 }
@@ -1598,7 +2005,9 @@ async function geocodeLocation(locationRaw, retryCount = 0) {
       headers: {
         "User-Agent": "FXBG-PALANTIR-CityManager/1.0 (crime-reports-geocoding)"
       },
-      timeout: 15000
+      timeout: 15000,
+      expectedType: "json",
+      maxBytes: PAYLOAD_LIMITS.json
     });
 
     if (response.statusCode !== 200) {
@@ -1820,6 +2229,22 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "OPTIONS") return send(res, 204, "");
 
     const urlObj = new URL(req.url, `http://${req.headers.host}`);
+    const requestStart = Date.now();
+    res.on("finish", () => {
+      const duration = Date.now() - requestStart;
+      const contentLength = Number(res.getHeader("Content-Length"));
+      logApp({
+        level: "INFO",
+        kind: "request",
+        msg: "request_complete",
+        route: urlObj.pathname,
+        method: req.method,
+        status: res.statusCode,
+        url: requestLogUrl(urlObj),
+        ms: duration,
+        bytes: Number.isFinite(contentLength) ? contentLength : undefined
+      });
+    });
 
     // Health check endpoint
     if (urlObj.pathname === "/health") {
@@ -1859,7 +2284,11 @@ const server = http.createServer(async (req, res) => {
       }
 
       if (!OPENUV_API_KEY) {
-        logApp("OpenUV request blocked: missing OPENUV_API_KEY", "WARN");
+        logApp({
+          level: "WARN",
+          kind: "config",
+          msg: "OpenUV request blocked: missing OPENUV_API_KEY"
+        });
         return send(res, 503, JSON.stringify({ ok: false, error: "missing_openuv_key" }), { "Content-Type": "application/json" });
       }
 
@@ -1872,7 +2301,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     // Air Quality API proxy (WAQI token server-side)
-    if (urlObj.pathname === "/api/air-quality") {
+    if (urlObj.pathname === "/api/waqi") {
       const lat = Number(urlObj.searchParams.get("lat"));
       const lon = Number(urlObj.searchParams.get("lon"));
 
@@ -1881,7 +2310,11 @@ const server = http.createServer(async (req, res) => {
       }
 
       if (!WAQI_TOKEN) {
-        logApp("Air quality request blocked: missing WAQI_TOKEN", "WARN");
+        logApp({
+          level: "WARN",
+          kind: "config",
+          msg: "WAQI request blocked: missing WAQI_TOKEN"
+        });
         return send(res, 503, JSON.stringify({ ok: false, error: "missing_waqi_token" }), { "Content-Type": "application/json" });
       }
 
@@ -1892,136 +2325,66 @@ const server = http.createServer(async (req, res) => {
 
     // Diagnostics endpoint - test upstream service connectivity
     if (urlObj.pathname === "/api/diag/upstreams") {
-      console.log("[Diagnostics] Testing upstream services...");
+      const now = Date.now();
+      if (diagCache.data && now - diagCache.ts < DIAG_CACHE_TTL_MS) {
+        return send(res, 200, JSON.stringify(diagCache.data, null, 2), {
+          "Content-Type": "application/json",
+          "X-Diagnostics-Cache": "hit"
+        });
+      }
 
-      const upstreams = [
-        {
-          name: "VA511 Cameras (Primary)",
-          url: "https://511.vdot.virginia.gov/services/map/layers/map/cams",
-          expectedType: "json"
-        },
-        {
-          name: "VA511 Cameras (Iteris CDN)",
-          url: "https://files4.iteriscdn.com/WebApps/VA/SafeTravel/data/local/icons/metadata/icons.cameras_inactive.geojsonp",
-          expectedType: "jsonp"
-        },
-        {
-          name: "VA511 Incidents",
-          url: "https://www.511virginia.org/data/geojson/icons.incident.geojson",
-          expectedType: "json"
-        },
-        {
-          name: "FXBG Crime Reports Page",
-          url: "https://www.fredericksburgva.gov/1426/Crime-Reports",
-          expectedType: "html"
-        },
-        {
-          name: "NWS Weather API",
-          url: "https://api.weather.gov/points/38.3032,-77.4605",
-          expectedType: "json"
-        },
-        {
-          name: "OpenStreetMap Geocoding",
-          url: "https://nominatim.openstreetmap.org/search?format=json&q=fredericksburg+va&limit=1",
-          expectedType: "json"
-        }
-      ];
-
-      const results = [];
-
-      for (const upstream of upstreams) {
+      const results = await mapWithConcurrency(REQUIRED_UPSTREAMS, DIAG_CONCURRENCY, async (upstream) => {
+        const expectedType = expectedTypeFromExpectList(upstream.expect);
         const start = Date.now();
-        let result = {
+        const lastSuccess = upstreamLastSuccess.get(upstream.name) || null;
+        const result = {
           name: upstream.name,
           url: upstream.url,
-          status: "unknown",
-          latencyMs: null,
-          error: null,
-          responseType: null,
-          itemCount: null
+          ok: false,
+          status: "error",
+          contentType: null,
+          ms: null,
+          bytes: null,
+          errorCode: null,
+          lastSuccess,
+          required: upstream.required
         };
 
         try {
-          const response = await httpsGet(upstream.url, {
-            timeout: 15000,
-            headers: {
-              "Accept": upstream.expectedType === "json" ? "application/json,*/*" : "*/*",
-              "User-Agent": "FXBG-PALANTIR-CityManager/1.0 (diagnostics)"
-            }
-          });
+          const response = await fetchUpstreamWithLimits(upstream.url, { expectedType, timeoutMs: DIAG_TIMEOUT_MS });
+          result.ms = response.ms;
+          result.contentType = response.contentType || null;
+          result.bytes = response.bytes || null;
 
-          result.latencyMs = Date.now() - start;
-          result.statusCode = response.statusCode;
-
-          if (response.statusCode === 200) {
+          if (response.status === 200) {
+            result.ok = true;
             result.status = "ok";
-
-            const text = response.text();
-            const contentType = response.headers["content-type"] || "";
-
-            // Detect response type
-            if (contentType.includes("json") || text.trim().startsWith("{") || text.trim().startsWith("[")) {
-              result.responseType = "json";
-              try {
-                // Handle JSONP
-                let jsonText = text;
-                const jsonpMatch = text.match(/^\s*\w+\s*\(\s*({[\s\S]*})\s*\)\s*;?\s*$/);
-                if (jsonpMatch) {
-                  jsonText = jsonpMatch[1];
-                  result.responseType = "jsonp";
-                }
-
-                const parsed = safeJsonParse(jsonText, null, "diagnostics upstream");
-                if (parsed.features) {
-                  result.itemCount = parsed.features.length;
-                } else if (Array.isArray(parsed)) {
-                  result.itemCount = parsed.length;
-                }
-              } catch (e) {
-                result.parseError = e.message;
-              }
-            } else if (contentType.includes("html") || text.includes("<!DOCTYPE")) {
-              result.responseType = "html";
-              // Check for crime report PDF links
-              const pdfMatches = text.match(/DocumentCenter\/View\/\d+/gi);
-              if (pdfMatches) {
-                result.itemCount = pdfMatches.length;
-                result.note = `Found ${pdfMatches.length} potential PDF links`;
-              }
-            } else {
-              result.responseType = "other";
-            }
-          } else if (response.statusCode === 403) {
-            result.status = "blocked";
-            result.error = "Access forbidden (403)";
-          } else if (response.statusCode === 429) {
-            result.status = "rate_limited";
-            result.error = "Rate limited (429)";
+            const successTs = new Date().toISOString();
+            result.lastSuccess = successTs;
+            upstreamLastSuccess.set(upstream.name, successTs);
           } else {
-            result.status = "error";
-            result.error = `HTTP ${response.statusCode}`;
+            result.errorCode = `http_${response.status}`;
+            result.status = lastSuccess ? "stale" : "error";
           }
-        } catch (e) {
-          result.latencyMs = Date.now() - start;
-          result.status = "error";
-          result.error = e.message;
+        } catch (err) {
+          result.ms = Date.now() - start;
+          result.errorCode = err.code || "fetch_failed";
+          result.status = lastSuccess ? "stale" : "error";
         }
 
-        results.push(result);
-      }
+        return result;
+      });
 
-      // Calculate summary
       const okCount = results.filter(r => r.status === "ok").length;
-      const totalCount = results.length;
-
       const response = {
-        ok: okCount === totalCount,
-        summary: `${okCount}/${totalCount} upstreams healthy`,
+        ok: okCount === results.length,
+        summary: `${okCount}/${results.length} upstreams healthy`,
         timestamp: new Date().toISOString(),
         upstreams: results
       };
 
-      console.log(`[Diagnostics] Completed: ${okCount}/${totalCount} upstreams healthy`);
+      diagCache.ts = now;
+      diagCache.data = response;
       return send(res, 200, JSON.stringify(response, null, 2), { "Content-Type": "application/json" });
     }
 
@@ -2260,41 +2623,62 @@ const server = http.createServer(async (req, res) => {
     return serveStatic(req, res);
   } catch (err) {
     console.error("Server error:", err);
-    logApp(`Server error: ${err.message || err}`, "ERROR");
+    logApp({
+      level: "ERROR",
+      kind: "server_error",
+      msg: err.message || String(err)
+    });
     return send(res, 500, String(err || "Server error"));
   }
 });
 
-server.listen(PORT, HOST, () => {
-  console.log(`\n🧠 CITY MANAGER server running on ${HOST}:${PORT}\n`);
-  console.log(`📱 Open on this device: http://127.0.0.1:${PORT}`);
-  logApp(`Server started on ${HOST}:${PORT}`);
+async function startServer() {
+  await validateRequiredUpstreams();
 
-  // Enumerate network interfaces and show LAN URLs
-  const networkInterfaces = os.networkInterfaces();
-  const lanIPs = [];
+  server.listen(PORT, HOST, () => {
+    console.log(`\n🧠 CITY MANAGER server running on ${HOST}:${PORT}\n`);
+    console.log(`📱 Open on this device: http://127.0.0.1:${PORT}`);
+    logApp({
+      level: "INFO",
+      kind: "startup",
+      msg: `Server started on ${HOST}:${PORT}`
+    });
 
-  for (const [name, interfaces] of Object.entries(networkInterfaces)) {
-    for (const iface of interfaces) {
-      // Only show IPv4, non-internal addresses
-      if (iface.family === 'IPv4' && !iface.internal) {
-        lanIPs.push(iface.address);
+    // Enumerate network interfaces and show LAN URLs
+    const networkInterfaces = os.networkInterfaces();
+    const lanIPs = [];
+
+    for (const [name, interfaces] of Object.entries(networkInterfaces)) {
+      for (const iface of interfaces) {
+        // Only show IPv4, non-internal addresses
+        if (iface.family === 'IPv4' && !iface.internal) {
+          lanIPs.push(iface.address);
+        }
       }
     }
-  }
 
-  if (lanIPs.length > 0) {
-    console.log(`\n💻 Open from laptop (tether/Wi-Fi):`);
-    lanIPs.forEach(ip => {
-      console.log(`   http://${ip}:${PORT}`);
-    });
-  }
+    if (lanIPs.length > 0) {
+      console.log(`\n💻 Open from laptop (tether/Wi-Fi):`);
+      lanIPs.forEach(ip => {
+        console.log(`   http://${ip}:${PORT}`);
+      });
+    }
 
-  console.log(`\n🔧 Proxy endpoint: http://127.0.0.1:${PORT}/proxy?url=https://example.com/feed\n`);
+    console.log(`\n🔧 Proxy endpoint: http://127.0.0.1:${PORT}/proxy?url=https://example.com/feed\n`);
+  });
+}
+
+startServer().catch((err) => {
+  console.error("[startup] Server failed to start:", err.message || err);
+  process.exit(1);
 });
 
 process.on("exit", () => {
-  logApp("Server shutting down.");
+  logApp({
+    level: "INFO",
+    kind: "shutdown",
+    msg: "Server shutting down."
+  });
   try {
     appLogStream.end();
     upstreamLogStream.end();

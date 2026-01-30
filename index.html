@@ -351,9 +351,17 @@
         <span class="diagnosticsDrawer__emoji">🩺</span>
         <span>Health & Diagnostics</span>
       </div>
-      <button class="iconBtn" id="diagnosticsClose" title="Close diagnostics">✖️</button>
+      <div class="diagnosticsDrawer__actions">
+        <button class="btn btn--ghost" id="diagnosticsRefresh" type="button" title="Refresh diagnostics">Refresh</button>
+        <button class="btn btn--ghost" id="diagnosticsCopy" type="button" title="Copy diagnostics report">Copy report</button>
+        <button class="iconBtn" id="diagnosticsClose" title="Close diagnostics">✖️</button>
+      </div>
     </div>
     <div class="diagnosticsDrawer__body">
+      <div id="diagnosticsRequiredBanner" class="diagnosticsBanner diagnosticsBanner--hidden" role="alert">
+        <div class="diagnosticsBanner__title">Required upstreams failing</div>
+        <div class="diagnosticsBanner__text" id="diagnosticsRequiredText">—</div>
+      </div>
       <div class="diagnosticsSection">
         <div class="diagnosticsSection__title">System Summary</div>
         <div id="diagnosticsSummary" class="diagnosticsSection__content">Loading…</div>
