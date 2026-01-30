@@ -4615,8 +4615,20 @@ function selectItem(id) {
   function enforceCaps() {
     // Keep newest CONFIG.perf.maxTotalItems items (excluding cameras, which are stable and light)
     const items = Array.from(store.itemsById.values());
-    const cams = items.filter(i => i.sourceId === "va511-cameras");
-    const others = items.filter(i => i.sourceId !== "va511-cameras");
+    const stableSources = new Set([
+      "va511-cameras",
+      "external-cameras",
+      "wetmet",
+      "webcamgalore",
+      "weatherbug",
+      "oxblue",
+      "hope-springs",
+      "hospitals",
+      "schools",
+      "clinics"
+    ]);
+    const cams = items.filter(i => stableSources.has(i.sourceId));
+    const others = items.filter(i => !stableSources.has(i.sourceId));
 
     others.sort((a,b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
     const trimmed = others.slice(0, CONFIG.perf.maxTotalItems);
@@ -4665,7 +4677,7 @@ function selectItem(id) {
     store.markersById.clear();
 
     let markerCount = 0;
-    let filtered = { category: 0, bbox: 0 };
+    let filtered = { category: 0, bbox: 0, crime: 0 };
 
     for (const item of store.itemsById.values()) {
       if (!activeCategories.has(item.category)) {
@@ -4676,11 +4688,15 @@ function selectItem(id) {
         filtered.bbox++;
         continue;
       }
+      if (item.sourceId === "fxbg-crime-reports" && !isCrimeItemVisible(item)) {
+        filtered.crime++;
+        continue;
+      }
       attachMarker(item);
       markerCount++;
     }
 
-    console.log(`Redraw complete: ${markerCount} markers visible (${store.itemsById.size} total items, ${filtered.category} filtered by category, ${filtered.bbox} outside bbox)`);
+    console.log(`Redraw complete: ${markerCount} markers visible (${store.itemsById.size} total items, ${filtered.category} filtered by category, ${filtered.bbox} outside bbox, ${filtered.crime} crime hidden)`);
 
     // Update News Flash panel if it's open
     const newsPanel = document.getElementById("newsFlashPanel");
@@ -6796,30 +6812,57 @@ function selectItem(id) {
   // Crime Reports (FXBG PD)
   // -----------------------------
 
+  function getCrimeWindowDays(usePending = false) {
+    if (!store.crime) return CRIME_UI_DEFAULTS.windowDays;
+    const days = usePending ? store.crime.windowDays : store.crime.appliedWindowDays;
+    return Number.isFinite(days) ? days : CRIME_UI_DEFAULTS.windowDays;
+  }
+
+  function getCrimeCutoff(days) {
+    return Date.now() - days * 86400000;
+  }
+
+  function isCrimeItemInWindow(item, days) {
+    const ts = new Date(item?.timestamp || item?.published || 0).getTime();
+    if (Number.isNaN(ts)) return false;
+    return ts >= getCrimeCutoff(days);
+  }
+
+  function isCrimeItemVisible(item, days = getCrimeWindowDays()) {
+    if (!store.crime?.enabled) return false;
+    return isCrimeItemInWindow(item, days);
+  }
+
   /**
    * Apply crime overlay visibility based on enabled state and time window
    */
   function applyCrimeOverlayVisibility() {
     if (!store.crime) return;
 
-    const now = Date.now();
-    const cutoff = now - store.crime.appliedWindowDays * 86400000;
+    const days = getCrimeWindowDays();
 
     for (const id of store.crime.ids) {
       const item = store.itemsById.get(id);
-      const marker = store.markersById.get(id);
-      if (!item || !marker) continue;
+      if (!item) continue;
 
-      const ts = new Date(item.timestamp || item.published || 0).getTime();
-      const inWindow = !isNaN(ts) && ts >= cutoff;
-      const shouldShow = store.crime.enabled && inWindow;
+      const shouldShow = isCrimeItemVisible(item, days)
+        && activeCategories.has(item.category)
+        && inBbox(item.lat, item.lon, CONFIG.bbox);
 
+      const hadMarker = store.markersById.has(id);
       if (shouldShow) {
-        if (!store.crime.markersOnMap.has(id)) {
-          clusters.addLayer(marker);
+        if (!hadMarker) {
+          attachMarker(item);
+        }
+        const marker = store.markersById.get(id);
+        if (marker && !store.crime.markersOnMap.has(id)) {
+          if (hadMarker) {
+            clusters.addLayer(marker);
+          }
           store.crime.markersOnMap.add(id);
         }
-      } else {
+      } else if (hadMarker) {
+        const marker = store.markersById.get(id);
         clusters.removeLayer(marker);
         store.crime.markersOnMap.delete(id);
       }
@@ -6889,6 +6932,7 @@ function selectItem(id) {
 
       // Apply visibility based on current settings
       applyCrimeOverlayVisibility();
+      updateCrimeIncidentsList();
 
       console.log(`[Crime Reports] Total crime items in store: ${store.crime.ids.size}`);
 
@@ -7050,24 +7094,23 @@ function selectItem(id) {
   /**
    * Update Crime Reports incidents list in panel
    */
-  function updateCrimeIncidentsList() {
+  function updateCrimeIncidentsList({ windowDays } = {}) {
     const listEl = $("crimeIncidentsList");
     if (!listEl || !store.crime) return;
 
-    // Get filtered incidents
-    const now = Date.now();
-    const cutoff = now - store.crime.appliedWindowDays * 86400000;
+    const days = Number.isFinite(windowDays) ? windowDays : getCrimeWindowDays(true);
+    const cutoff = getCrimeCutoff(days);
 
     const incidents = Array.from(store.crime.ids)
       .map(id => store.itemsById.get(id))
-      .filter(item => item && item.timestamp)
+      .filter(Boolean)
       .filter(item => {
-        const ts = new Date(item.timestamp).getTime();
+        const ts = new Date(item.timestamp || item.published || 0).getTime();
         return !isNaN(ts) && ts >= cutoff;
       })
       .sort((a, b) => {
-        const aTime = new Date(a.timestamp).getTime();
-        const bTime = new Date(b.timestamp).getTime();
+        const aTime = new Date(a.timestamp || a.published || 0).getTime();
+        const bTime = new Date(b.timestamp || b.published || 0).getTime();
         return store.crime.sort === "newest" ? bTime - aTime : aTime - bTime;
       })
       .slice(0, 50);
@@ -7402,6 +7445,10 @@ function selectItem(id) {
     store.markersById.clear();
     store.seenKeys.clear();
     clusters.clearLayers();
+    if (store.crime) {
+      store.crime.ids.clear();
+      store.crime.markersOnMap.clear();
+    }
 
     // Set fallback timeout to ensure chips update even if all fetches hang
     const fallbackTimeout = setTimeout(() => {
@@ -8033,6 +8080,7 @@ function selectItem(id) {
       if (customInput) customInput.value = String(store.crime.windowDays);
     }
     updateCrimeAppliedLabel();
+    updateCrimeIncidentsList({ windowDays: store.crime.windowDays });
   });
 
   const crimeCustomInput = $("crimeWindowCustom");
@@ -8042,6 +8090,8 @@ function selectItem(id) {
       const value = parseInt(e.target.value, 10);
       if (Number.isFinite(value) && value > 0) {
         store.crime.windowDays = value;
+        updateCrimeAppliedLabel();
+        updateCrimeIncidentsList({ windowDays: store.crime.windowDays });
       }
     });
   }
