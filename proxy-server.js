@@ -25,22 +25,24 @@ const dotenv = require("dotenv");
 const ENV_PATH = path.join(__dirname, ".env");
 dotenv.config({ path: ENV_PATH });
 
-const REQUIRED_ENV = ["PORT", "LOG_DIR", "OPENUV_API_KEY", "WAQI_TOKEN"];
+const REQUIRED_ENV = ["LOG_DIR"];
 
 function validateConfig() {
   const missing = REQUIRED_ENV.filter((key) => !process.env[key]);
-  const port = Number(process.env.PORT);
+
+  if (missing.length > 0) {
+    const message = `Missing required environment variables: ${missing.join(", ")}. Set them in .env or export them before starting.`;
+    console.error(`[config] ${message}`);
+    process.exit(1);
+  }
+
+  // PORT is optional, default to 8000
+  const port = Number(process.env.PORT) || 8000;
   if (!Number.isFinite(port) || port <= 0) {
-    missing.push("PORT");
+    console.error(`[config] Invalid PORT value. Using default 8000.`);
+    return 8000;
   }
-
-  if (missing.length === 0) {
-    return port;
-  }
-
-  const message = `Missing required environment variables: ${[...new Set(missing)].join(", ")}. Set them in .env or export them before starting.`;
-  console.error(`[config] ${message}`);
-  process.exit(1);
+  return port;
 }
 
 const PORT = validateConfig();
@@ -260,6 +262,14 @@ try {
 
 const OPENUV_API_KEY = process.env.OPENUV_API_KEY || "";
 const WAQI_TOKEN = process.env.WAQI_TOKEN || "";
+
+// Warn about optional API keys at startup
+if (!OPENUV_API_KEY) {
+  console.warn("[config] OPENUV_API_KEY not set; OpenUV endpoints disabled.");
+}
+if (!WAQI_TOKEN) {
+  console.warn("[config] WAQI_TOKEN not set; WAQI endpoints disabled.");
+}
 
 const HOST = process.env.BIND || "0.0.0.0";
 const PUBLIC_DIR = __dirname;
@@ -2284,12 +2294,7 @@ const server = http.createServer(async (req, res) => {
       }
 
       if (!OPENUV_API_KEY) {
-        logApp({
-          level: "WARN",
-          kind: "config",
-          msg: "OpenUV request blocked: missing OPENUV_API_KEY"
-        });
-        return send(res, 503, JSON.stringify({ ok: false, error: "missing_openuv_key" }), { "Content-Type": "application/json" });
+        return send(res, 503, JSON.stringify({ ok: false, disabled: true, reason: "OPENUV_API_KEY missing" }), { "Content-Type": "application/json" });
       }
 
       const targetUrl = `https://api.openuv.io/api/v1/uv?lat=${lat}&lng=${lon}`;
@@ -2310,12 +2315,7 @@ const server = http.createServer(async (req, res) => {
       }
 
       if (!WAQI_TOKEN) {
-        logApp({
-          level: "WARN",
-          kind: "config",
-          msg: "WAQI request blocked: missing WAQI_TOKEN"
-        });
-        return send(res, 503, JSON.stringify({ ok: false, error: "missing_waqi_token" }), { "Content-Type": "application/json" });
+        return send(res, 503, JSON.stringify({ ok: false, disabled: true, reason: "WAQI_TOKEN missing" }), { "Content-Type": "application/json" });
       }
 
       const targetUrl = `https://api.waqi.info/feed/geo:${lat};${lon}/?token=${WAQI_TOKEN}`;
@@ -2380,7 +2380,11 @@ const server = http.createServer(async (req, res) => {
         ok: okCount === results.length,
         summary: `${okCount}/${results.length} upstreams healthy`,
         timestamp: new Date().toISOString(),
-        upstreams: results
+        upstreams: results,
+        optionalServices: {
+          openuv: OPENUV_API_KEY ? "enabled" : "disabled (missing key)",
+          waqi: WAQI_TOKEN ? "enabled" : "disabled (missing token)"
+        }
       };
 
       diagCache.ts = now;
