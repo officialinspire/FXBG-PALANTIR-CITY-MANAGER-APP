@@ -6,12 +6,19 @@ Real-time situational awareness dashboard for Fredericksburg, VA metro area.
 
 **CRITICAL: The proxy server MUST be running for markers/waypoints to load!**
 
-### 1. Start the Server
+### 1. Configure API Keys
+Create a `.env` file in the repo root (see `.env.example`):
+```bash
+OPENUV_API_KEY=your-openuv-key
+WAQI_TOKEN=your-waqi-token
+```
+
+### 2. Start the Server
 ```bash
 node proxy-server.js
 ```
 
-### 2. Open in Browser
+### 3. Open in Browser
 ```
 http://localhost:8000
 ```

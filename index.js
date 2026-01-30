@@ -655,10 +655,10 @@
     // OpenUV API - UV Index data for Fredericksburg area
     openUV: {
       enabled: true,
-      apiKey: "openuv-42jtmrmjxewbj3-io",  // OpenUV API key
+      apiKey: null,  // Configured server-side via .env
       lat: 38.3032,
       lon: -77.4605,
-      baseUrl: "https://api.openuv.io/api/v1/uv"
+      baseUrl: "/api/openuv"
     },
 
     // CDC Data API - Health/disease surveillance data
@@ -673,9 +673,10 @@
     // Air Quality (AQICN/WAQI API)
     air: {
       enabled: true,
-      token: "a58cd9bfebd6036fe5c44135ee5e8dd88e787af4",
       lat: 38.3032,
       lon: -77.4605,
+      token: null, // Configured server-side via .env
+      baseUrl: "/api/air-quality",
       refreshMs: 10 * 60 * 1000  // 10 minutes
     },
 
@@ -1760,8 +1761,10 @@
     try {
       const stored = localStorage.getItem("fxbg.crimeUI");
       if (stored) {
-        const parsed = JSON.parse(stored);
-        return { ...CRIME_UI_DEFAULTS, ...parsed };
+        const parsed = safeJsonParse(stored, null, "crime UI");
+        if (parsed && typeof parsed === "object") {
+          return { ...CRIME_UI_DEFAULTS, ...parsed };
+        }
       }
     } catch (err) {
       console.warn("[Crime UI] Failed to load from localStorage:", err);
@@ -1828,6 +1831,16 @@
   const $ = (id) => document.getElementById(id);
 
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+  function safeJsonParse(raw, fallback = null, context = "json") {
+    if (raw === null || raw === undefined) return fallback;
+    try {
+      return JSON.parse(raw);
+    } catch (err) {
+      console.warn(`[safeJsonParse] Failed to parse ${context}:`, err);
+      return fallback;
+    }
+  }
 
   // Sound effects system using Web Audio API
   const audioContext = new (window.AudioContext || window.webkitAudioContext)();
@@ -1970,11 +1983,13 @@
       try {
         const saved = localStorage.getItem(storageKey);
         if (saved) {
-          const pos = JSON.parse(saved);
-          el.style.left = pos.left + 'px';
-          el.style.top = pos.top + 'px';
-          el.style.right = 'auto';
-          el.style.bottom = 'auto';
+          const pos = safeJsonParse(saved, null, "legend position");
+          if (pos && Number.isFinite(pos.left) && Number.isFinite(pos.top)) {
+            el.style.left = pos.left + 'px';
+            el.style.top = pos.top + 'px';
+            el.style.right = 'auto';
+            el.style.bottom = 'auto';
+          }
         }
       } catch (e) {
         console.warn('Failed to restore legend position:', e);
@@ -2406,11 +2421,12 @@
       const healthBadgeText = document.getElementById('healthBadgeText');
       if (healthBadgeDot && healthBadgeText) {
         // Set badge dot color based on health status
+        const statusKey = String(health.status || '').toLowerCase();
         healthBadgeDot.className = 'healthBadge__dot';
-        if (health.status === 'Live') {
+        if (statusKey === 'live') {
           healthBadgeDot.classList.add('healthBadge__dot--ok');
           healthBadgeText.textContent = `Feeds: OK`;
-        } else if (health.status === 'Partial') {
+        } else if (statusKey === 'partial') {
           healthBadgeDot.classList.add('healthBadge__dot--warn');
           healthBadgeText.textContent = `Feeds: ${this.recentErrors.size} issue(s)`;
         } else {
@@ -2649,7 +2665,8 @@
       }
     };
 
-    const local = tryLocalProxy();
+    const skipProxy = !!(opts && opts.skipProxy);
+    const local = skipProxy ? null : tryLocalProxy();
     if (local) candidates.push({ url: local, type: 'proxy' });
 
     // Allow direct fetch only for same-origin or known CORS-friendly APIs (ex: NWS).
@@ -3765,12 +3782,14 @@
   function restoreHeaderIfNoBlockingPanels() {
     const newsPanel = $("newsFlashPanel");
     const radioPanel = $("radioPanel");
+    const diagnosticsDrawer = $("diagnosticsDrawer");
     const newsHidden = newsPanel?.classList.contains("newsFlashPanel--hidden") ?? true;
     const radioHidden = radioPanel?.classList.contains("radioPanel--hidden") ?? true;
+    const diagnosticsHidden = diagnosticsDrawer?.classList.contains("diagnosticsDrawer--hidden") ?? true;
     const dockOpen = dockState?.isOpen ?? false;
 
     // If both panels are hidden AND dock is closed, restore the header
-    if (newsHidden && radioHidden && !dockOpen) {
+    if (newsHidden && radioHidden && diagnosticsHidden && !dockOpen) {
       setMobileHeaderCollapsed(false);
     }
   }
@@ -4996,7 +5015,7 @@ function selectItem(id) {
     const parseJsonpCamera = (text) => {
       if (typeof text !== 'string') return text;
       const match = text.match(/^\s*\w+\s*\(\s*({[\s\S]*})\s*\)\s*;?\s*$/);
-      return match ? JSON.parse(match[1]) : JSON.parse(text);
+      return match ? safeJsonParse(match[1], null, "va511 camera jsonp") : safeJsonParse(text, null, "va511 camera json");
     };
 
     // Try primary camera endpoint first, then fallbacks if it fails
@@ -5109,7 +5128,7 @@ function selectItem(id) {
     const parseJsonp = (text) => {
       if (typeof text !== 'string') return text;
       const match = text.match(/^\s*\w+\s*\(\s*({[\s\S]*})\s*\)\s*;?\s*$/);
-      return match ? JSON.parse(match[1]) : JSON.parse(text);
+      return match ? safeJsonParse(match[1], null, "va511 incidents jsonp") : safeJsonParse(text, null, "va511 incidents json");
     };
 
     // Try primary endpoint first, then fallback if it fails
@@ -6163,14 +6182,16 @@ function selectItem(id) {
       const url = `${CONFIG.openUV.baseUrl}?lat=${CONFIG.openUV.lat}&lng=${CONFIG.openUV.lon}`;
       const data = await fetchWithProxies(url, {
         expect: "json",
+        skipProxy: true,
         headers: {
-          "x-access-token": CONFIG.openUV.apiKey,
           "Accept": "application/json"
         }
       });
 
       if (!data || !data.result) {
         console.warn("[OpenUV] No valid UV data received");
+        recordSourceFailure('openuv', 'invalid_data');
+        recordFeedError('openuv');
         return;
       }
 
@@ -6453,8 +6474,8 @@ function selectItem(id) {
     store.locks.air = true;
 
     try {
-      const url = `https://api.waqi.info/feed/geo:${CONFIG.air.lat};${CONFIG.air.lon}/?token=${CONFIG.air.token}`;
-      const data = await fetchWithProxies(url, { expect: "json" });
+      const url = `${CONFIG.air.baseUrl}?lat=${CONFIG.air.lat}&lon=${CONFIG.air.lon}`;
+      const data = await fetchWithProxies(url, { expect: "json", skipProxy: true });
 
       if (data && data.status === "ok" && data.data && typeof data.data.aqi === "number") {
         const aqi = data.data.aqi;
@@ -6487,6 +6508,8 @@ function selectItem(id) {
         console.warn("[Air Quality] No valid AQI data received");
         const airTextEl = getChipElement("airText");
         if (airTextEl) airTextEl.textContent = "AQI: N/A";
+        recordSourceFailure('air', 'invalid_data');
+        recordFeedError('air');
       }
     } catch (err) {
       console.error("[Air Quality] Fetch failed:", err.message);
@@ -7022,6 +7045,161 @@ function selectItem(id) {
   // -----------------------------
   // Health Badge - Click to show diagnostics
   // -----------------------------
+  const diagnosticsDrawer = $("diagnosticsDrawer");
+  const diagnosticsOverlay = $("diagnosticsOverlay");
+  const diagnosticsSummary = $("diagnosticsSummary");
+  const diagnosticsUpstreams = $("diagnosticsUpstreams");
+  const diagnosticsCache = $("diagnosticsCache");
+
+  function setDiagnosticsDrawerOpen(isOpen) {
+    if (!diagnosticsDrawer || !diagnosticsOverlay) return;
+    diagnosticsDrawer.classList.toggle("diagnosticsDrawer--hidden", !isOpen);
+    diagnosticsOverlay.classList.toggle("diagnosticsOverlay--hidden", !isOpen);
+    diagnosticsOverlay.setAttribute("aria-hidden", (!isOpen).toString());
+
+    if (isOpen) {
+      setMobileHeaderCollapsed(true);
+    } else {
+      restoreHeaderIfNoBlockingPanels();
+    }
+  }
+
+  function formatDurationShort(ms) {
+    if (!Number.isFinite(ms)) return "—";
+    const seconds = Math.floor(ms / 1000);
+    const minutes = Math.floor(seconds / 60);
+    const hours = Math.floor(minutes / 60);
+    if (hours > 0) return `${hours}h ${minutes % 60}m`;
+    if (minutes > 0) return `${minutes}m ${seconds % 60}s`;
+    return `${seconds}s`;
+  }
+
+  async function fetchDiagnosticsJson(url) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort("Diagnostics timeout"), 15000);
+    try {
+      const response = await fetch(url, { signal: controller.signal });
+      const text = await response.text();
+      const data = safeJsonParse(text, null, `diagnostics ${url}`);
+      return { ok: response.ok, status: response.status, data };
+    } catch (err) {
+      return { ok: false, status: 0, error: err.message || String(err), data: null };
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  function renderDiagnosticsSummary(healthData) {
+    if (!diagnosticsSummary) return;
+    const localHealth = healthTracker.computeHealth();
+    const serverStatus = healthData?.status || "unknown";
+    const uptimeMs = healthData?.uptimeMs ?? null;
+
+    diagnosticsSummary.innerHTML = `
+      <div class="diagnosticsRow">
+        <div>
+          <div class="diagnosticsRow__title">Client Health</div>
+          <div>${localHealth.title}</div>
+        </div>
+        <div class="diagnosticsBadge ${localHealth.status === "LIVE" ? "diagnosticsBadge--ok" : localHealth.status === "PARTIAL" ? "diagnosticsBadge--warn" : "diagnosticsBadge--error"}">
+          ${localHealth.status}
+        </div>
+      </div>
+      <div class="diagnosticsRow">
+        <div>
+          <div class="diagnosticsRow__title">Server Status</div>
+          <div>${serverStatus}</div>
+        </div>
+        <div class="diagnosticsBadge ${serverStatus === "ok" ? "diagnosticsBadge--ok" : "diagnosticsBadge--warn"}">
+          ${serverStatus.toUpperCase()}
+        </div>
+      </div>
+      <div class="diagnosticsRow">
+        <div>
+          <div class="diagnosticsRow__title">Server Uptime</div>
+          <div>${formatDurationShort(uptimeMs)}</div>
+        </div>
+        <div class="diagnosticsBadge diagnosticsBadge--ok">LIVE</div>
+      </div>
+    `;
+  }
+
+  function renderDiagnosticsUpstreams(upstreams) {
+    if (!diagnosticsUpstreams) return;
+    if (!Array.isArray(upstreams)) {
+      diagnosticsUpstreams.textContent = "Unable to load upstream diagnostics.";
+      return;
+    }
+
+    diagnosticsUpstreams.innerHTML = upstreams.map(upstream => {
+      const status = upstream.status || "unknown";
+      const badgeClass = status === "ok" ? "diagnosticsBadge--ok" : status === "blocked" || status === "rate_limited" ? "diagnosticsBadge--warn" : "diagnosticsBadge--error";
+      const latency = Number.isFinite(upstream.latencyMs) ? `${upstream.latencyMs}ms` : "—";
+      return `
+        <div class="diagnosticsRow">
+          <div>
+            <div class="diagnosticsRow__title">${escapeHtml(upstream.name || "Unknown")}</div>
+            <div>${escapeHtml(upstream.url || "")}</div>
+          </div>
+          <div style="text-align:right;">
+            <div class="diagnosticsBadge ${badgeClass}">${status.toUpperCase()}</div>
+            <div style="font-size:11px;color:var(--muted2);margin-top:4px;">${latency}</div>
+          </div>
+        </div>
+      `;
+    }).join("");
+  }
+
+  function renderDiagnosticsCache(cacheStats) {
+    if (!diagnosticsCache) return;
+    if (!cacheStats) {
+      diagnosticsCache.textContent = "Unable to load cache stats.";
+      return;
+    }
+
+    const stats = cacheStats.cache || cacheStats;
+    diagnosticsCache.innerHTML = `
+      <div class="diagnosticsRow">
+        <div>
+          <div class="diagnosticsRow__title">Entries</div>
+          <div>${stats.entries ?? "—"}</div>
+        </div>
+        <div class="diagnosticsBadge diagnosticsBadge--ok">${stats.entries ?? 0}</div>
+      </div>
+      <div class="diagnosticsRow">
+        <div>
+          <div class="diagnosticsRow__title">Cache Size</div>
+          <div>${stats.bytes ? `${Math.round(stats.bytes / 1024 / 1024)} MB` : "—"}</div>
+        </div>
+        <div class="diagnosticsBadge diagnosticsBadge--ok">${stats.maxEntries ?? "—"} max</div>
+      </div>
+      <div class="diagnosticsRow">
+        <div>
+          <div class="diagnosticsRow__title">Max Bytes</div>
+          <div>${stats.maxBytes ? `${Math.round(stats.maxBytes / 1024 / 1024)} MB` : "—"}</div>
+        </div>
+        <div class="diagnosticsBadge diagnosticsBadge--ok">CAP</div>
+      </div>
+    `;
+  }
+
+  async function refreshDiagnosticsDrawer() {
+    if (!diagnosticsDrawer) return;
+    if (diagnosticsSummary) diagnosticsSummary.textContent = "Loading…";
+    if (diagnosticsUpstreams) diagnosticsUpstreams.textContent = "Loading…";
+    if (diagnosticsCache) diagnosticsCache.textContent = "Loading…";
+
+    const [healthRes, upstreamRes, cacheRes] = await Promise.all([
+      fetchDiagnosticsJson("/health"),
+      fetchDiagnosticsJson("/api/diag/upstreams"),
+      fetchDiagnosticsJson("/cache/stats")
+    ]);
+
+    renderDiagnosticsSummary(healthRes.data || null);
+    renderDiagnosticsUpstreams(upstreamRes.data?.upstreams || null);
+    renderDiagnosticsCache(cacheRes.data || null);
+  }
+
   const healthBadge = $("healthBadge");
   if (healthBadge) {
     healthBadge.addEventListener("click", async () => {
@@ -7030,6 +7208,11 @@ function selectItem(id) {
       if (systemTab) {
         systemTab.click();
       }
+
+      setDiagnosticsDrawerOpen(true);
+      refreshDiagnosticsDrawer().catch(err => {
+        console.warn("[Diagnostics] Drawer update failed:", err);
+      });
 
       // Fetch and show diagnostics in console
       try {
@@ -7047,6 +7230,18 @@ function selectItem(id) {
       } catch (e) {
         console.warn("[Diagnostics] Failed to fetch:", e.message);
       }
+    });
+  }
+
+  const diagnosticsClose = $("diagnosticsClose");
+  if (diagnosticsClose) {
+    diagnosticsClose.addEventListener("click", () => {
+      setDiagnosticsDrawerOpen(false);
+    });
+  }
+  if (diagnosticsOverlay) {
+    diagnosticsOverlay.addEventListener("click", () => {
+      setDiagnosticsDrawerOpen(false);
     });
   }
 
@@ -7707,7 +7902,9 @@ function selectItem(id) {
       let collapsedGroups = {};
       try {
         const stored = localStorage.getItem("fxbg_overlay_groups_collapsed");
-        if (stored) collapsedGroups = JSON.parse(stored);
+        if (stored) {
+          collapsedGroups = safeJsonParse(stored, {}, "overlay group state");
+        }
       } catch(e) {}
 
       // Render each group as an accordion
@@ -7850,7 +8047,9 @@ function selectItem(id) {
           try {
             let collapsedGroups = {};
             const stored = localStorage.getItem("fxbg_overlay_groups_collapsed");
-            if (stored) collapsedGroups = JSON.parse(stored);
+            if (stored) {
+              collapsedGroups = safeJsonParse(stored, {}, "overlay group state");
+            }
 
             collapsedGroups[groupName] = groupEl.classList.contains('collapsed');
             localStorage.setItem("fxbg_overlay_groups_collapsed", JSON.stringify(collapsedGroups));
@@ -8093,7 +8292,7 @@ function selectItem(id) {
   }
 
   function loadLegendPos(){
-    try { return JSON.parse(localStorage.getItem("fxbgLegendPos") || "null"); } catch(e){ return null; }
+    return safeJsonParse(localStorage.getItem("fxbgLegendPos") || "null", null, "legend position");
   }
   function saveLegendPos(pos){
     try { localStorage.setItem("fxbgLegendPos", JSON.stringify(pos)); } catch(e){}

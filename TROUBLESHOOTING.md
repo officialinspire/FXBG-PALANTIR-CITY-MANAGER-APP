@@ -4,6 +4,22 @@ This document describes known issues with external data sources and how to addre
 
 ## Known Issues (as of January 2026)
 
+### 0. Missing API Keys (Startup Failure)
+
+**Issue:** Proxy server exits immediately with missing environment variable errors.
+
+**Root Cause:** `.env` file or environment variables are missing required API keys.
+
+**Fix:**
+1. Create a `.env` file in the repo root (see `.env.example`)
+2. Add:
+   ```
+   OPENUV_API_KEY=your-openuv-key
+   WAQI_TOKEN=your-waqi-token
+   ```
+
+**Note:** For local diagnostics-only sessions, you can bypass validation by setting `SKIP_CONFIG_VALIDATION=1` (not recommended for production).
+
 ### 1. Virginia Crash Data - HTTP 404 Errors
 
 **Issue:** The data.virginia.gov Socrata API endpoint returns 404 Not Found errors.

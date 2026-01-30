@@ -18,6 +18,106 @@ const fsp = require("fs/promises");
 const path = require("path");
 const os = require("os");
 
+// -----------------------------
+// Environment & Logging Setup
+// -----------------------------
+const ENV_PATH = path.join(__dirname, ".env");
+const LOG_DIR = path.join(__dirname, "logs");
+const APP_LOG_PATH = path.join(LOG_DIR, "app.log");
+const UPSTREAM_LOG_PATH = path.join(LOG_DIR, "upstreams.log");
+
+function loadEnvFile(filePath) {
+  try {
+    if (!fs.existsSync(filePath)) return;
+    const raw = fs.readFileSync(filePath, "utf8");
+    raw.split(/\r?\n/).forEach((line) => {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith("#")) return;
+      const eqIndex = trimmed.indexOf("=");
+      if (eqIndex === -1) return;
+      const key = trimmed.slice(0, eqIndex).trim();
+      let value = trimmed.slice(eqIndex + 1).trim();
+      if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+        value = value.slice(1, -1);
+      }
+      if (!Object.prototype.hasOwnProperty.call(process.env, key)) {
+        process.env[key] = value;
+      }
+    });
+  } catch (err) {
+    console.warn("[env] Failed to load .env:", err.message);
+  }
+}
+
+function ensureLogDir() {
+  try {
+    fs.mkdirSync(LOG_DIR, { recursive: true });
+  } catch (err) {
+    console.warn("[logs] Failed to ensure log directory:", err.message);
+  }
+}
+
+ensureLogDir();
+loadEnvFile(ENV_PATH);
+
+const appLogStream = fs.createWriteStream(APP_LOG_PATH, { flags: "a" });
+const upstreamLogStream = fs.createWriteStream(UPSTREAM_LOG_PATH, { flags: "a" });
+
+function logLine(stream, level, message) {
+  const timestamp = new Date().toISOString();
+  const line = `[${timestamp}] [${level}] ${message}${os.EOL}`;
+  try {
+    stream.write(line);
+  } catch (err) {
+    console.warn("[logs] Failed to write log:", err.message);
+  }
+}
+
+function logApp(message, level = "INFO") {
+  logLine(appLogStream, level, message);
+}
+
+function logUpstream(message, level = "INFO") {
+  logLine(upstreamLogStream, level, message);
+}
+
+function redactUrl(rawUrl) {
+  try {
+    const url = new URL(rawUrl);
+    const params = url.searchParams;
+    const sensitiveKeys = ["token", "apikey", "api_key", "key", "access_token"];
+    sensitiveKeys.forEach((key) => {
+      if (params.has(key)) {
+        params.set(key, "REDACTED");
+      }
+    });
+    url.search = params.toString();
+    return url.toString();
+  } catch {
+    return rawUrl;
+  }
+}
+
+function logProxyOutcome({ url, status, cacheState, upstreamHost, elapsedMs, error }) {
+  const safeUrl = redactUrl(url);
+  const statusText = status ? `status=${status}` : "status=unknown";
+  const cacheText = cacheState ? `cache=${cacheState}` : "cache=unknown";
+  const elapsedText = Number.isFinite(elapsedMs) ? `elapsedMs=${elapsedMs}` : "elapsedMs=—";
+  const hostText = upstreamHost ? `host=${upstreamHost}` : "host=unknown";
+  const errorText = error ? `error=${error}` : "";
+  logUpstream(`[proxy] ${statusText} ${cacheText} ${elapsedText} ${hostText} url=${safeUrl} ${errorText}`.trim());
+}
+
+function safeJsonParse(raw, fallback = null, context = "json") {
+  if (raw === null || raw === undefined) return fallback;
+  try {
+    return JSON.parse(raw);
+  } catch (err) {
+    logApp(`Failed to parse ${context}: ${err.message}`, "WARN");
+    return fallback;
+  }
+}
+
 // PDF parsing (for crime reports)
 let pdfParse = null;
 try {
@@ -25,6 +125,31 @@ try {
 } catch (e) {
   console.warn("[Crime Reports] pdf-parse not installed. Run 'npm install' to enable PDF parsing.");
 }
+
+const REQUIRED_ENV = ["OPENUV_API_KEY", "WAQI_TOKEN"];
+const SKIP_CONFIG_VALIDATION = process.env.SKIP_CONFIG_VALIDATION === "1";
+
+function validateConfig() {
+  const missing = REQUIRED_ENV.filter((key) => !process.env[key]);
+  if (missing.length === 0) return true;
+
+  const message = `Missing required environment variables: ${missing.join(", ")}. Set them in .env or export them before starting.`;
+  console.error(`[config] ${message}`);
+  logApp(message, "ERROR");
+
+  if (SKIP_CONFIG_VALIDATION) {
+    console.warn("[config] SKIP_CONFIG_VALIDATION=1 set; continuing without required keys.");
+    logApp("SKIP_CONFIG_VALIDATION=1 set; continuing without required keys.", "WARN");
+    return false;
+  }
+
+  process.exit(1);
+}
+
+validateConfig();
+
+const OPENUV_API_KEY = process.env.OPENUV_API_KEY || "";
+const WAQI_TOKEN = process.env.WAQI_TOKEN || "";
 
 const HOST = process.env.BIND || "0.0.0.0";
 const PORT = Number(process.env.PORT || 8000);
@@ -581,8 +706,8 @@ class QQMS {
 
     // Attempt to parse and count items
     if (contentType.includes('json') && bytes > 0 && bytes < 10 * 1024 * 1024) {
-      try {
-        const parsed = JSON.parse(body.toString('utf8'));
+      const parsed = safeJsonParse(body.toString('utf8'), null, "qqms quantity");
+      if (parsed) {
         dataStructure = 'json';
 
         if (Array.isArray(parsed)) {
@@ -595,7 +720,7 @@ class QQMS {
         } else if (typeof parsed === 'object') {
           itemCount = Object.keys(parsed).length;
         }
-      } catch {}
+      }
     } else if (contentType.includes('xml') || contentType.includes('rss') || contentType.includes('atom')) {
       dataStructure = 'xml/rss';
       const text = body.toString('utf8', 0, Math.min(bytes, 500000));
@@ -700,6 +825,14 @@ async function proxyFetch(targetUrl, reqHeaders) {
     const elapsed = Date.now() - startTime;
     let upstreamHost = '';
     try { upstreamHost = new URL(targetUrl).hostname; } catch {}
+
+    logProxyOutcome({
+      url: targetUrl,
+      status: cached.status,
+      cacheState: "hit",
+      upstreamHost,
+      elapsedMs: elapsed
+    });
 
     return {
       ...cached,
@@ -819,6 +952,14 @@ async function proxyFetch(targetUrl, reqHeaders) {
           console.log(`[proxy] Using stale cache for ${targetUrl} (fetch error: ${e.message || 'unknown'})`);
           const qqmsHeaders = qqms.generateHeaders(targetUrl, staleCandidate, true);
           const elapsed = Date.now() - startTime;
+          logProxyOutcome({
+            url: targetUrl,
+            status: 200,
+            cacheState: "stale",
+            upstreamHost,
+            elapsedMs: elapsed,
+            error: e.message || "fetch_error"
+          });
           return {
             ...staleCandidate,
             headers: {
@@ -859,6 +1000,14 @@ async function proxyFetch(targetUrl, reqHeaders) {
         qqms.recordError(targetUrl);
         const qqmsHeaders = qqms.generateHeaders(targetUrl, staleCandidate, true);
         const elapsed = Date.now() - startTime;
+        logProxyOutcome({
+          url: targetUrl,
+          status: 200,
+          cacheState: "stale",
+          upstreamHost,
+          elapsedMs: elapsed,
+          error: `upstream_${upstream.status}`
+        });
         return {
           ...staleCandidate,
           headers: {
@@ -924,6 +1073,14 @@ async function proxyFetch(targetUrl, reqHeaders) {
         };
         const qqmsHeaders = qqms.generateHeaders(targetUrl, entry404, false);
         entry404.headers = { ...entry404.headers, ...qqmsHeaders };
+        logProxyOutcome({
+          url: targetUrl,
+          status: 404,
+          cacheState: "miss",
+          upstreamHost,
+          elapsedMs: elapsed,
+          error: "upstream_404"
+        });
         return entry404;
       }
 
@@ -959,6 +1116,14 @@ async function proxyFetch(targetUrl, reqHeaders) {
             qqms.recordError(targetUrl);
             const qqmsHeaders = qqms.generateHeaders(targetUrl, staleCandidate, true);
             const elapsed = Date.now() - startTime;
+            logProxyOutcome({
+              url: targetUrl,
+              status: 200,
+              cacheState: "stale",
+              upstreamHost,
+              elapsedMs: elapsed,
+              error: "html_instead_of_data"
+            });
             return {
               ...staleCandidate,
               headers: {
@@ -1006,6 +1171,14 @@ async function proxyFetch(targetUrl, reqHeaders) {
             };
             const qqmsHeaders = qqms.generateHeaders(targetUrl, errorEntry, false);
             errorEntry.headers = { ...errorEntry.headers, ...qqmsHeaders };
+            logProxyOutcome({
+              url: targetUrl,
+              status: 502,
+              cacheState: "miss",
+              upstreamHost,
+              elapsedMs: elapsed,
+              error: "html_instead_of_data"
+            });
             return errorEntry;
           }
         }
@@ -1035,6 +1208,13 @@ async function proxyFetch(targetUrl, reqHeaders) {
       entry.headers = { ...entry.headers, ...qqmsHeaders };
 
       cache.set(key, entry);
+      logProxyOutcome({
+        url: targetUrl,
+        status: upstream.status,
+        cacheState: "fresh",
+        upstreamHost,
+        elapsedMs: elapsed
+      });
       return entry;
     } finally {
       activeFetches = Math.max(0, activeFetches - 1);
@@ -1082,11 +1262,13 @@ const GEOCODE_CACHE_FILE = path.join(__dirname, "data", "geocode_cache.json");
 async function loadGeocodeCache() {
   try {
     const data = await fsp.readFile(GEOCODE_CACHE_FILE, "utf8");
-    const parsed = JSON.parse(data);
-    for (const [key, value] of Object.entries(parsed)) {
-      geocodeCache.set(key, value);
+    const parsed = safeJsonParse(data, null, "geocode cache");
+    if (parsed && typeof parsed === "object") {
+      for (const [key, value] of Object.entries(parsed)) {
+        geocodeCache.set(key, value);
+      }
+      console.log(`[Geocode] Loaded ${geocodeCache.size} cached locations`);
     }
-    console.log(`[Geocode] Loaded ${geocodeCache.size} cached locations`);
   } catch (e) {
     // Cache file doesn't exist yet
   }
@@ -1424,7 +1606,7 @@ async function geocodeLocation(locationRaw, retryCount = 0) {
       return null;
     }
 
-    const results = JSON.parse(response.text());
+    const results = safeJsonParse(response.text(), [], "geocode response");
     if (results.length > 0) {
       const result = {
         lat: parseFloat(results[0].lat),
@@ -1645,6 +1827,7 @@ const server = http.createServer(async (req, res) => {
       const cacheStats = cacheManager.stats();
       const health = {
         status: "ok",
+        uptimeMs: uptimeMs,
         uptime: {
           ms: uptimeMs,
           human: `${Math.floor(uptimeMs / 1000 / 60)} minutes`
@@ -1664,6 +1847,47 @@ const server = http.createServer(async (req, res) => {
         hostBackoffs: hostBackoff.size
       };
       return send(res, 200, JSON.stringify(health, null, 2), { "Content-Type": "application/json" });
+    }
+
+    // OpenUV API proxy (server-side key injection)
+    if (urlObj.pathname === "/api/openuv") {
+      const lat = Number(urlObj.searchParams.get("lat"));
+      const lon = Number(urlObj.searchParams.get("lng") || urlObj.searchParams.get("lon"));
+
+      if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+        return send(res, 400, JSON.stringify({ ok: false, error: "invalid_coordinates" }), { "Content-Type": "application/json" });
+      }
+
+      if (!OPENUV_API_KEY) {
+        logApp("OpenUV request blocked: missing OPENUV_API_KEY", "WARN");
+        return send(res, 503, JSON.stringify({ ok: false, error: "missing_openuv_key" }), { "Content-Type": "application/json" });
+      }
+
+      const targetUrl = `https://api.openuv.io/api/v1/uv?lat=${lat}&lng=${lon}`;
+      const entry = await proxyFetch(targetUrl, {
+        accept: "application/json",
+        "x-access-token": OPENUV_API_KEY
+      });
+      return send(res, entry.status || 200, entry.body, entry.headers);
+    }
+
+    // Air Quality API proxy (WAQI token server-side)
+    if (urlObj.pathname === "/api/air-quality") {
+      const lat = Number(urlObj.searchParams.get("lat"));
+      const lon = Number(urlObj.searchParams.get("lon"));
+
+      if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+        return send(res, 400, JSON.stringify({ ok: false, error: "invalid_coordinates" }), { "Content-Type": "application/json" });
+      }
+
+      if (!WAQI_TOKEN) {
+        logApp("Air quality request blocked: missing WAQI_TOKEN", "WARN");
+        return send(res, 503, JSON.stringify({ ok: false, error: "missing_waqi_token" }), { "Content-Type": "application/json" });
+      }
+
+      const targetUrl = `https://api.waqi.info/feed/geo:${lat};${lon}/?token=${WAQI_TOKEN}`;
+      const entry = await proxyFetch(targetUrl, { accept: "application/json" });
+      return send(res, entry.status || 200, entry.body, entry.headers);
     }
 
     // Diagnostics endpoint - test upstream service connectivity
@@ -1747,7 +1971,7 @@ const server = http.createServer(async (req, res) => {
                   result.responseType = "jsonp";
                 }
 
-                const parsed = JSON.parse(jsonText);
+                const parsed = safeJsonParse(jsonText, null, "diagnostics upstream");
                 if (parsed.features) {
                   result.itemCount = parsed.features.length;
                 } else if (Array.isArray(parsed)) {
@@ -1931,12 +2155,12 @@ const server = http.createServer(async (req, res) => {
         // Try to load existing incidents
         try {
           const data = await fsp.readFile(incidentsFile, "utf8");
-          const parsed = JSON.parse(data);
+          const parsed = safeJsonParse(data, null, "crime incidents cache");
 
           // Handle both old format (array) and new format (object with metadata)
           if (Array.isArray(parsed)) {
             incidents = parsed;
-          } else if (parsed.incidents && Array.isArray(parsed.incidents)) {
+          } else if (parsed && parsed.incidents && Array.isArray(parsed.incidents)) {
             incidents = parsed.incidents;
             lastUpdated = parsed.lastUpdated;
             dataSource = "scraped";
@@ -2036,6 +2260,7 @@ const server = http.createServer(async (req, res) => {
     return serveStatic(req, res);
   } catch (err) {
     console.error("Server error:", err);
+    logApp(`Server error: ${err.message || err}`, "ERROR");
     return send(res, 500, String(err || "Server error"));
   }
 });
@@ -2043,6 +2268,7 @@ const server = http.createServer(async (req, res) => {
 server.listen(PORT, HOST, () => {
   console.log(`\n🧠 CITY MANAGER server running on ${HOST}:${PORT}\n`);
   console.log(`📱 Open on this device: http://127.0.0.1:${PORT}`);
+  logApp(`Server started on ${HOST}:${PORT}`);
 
   // Enumerate network interfaces and show LAN URLs
   const networkInterfaces = os.networkInterfaces();
@@ -2065,4 +2291,14 @@ server.listen(PORT, HOST, () => {
   }
 
   console.log(`\n🔧 Proxy endpoint: http://127.0.0.1:${PORT}/proxy?url=https://example.com/feed\n`);
+});
+
+process.on("exit", () => {
+  logApp("Server shutting down.");
+  try {
+    appLogStream.end();
+    upstreamLogStream.end();
+  } catch (_) {
+    // Ignore shutdown errors
+  }
 });
