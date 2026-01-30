@@ -2224,7 +2224,7 @@
       "chipTraffic", "trafficText",
       "chipNet", "netText",
       "chipAir", "airDot", "airText",
-      "btnCrime", "btnNewsFlash", "btnRadioScanner", "btnRefresh",
+      "btnCrime", "btnReport", "btnNewsFlash", "btnRadioScanner", "btnRefresh",
       "lastUpdate"
     ];
 
@@ -2910,6 +2910,33 @@
   const GEOCODE_CACHE_TTL = 7 * 24 * 60 * 60 * 1000; // Cache for 7 days
   const GEOCODE_RATE_LIMIT_MS = 1000; // 1 request per second for Nominatim
   let lastGeocodeTime = 0;
+
+  const KNOWN_LOCATION_OVERRIDES = (() => {
+    const cams = CONFIG.externalCameras?.cameras || [];
+    return cams
+      .filter((cam) => cam && ["school", "hospital", "clinic"].includes(cam.type))
+      .map((cam) => {
+        const lat = Number(cam.lat);
+        const lon = Number(cam.lon);
+        if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+        const tokens = [cam.name, cam.address].filter(Boolean).map((value) => value.toLowerCase());
+        return { lat, lon, tokens };
+      })
+      .filter(Boolean);
+  })();
+
+  function findKnownLocationFromText(text) {
+    if (!text) return null;
+    const lower = text.toLowerCase();
+    for (const entry of KNOWN_LOCATION_OVERRIDES) {
+      for (const token of entry.tokens) {
+        if (token && lower.includes(token)) {
+          return { lat: entry.lat, lon: entry.lon };
+        }
+      }
+    }
+    return null;
+  }
 
   /**
    * Extract potential location references from text
@@ -4917,6 +4944,12 @@ function selectItem(id) {
 
       // Try to extract location from title and summary
       const textToSearch = `${item.title || ''} ${item.summary || ''}`;
+      const knownLocation = findKnownLocationFromText(textToSearch);
+      if (knownLocation) {
+        item.loc = knownLocation;
+        continue;
+      }
+
       const extractedLocation = extractLocationFromText(textToSearch);
 
       if (extractedLocation) {
@@ -6380,7 +6413,7 @@ function selectItem(id) {
     }
 
     try {
-      const url = `${CONFIG.openUV.baseUrl}?lat=${CONFIG.openUV.lat}&lng=${CONFIG.openUV.lon}`;
+      const url = `${CONFIG.openUV.baseUrl}?lat=${CONFIG.openUV.lat}&lon=${CONFIG.openUV.lon}`;
       const response = await fetchJsonWithStatus(url, {
         headers: { "Accept": "application/json" }
       });
@@ -6787,10 +6820,8 @@ function selectItem(id) {
           store.crime.markersOnMap.add(id);
         }
       } else {
-        if (store.crime.markersOnMap.has(id)) {
-          clusters.removeLayer(marker);
-          store.crime.markersOnMap.delete(id);
-        }
+        clusters.removeLayer(marker);
+        store.crime.markersOnMap.delete(id);
       }
     }
   }
