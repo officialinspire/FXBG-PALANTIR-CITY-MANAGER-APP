@@ -9622,9 +9622,9 @@ function selectItem(id) {
   store.reports.layer = reportsLayer;
   updateReportSeverityLabel();
   updateReportLocationUI();
-  const reportLayerToggle = $("reportLayerToggle");
-  if (reportLayerToggle) {
-    reportLayerToggle.checked = store.reports.enabled;
+  const reportLayerToggleBoot = $("reportLayerToggle");
+  if (reportLayerToggleBoot) {
+    reportLayerToggleBoot.checked = store.reports.enabled;
   }
   fetchReports({ sinceDays: 90 });
 
