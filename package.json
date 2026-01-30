@@ -5,14 +5,15 @@
   "main": "proxy-server.js",
   "scripts": {
     "start": "node proxy-server.js",
-    "dev": "node proxy-server.js"
+    "dev": "PORT=8000 node proxy-server.js",
+    "doctor": "node scripts/doctor.js"
   },
   "dependencies": {
     "dotenv": "^16.4.5",
     "pdf-parse": "^1.1.1"
   },
   "engines": {
-    "node": ">=14.0.0"
+    "node": ">=18"
   },
   "keywords": [
     "fredericksburg",

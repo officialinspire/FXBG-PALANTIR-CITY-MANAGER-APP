@@ -7095,11 +7095,33 @@ function selectItem(id) {
     }
   }
 
-  function renderDiagnosticsSummary(healthData) {
+  function renderDiagnosticsSummary(healthData, crimeStatus) {
     if (!diagnosticsSummary) return;
     const localHealth = healthTracker.computeHealth();
     const serverStatus = healthData?.status || "unknown";
-    const uptimeMs = healthData?.uptimeMs ?? null;
+    const uptimeSec = healthData?.uptimeSec ?? (healthData?.uptimeMs ? Math.floor(healthData.uptimeMs / 1000) : null);
+
+    // Format uptime
+    let uptimeStr = "—";
+    if (uptimeSec !== null) {
+      const hours = Math.floor(uptimeSec / 3600);
+      const mins = Math.floor((uptimeSec % 3600) / 60);
+      uptimeStr = hours > 0 ? `${hours}h ${mins}m` : `${mins}m`;
+    }
+
+    // Crime reports info
+    const crimeLastUpdated = crimeStatus?.lastUpdated ? new Date(crimeStatus.lastUpdated).toLocaleString() : "Never";
+    const crimeCount = crimeStatus?.incidentsCount ?? "—";
+    const crimeIsStale = crimeStatus?.isStale ?? true;
+    const crimeBadgeClass = crimeStatus?.lastRefreshOk === false ? "diagnosticsBadge--error" : crimeIsStale ? "diagnosticsBadge--warn" : "diagnosticsBadge--ok";
+    const crimeBadgeText = crimeStatus?.lastRefreshOk === false ? "ERROR" : crimeIsStale ? "STALE" : "OK";
+
+    // Optional keys
+    const optKeys = healthData?.optionalKeys || {};
+    const optKeysWarning = [];
+    if (optKeys.OPENUV_API_KEY === false) optKeysWarning.push("UV");
+    if (optKeys.WAQI_TOKEN === false) optKeysWarning.push("AQI");
+    const optKeysStr = optKeysWarning.length > 0 ? `Missing: ${optKeysWarning.join(", ")}` : "All configured";
 
     diagnosticsSummary.innerHTML = `
       <div class="diagnosticsRow">
@@ -7123,9 +7145,25 @@ function selectItem(id) {
       <div class="diagnosticsRow">
         <div>
           <div class="diagnosticsRow__title">Server Uptime</div>
-          <div>${formatDurationShort(uptimeMs)}</div>
+          <div>${uptimeStr}</div>
         </div>
         <div class="diagnosticsBadge diagnosticsBadge--ok">LIVE</div>
+      </div>
+      <div class="diagnosticsRow">
+        <div>
+          <div class="diagnosticsRow__title">Crime Reports</div>
+          <div>Last: ${crimeLastUpdated} (${crimeCount} incidents)</div>
+        </div>
+        <div class="diagnosticsBadge ${crimeBadgeClass}">${crimeBadgeText}</div>
+      </div>
+      <div class="diagnosticsRow">
+        <div>
+          <div class="diagnosticsRow__title">Optional API Keys</div>
+          <div style="font-size:11px;color:${optKeysWarning.length > 0 ? 'var(--warn)' : 'var(--muted2)'};">${optKeysStr}</div>
+        </div>
+        <div class="diagnosticsBadge ${optKeysWarning.length > 0 ? "diagnosticsBadge--warn" : "diagnosticsBadge--ok"}">
+          ${optKeysWarning.length > 0 ? "WARN" : "OK"}
+        </div>
       </div>
     `;
   }
@@ -7197,19 +7235,43 @@ function selectItem(id) {
     `;
   }
 
+  // Store last known data for offline fallback
+  let lastKnownDiagnostics = null;
+
   async function refreshDiagnosticsDrawer() {
     if (!diagnosticsDrawer) return;
     if (diagnosticsSummary) diagnosticsSummary.textContent = "Loading…";
     if (diagnosticsUpstreams) diagnosticsUpstreams.textContent = "Loading…";
     if (diagnosticsCache) diagnosticsCache.textContent = "Loading…";
 
-    const [healthRes, upstreamRes, cacheRes] = await Promise.all([
-      fetchDiagnosticsJson("/health"),
+    // Fetch from new endpoints (with fallback to legacy)
+    const [healthRes, upstreamRes, cacheRes, crimeStatusRes] = await Promise.all([
+      fetchDiagnosticsJson("/api/health").then(r => r.ok ? r : fetchDiagnosticsJson("/health")),
       fetchDiagnosticsJson("/api/diag/upstreams"),
-      fetchDiagnosticsJson("/cache/stats")
+      fetchDiagnosticsJson("/cache/stats"),
+      fetchDiagnosticsJson("/api/fxbg/crime-reports/status")
     ]);
 
-    renderDiagnosticsSummary(healthRes.data || null);
+    // Graceful degradation: if all fetches failed, show last known data
+    const allFailed = !healthRes.ok && !upstreamRes.ok && !cacheRes.ok;
+    if (allFailed && lastKnownDiagnostics) {
+      if (diagnosticsSummary) {
+        diagnosticsSummary.innerHTML = `
+          <div class="diagnosticsRow">
+            <div>
+              <div class="diagnosticsRow__title">Server Status</div>
+              <div style="color:var(--warn);">Offline - showing last known data</div>
+            </div>
+            <div class="diagnosticsBadge diagnosticsBadge--error">OFFLINE</div>
+          </div>
+        `;
+      }
+      renderDiagnosticsUpstreams(lastKnownDiagnostics.upstreams?.upstreams || null);
+      renderDiagnosticsCache(lastKnownDiagnostics.cache || null);
+      return;
+    }
+
+    renderDiagnosticsSummary(healthRes.data || null, crimeStatusRes.data || null);
     renderDiagnosticsUpstreams(upstreamRes.data?.upstreams || null);
     renderDiagnosticsCache(cacheRes.data || null);
 
@@ -7217,8 +7279,14 @@ function selectItem(id) {
       fetchedAt: new Date().toISOString(),
       health: healthRes.data || null,
       upstreams: upstreamRes.data || null,
-      cache: cacheRes.data || null
+      cache: cacheRes.data || null,
+      crimeStatus: crimeStatusRes.data || null
     };
+
+    // Store for offline fallback
+    if (healthRes.ok || upstreamRes.ok) {
+      lastKnownDiagnostics = lastDiagnosticsPayload;
+    }
 
     if (diagnosticsRequiredBanner && diagnosticsRequiredText) {
       const requiredFailures = (upstreamRes.data?.upstreams || [])
@@ -7232,6 +7300,15 @@ function selectItem(id) {
       }
     }
   }
+
+  // Auto-refresh diagnostics drawer every 30 seconds when open
+  setInterval(() => {
+    if (diagnosticsDrawer && !diagnosticsDrawer.classList.contains("diagnosticsDrawer--hidden")) {
+      refreshDiagnosticsDrawer().catch(err => {
+        console.warn("[Diagnostics] Auto-refresh failed:", err);
+      });
+    }
+  }, 30000);
 
   const healthBadge = $("healthBadge");
   if (healthBadge) {

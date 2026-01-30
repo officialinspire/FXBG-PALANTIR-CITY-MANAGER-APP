@@ -1112,8 +1112,10 @@ async function validateRequiredUpstreams() {
   }
 
   if (failures.length > 0) {
-    console.error(`[startup] Required upstreams failed: ${failures.join(", ")}`);
-    process.exit(1);
+    // Graceful degradation: warn but don't exit
+    // Server should still start even if upstreams are temporarily unavailable
+    console.warn(`[startup] Required upstreams unavailable (will retry on demand): ${failures.join(", ")}`);
+    console.warn("[startup] Server will start anyway - some features may be degraded until upstreams recover.");
   }
 }
 
@@ -1629,6 +1631,19 @@ const SERVER_START_TIME = Date.now();
 const FXBG_CRIME_REPORTS_URL = "https://www.fredericksburgva.gov/1426/Crime-Reports";
 const FXBG_DOCUMENT_CENTER_BASE = "https://www.fredericksburgva.gov/DocumentCenter/View/";
 
+// Crime reports refresh state (for throttling and status)
+const crimeReportsState = {
+  lastRefreshAttempt: null,
+  lastRefreshOk: false,
+  lastRefreshMessage: null,
+  lastUpdated: null,
+  pdfCount: 0,
+  incidentsCount: 0,
+  lastResult: null,
+  lastResultTimestamp: 0
+};
+const CRIME_REFRESH_THROTTLE_MS = 10000; // 10 second throttle
+
 // Geocode cache for crime report locations
 const geocodeCache = new Map();
 const GEOCODE_CACHE_FILE = path.join(__dirname, "data", "geocode_cache.json");
@@ -1735,6 +1750,7 @@ function httpsGet(url, options = {}) {
 }
 
 // Fetch crime reports page and extract PDF links
+// Implements multiple strategies with cache-busting for robust extraction
 async function fetchCrimeReportPdfLinks() {
   console.log("[Crime Reports] Fetching crime reports page...");
 
@@ -1743,12 +1759,72 @@ async function fetchCrimeReportPdfLinks() {
   let bodyLength = 0;
   let bodySnippet = "";
 
+  const debug = {
+    strategy1Count: 0,
+    strategy2Count: 0,
+    strategy3Count: 0,
+    strategy3Attempted: false,
+    strategy3Error: null
+  };
+
+  // Helper to extract DocumentCenter links from HTML
+  function extractDocCenterLinks(html) {
+    // Strategy 1: Relative /DocumentCenter/View/<id> links
+    const relativeRegex = /\/DocumentCenter\/View\/(\d+)(?:\/[^"'<>\s]*)?/gi;
+    const relativeMatches = [...html.matchAll(relativeRegex)];
+
+    // Strategy 2: Absolute https://...fredericksburgva.gov/DocumentCenter/View/<id> links
+    const absoluteRegex = /https?:\/\/(?:www\.)?fredericksburgva\.gov\/DocumentCenter\/View\/(\d+)(?:\/[^"'<>\s]*)?/gi;
+    const absoluteMatches = [...html.matchAll(absoluteRegex)];
+
+    const pdfLinks = [];
+    const seenIds = new Set();
+
+    // Process relative matches first
+    for (const match of relativeMatches) {
+      const docId = match[1];
+      if (seenIds.has(docId)) continue;
+      seenIds.add(docId);
+      pdfLinks.push({
+        id: docId,
+        url: `https://www.fredericksburgva.gov/DocumentCenter/View/${docId}`,
+        path: match[0],
+        strategy: "directHtml"
+      });
+    }
+    debug.strategy1Count = pdfLinks.length;
+
+    // Process absolute matches (may add new IDs not found via relative)
+    for (const match of absoluteMatches) {
+      const docId = match[1];
+      if (seenIds.has(docId)) continue;
+      seenIds.add(docId);
+      const normalizedUrl = match[0].replace(/^http:/, "https:").replace(/^https:\/\/fredericksburgva\.gov/, "https://www.fredericksburgva.gov");
+      pdfLinks.push({
+        id: docId,
+        url: normalizedUrl,
+        path: match[0],
+        strategy: "absoluteLinks"
+      });
+    }
+    debug.strategy2Count = pdfLinks.length - debug.strategy1Count;
+
+    return { links: pdfLinks, seenIds };
+  }
+
   try {
-    const response = await httpsGet(FXBG_CRIME_REPORTS_URL, {
-      accept: "text/html",
+    // Add cache-busting query param
+    const cacheBustedUrl = `${FXBG_CRIME_REPORTS_URL}?_ts=${Date.now()}`;
+
+    const response = await httpsGet(cacheBustedUrl, {
+      accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
       timeout: 30000,
       expectedType: "html",
-      maxBytes: PAYLOAD_LIMITS.text
+      maxBytes: PAYLOAD_LIMITS.text,
+      headers: {
+        "Cache-Control": "no-cache",
+        "Pragma": "no-cache"
+      }
     });
 
     responseStatus = response.statusCode;
@@ -1762,42 +1838,80 @@ async function fetchCrimeReportPdfLinks() {
     bodyLength = html.length;
     bodySnippet = html.substring(0, 300);
 
-    // Extract ALL DocumentCenter/View links (relative and absolute)
-    // Matches:
-    //   /DocumentCenter/View/12345
-    //   /DocumentCenter/View/12345/optional-slug
-    //   https://www.fredericksburgva.gov/DocumentCenter/View/12345
-    //   https://fredericksburgva.gov/DocumentCenter/View/12345/slug
-    const docCenterRegex = /(?:https?:\/\/(?:www\.)?fredericksburgva\.gov)?\/DocumentCenter\/View\/(\d+)(?:\/[^"'<>\s]*)?/gi;
-    const matches = [...html.matchAll(docCenterRegex)];
+    // Log upstream fetch
+    logUpstream({
+      level: "INFO",
+      kind: "crime_reports_fetch",
+      msg: "Fetched crime reports page",
+      url: FXBG_CRIME_REPORTS_URL,
+      status: responseStatus,
+      bytes: bodyLength
+    });
 
-    const pdfLinks = [];
-    const seenIds = new Set();
+    // Extract links using strategies 1 & 2
+    const { links: pdfLinks, seenIds } = extractDocCenterLinks(html);
 
-    for (const match of matches) {
-      const docId = match[1];
-      if (seenIds.has(docId)) continue;
-      seenIds.add(docId);
+    // Strategy 3 (fallback): Try to find dynamic content endpoint if no links found
+    if (pdfLinks.length === 0) {
+      debug.strategy3Attempted = true;
 
-      // Normalize to absolute URL with https://www.fredericksburgva.gov prefix
-      const fullPath = match[0];
-      const normalizedUrl = fullPath.startsWith("http")
-        ? fullPath.replace(/^https?:\/\/fredericksburgva\.gov/, "https://www.fredericksburgva.gov")
-        : `https://www.fredericksburgva.gov${fullPath}`;
+      // Look for CivicPlus/Granicus Content/Load endpoint indicators
+      const contentLoadMatch = html.match(/\/Content\/Load[^"'\s]*/i) ||
+                               html.match(/data-load-url="([^"]+)"/i);
 
-      pdfLinks.push({
-        id: docId,
-        url: normalizedUrl,
-        path: fullPath
-      });
+      if (contentLoadMatch) {
+        try {
+          const contentLoadUrl = contentLoadMatch[1] || contentLoadMatch[0];
+          const fullContentUrl = contentLoadUrl.startsWith("http")
+            ? contentLoadUrl
+            : `https://www.fredericksburgva.gov${contentLoadUrl.startsWith("/") ? "" : "/"}${contentLoadUrl}`;
+
+          console.log(`[Crime Reports] Attempting Strategy 3: Content/Load at ${fullContentUrl}`);
+
+          const contentResponse = await httpsGet(fullContentUrl, {
+            accept: "text/html,*/*",
+            timeout: 15000,
+            expectedType: "html",
+            maxBytes: PAYLOAD_LIMITS.text,
+            headers: {
+              "Cache-Control": "no-cache",
+              "X-Requested-With": "XMLHttpRequest"
+            }
+          });
+
+          if (contentResponse.statusCode === 200) {
+            const contentHtml = contentResponse.text();
+            const contentResult = extractDocCenterLinks(contentHtml);
+
+            for (const link of contentResult.links) {
+              if (!seenIds.has(link.id)) {
+                seenIds.add(link.id);
+                link.strategy = "contentLoad";
+                pdfLinks.push(link);
+              }
+            }
+            debug.strategy3Count = contentResult.links.length;
+          }
+        } catch (contentErr) {
+          debug.strategy3Error = contentErr.message;
+          console.warn("[Crime Reports] Strategy 3 (Content/Load) failed:", contentErr.message);
+        }
+      }
     }
 
-    console.log(`[Crime Reports] Found ${pdfLinks.length} DocumentCenter links (methodUsed: directHtml)`);
+    // Determine primary strategy used
+    let strategyUsed = "none";
+    if (debug.strategy1Count > 0) strategyUsed = "directHtml";
+    else if (debug.strategy2Count > 0) strategyUsed = "absoluteLinks";
+    else if (debug.strategy3Count > 0) strategyUsed = "contentLoad";
+
+    console.log(`[Crime Reports] Found ${pdfLinks.length} DocumentCenter links (strategy: ${strategyUsed}, s1=${debug.strategy1Count}, s2=${debug.strategy2Count}, s3=${debug.strategy3Count})`);
 
     // Return with metadata for response
     return {
       links: pdfLinks,
-      methodUsed: "directHtml",
+      strategyUsed: strategyUsed,
+      debug: debug,
       diagnostics: pdfLinks.length === 0 ? {
         status: responseStatus,
         contentType: responseContentType,
@@ -1809,13 +1923,21 @@ async function fetchCrimeReportPdfLinks() {
     console.error("[Crime Reports] Failed to fetch crime reports page:", e.message);
     logApp({
       level: "ERROR",
-      kind: "payload_violation",
+      kind: "crime_reports_fetch_failed",
       msg: "Crime reports page fetch failed",
+      errorCode: e.code || e.message
+    });
+    logUpstream({
+      level: "ERROR",
+      kind: "crime_reports_fetch",
+      msg: "Crime reports page fetch failed",
+      url: FXBG_CRIME_REPORTS_URL,
       errorCode: e.code || e.message
     });
     return {
       links: [],
-      methodUsed: "directHtml",
+      strategyUsed: "none",
+      debug: debug,
       diagnostics: {
         status: responseStatus,
         contentType: responseContentType,
@@ -2080,28 +2202,35 @@ async function refreshCrimeReports(months = 6) {
   const cutoffDate = new Date();
   cutoffDate.setMonth(cutoffDate.getMonth() - months);
 
+  // Update state: refresh attempt started
+  crimeReportsState.lastRefreshAttempt = new Date().toISOString();
+
   try {
     // Load geocode cache
     await loadGeocodeCache();
 
-    // Fetch PDF links (returns { links, methodUsed, diagnostics })
+    // Fetch PDF links (returns { links, strategyUsed, debug, diagnostics })
     const fetchResult = await fetchCrimeReportPdfLinks();
     const pdfLinks = fetchResult.links;
-    const methodUsed = fetchResult.methodUsed;
+    const strategyUsed = fetchResult.strategyUsed || "none";
 
     if (pdfLinks.length === 0) {
-      console.warn("[Crime Reports] No PDF links found, using sample data fallback");
+      console.warn("[Crime Reports] No PDF links found");
       const result = {
         success: false,
         count: 0,
         pdfCount: 0,
         message: "No crime report PDFs found on source page",
-        methodUsed: methodUsed
+        strategyUsed: strategyUsed,
+        debug: fetchResult.debug
       };
       // Include diagnostics if available
       if (fetchResult.diagnostics) {
         result.diagnostics = fetchResult.diagnostics;
       }
+      // Update state
+      crimeReportsState.lastRefreshOk = false;
+      crimeReportsState.lastRefreshMessage = result.message;
       return result;
     }
 
@@ -2183,19 +2312,30 @@ async function refreshCrimeReports(months = 6) {
 
     console.log(`[Crime Reports] Saved ${deduped.length} incidents to file`);
 
+    // Update state on success
+    crimeReportsState.lastRefreshOk = true;
+    crimeReportsState.lastRefreshMessage = `Successfully refreshed ${deduped.length} crime incidents from ${pdfsToProcess.length} PDFs`;
+    crimeReportsState.lastUpdated = outputData.lastUpdated;
+    crimeReportsState.pdfCount = pdfsToProcess.length;
+    crimeReportsState.incidentsCount = deduped.length;
+
     return {
       success: true,
       count: deduped.length,
       pdfCount: pdfsToProcess.length,
       geocoded: geocoded,
       sample: sampleUrls,
-      methodUsed: methodUsed,
-      message: `Successfully refreshed ${deduped.length} crime incidents from ${pdfsToProcess.length} PDFs`
+      strategyUsed: strategyUsed,
+      debug: fetchResult.debug,
+      message: crimeReportsState.lastRefreshMessage
     };
 
   } catch (e) {
     console.error("[Crime Reports] Refresh failed:", e.message);
-    return { success: false, count: 0, message: e.message };
+    // Update state on error
+    crimeReportsState.lastRefreshOk = false;
+    crimeReportsState.lastRefreshMessage = e.message;
+    return { success: false, count: 0, message: e.message, strategyUsed: "none" };
   }
 }
 
@@ -2289,7 +2429,7 @@ const server = http.createServer(async (req, res) => {
       });
     });
 
-    // Health check endpoint
+    // Health check endpoint (legacy, kept for backward compatibility)
     if (urlObj.pathname === "/health") {
       const uptimeMs = Date.now() - SERVER_START_TIME;
       const cacheStats = cacheManager.stats();
@@ -2315,6 +2455,95 @@ const server = http.createServer(async (req, res) => {
         hostBackoffs: hostBackoff.size
       };
       return send(res, 200, JSON.stringify(health, null, 2), { "Content-Type": "application/json" });
+    }
+
+    // Enhanced health endpoint with full diagnostics
+    if (urlObj.pathname === "/api/health") {
+      const uptimeMs = Date.now() - SERVER_START_TIME;
+      const uptimeSec = Math.floor(uptimeMs / 1000);
+      const cacheStats = cacheManager.stats();
+
+      // Load crime reports status from file
+      let crimeStatus = {
+        lastRefreshAttempt: crimeReportsState.lastRefreshAttempt,
+        lastRefreshOk: crimeReportsState.lastRefreshOk,
+        lastUpdated: crimeReportsState.lastUpdated,
+        pdfCount: crimeReportsState.pdfCount,
+        incidentsCount: crimeReportsState.incidentsCount,
+        isStale: true
+      };
+
+      try {
+        const incidentsFile = path.join(__dirname, "data", "fxbg-crime-reports", "incidents.json");
+        const data = await fsp.readFile(incidentsFile, "utf8");
+        const parsed = safeJsonParse(data, null, "crime health check");
+        if (parsed && !Array.isArray(parsed)) {
+          crimeStatus.lastUpdated = parsed.lastUpdated || crimeStatus.lastUpdated;
+          crimeStatus.pdfCount = parsed.pdfCount || crimeStatus.pdfCount;
+          crimeStatus.incidentsCount = parsed.incidentCount || (parsed.incidents ? parsed.incidents.length : 0);
+        }
+      } catch (e) {
+        // File doesn't exist
+      }
+
+      // Compute staleness
+      if (crimeStatus.lastUpdated) {
+        crimeStatus.isStale = Date.now() - new Date(crimeStatus.lastUpdated).getTime() > 7 * 24 * 60 * 60 * 1000;
+      }
+
+      // Read package.json version
+      let version = "1.0.0";
+      try {
+        const pkgPath = path.join(__dirname, "package.json");
+        const pkgData = await fsp.readFile(pkgPath, "utf8");
+        const pkg = safeJsonParse(pkgData, {}, "package.json health");
+        version = pkg.version || version;
+      } catch (e) {}
+
+      const health = {
+        ok: true,
+        status: "ok",
+        time: new Date().toISOString(),
+        uptimeSec: uptimeSec,
+        env: process.env.NODE_ENV || "development",
+        version: version,
+        logDir: LOG_DIR,
+        optionalKeys: {
+          OPENUV_API_KEY: !!OPENUV_API_KEY,
+          WAQI_TOKEN: !!WAQI_TOKEN
+        },
+        crimeReports: crimeStatus
+      };
+
+      return send(res, 200, JSON.stringify(health, null, 2), { "Content-Type": "application/json" });
+    }
+
+    // Upstream health endpoint - compact report of key upstreams
+    if (urlObj.pathname === "/api/health/upstreams") {
+      const upstreams = [];
+
+      for (const upstream of REQUIRED_UPSTREAMS) {
+        const lastSuccess = upstreamLastSuccess.get(upstream.name) || null;
+        upstreams.push({
+          name: upstream.name,
+          url: upstream.url,
+          required: upstream.required,
+          lastSuccess: lastSuccess,
+          usingCached: lastSuccess !== null
+        });
+      }
+
+      const response = {
+        ok: true,
+        timestamp: new Date().toISOString(),
+        upstreams: upstreams,
+        optionalServices: {
+          openuv: OPENUV_API_KEY ? "enabled" : "disabled (missing key)",
+          waqi: WAQI_TOKEN ? "enabled" : "disabled (missing token)"
+        }
+      };
+
+      return send(res, 200, JSON.stringify(response, null, 2), { "Content-Type": "application/json" });
     }
 
     // OpenUV API proxy (server-side key injection)
@@ -2518,45 +2747,129 @@ const server = http.createServer(async (req, res) => {
     // Crime Reports API endpoints
     if (urlObj.pathname === "/api/fxbg/crime-reports/refresh") {
       const months = parseInt(urlObj.searchParams.get("months") || "6", 10);
-      // DEBUG: Log start timestamp
+      const forceRefresh = urlObj.searchParams.get("force") === "1";
       const debugStartTime = Date.now();
-      console.log(`[DEBUG Crime Refresh API] START at ${new Date(debugStartTime).toISOString()}`);
-      try {
-        console.log(`[Crime Reports API] Refresh requested for ${months} months`);
 
+      // Check throttle (unless force=1)
+      const timeSinceLastRefresh = debugStartTime - crimeReportsState.lastResultTimestamp;
+      if (!forceRefresh && timeSinceLastRefresh < CRIME_REFRESH_THROTTLE_MS && crimeReportsState.lastResult) {
+        console.log(`[Crime Reports API] Throttled - returning cached result (${timeSinceLastRefresh}ms since last refresh)`);
+        const cachedResponse = {
+          ...crimeReportsState.lastResult,
+          isStale: false,
+          warning: `Throttled: refresh called within ${CRIME_REFRESH_THROTTLE_MS / 1000}s. Use force=1 to bypass.`,
+          forced: false
+        };
+        return send(res, 200, JSON.stringify(cachedResponse, null, 2), { "Content-Type": "application/json" });
+      }
+
+      console.log(`[Crime Reports API] Refresh requested for ${months} months (force=${forceRefresh})`);
+
+      try {
         // Run the real PDF scraping and parsing
         const result = await refreshCrimeReports(months);
 
-        // DEBUG: Log result details
-        const debugEndTime = Date.now();
-        const debugDuration = debugEndTime - debugStartTime;
-        console.log(`[DEBUG Crime Refresh API] result.success=${result.success}, result.message="${result.message}"`);
-        console.log(`[DEBUG Crime Refresh API] pdfCount=${result.pdfCount || 0}, geocoded=${result.geocoded || 0}, count=${result.count || 0}`);
-        console.log(`[DEBUG Crime Refresh API] END at ${new Date(debugEndTime).toISOString()}, duration=${debugDuration}ms (${(debugDuration/1000).toFixed(1)}s)`);
-
+        // Build standardized response
         const response = {
           ok: result.success,
-          message: result.message,
           months: months,
-          count: result.count,
           pdfCount: result.pdfCount || 0,
+          parsedCount: result.count || 0,
           geocoded: result.geocoded || 0,
+          forced: forceRefresh,
+          strategyUsed: result.strategyUsed || "none",
           timestamp: new Date().toISOString()
         };
-        // Include sample URLs and methodUsed if present
-        if (result.sample) response.sample = result.sample;
-        if (result.methodUsed) response.methodUsed = result.methodUsed;
-        // Include diagnostics if present (for debugging 0-link cases)
-        if (result.diagnostics) response.diagnostics = result.diagnostics;
 
-        return send(res, result.success ? 200 : 500, JSON.stringify(response, null, 2), { "Content-Type": "application/json" });
+        // Add optional fields
+        if (!result.success) {
+          response.warning = result.message;
+        }
+        if (result.debug) {
+          response.debug = result.debug;
+        }
+        if (result.diagnostics) {
+          response.debug = response.debug || {};
+          response.debug.diagnostics = result.diagnostics;
+        }
+
+        // Cache the result for throttling
+        crimeReportsState.lastResult = response;
+        crimeReportsState.lastResultTimestamp = Date.now();
+
+        // Log completion
+        const debugDuration = Date.now() - debugStartTime;
+        logApp({
+          level: result.success ? "INFO" : "WARN",
+          kind: "crime_refresh_complete",
+          msg: result.success ? "Crime reports refresh succeeded" : "Crime reports refresh had issues",
+          pdfCount: result.pdfCount,
+          parsedCount: result.count,
+          strategyUsed: result.strategyUsed,
+          ms: debugDuration
+        });
+
+        // IMPORTANT: Never return 500 for "no PDFs found" - use 200 with ok:false
+        return send(res, 200, JSON.stringify(response, null, 2), { "Content-Type": "application/json" });
       } catch (err) {
-        // DEBUG: Log error with timing
-        const debugEndTime = Date.now();
-        console.log(`[DEBUG Crime Refresh API] ERROR after ${debugEndTime - debugStartTime}ms:`, err.message);
         console.error("[Crime Reports API] Refresh error:", err);
-        return send(res, 500, JSON.stringify({ ok: false, error: err.message }), { "Content-Type": "application/json" });
+        logApp({
+          level: "ERROR",
+          kind: "crime_refresh_error",
+          msg: "Crime reports refresh failed with exception",
+          errorCode: err.message
+        });
+        // Return 200 with ok:false for client-friendly error handling
+        const errorResponse = {
+          ok: false,
+          months: months,
+          pdfCount: 0,
+          parsedCount: 0,
+          geocoded: 0,
+          forced: forceRefresh,
+          strategyUsed: "none",
+          timestamp: new Date().toISOString(),
+          warning: err.message
+        };
+        return send(res, 200, JSON.stringify(errorResponse, null, 2), { "Content-Type": "application/json" });
       }
+    }
+
+    // Crime Reports Status endpoint
+    if (urlObj.pathname === "/api/fxbg/crime-reports/status") {
+      // Try to load latest info from incidents file
+      let fileInfo = null;
+      try {
+        const incidentsFile = path.join(__dirname, "data", "fxbg-crime-reports", "incidents.json");
+        const data = await fsp.readFile(incidentsFile, "utf8");
+        const parsed = safeJsonParse(data, null, "crime incidents status");
+        if (parsed && !Array.isArray(parsed)) {
+          fileInfo = {
+            lastUpdated: parsed.lastUpdated,
+            pdfCount: parsed.pdfCount,
+            incidentsCount: parsed.incidentCount || (parsed.incidents ? parsed.incidents.length : 0)
+          };
+        }
+      } catch (e) {
+        // File doesn't exist yet
+      }
+
+      // Determine staleness (older than 7 days)
+      const lastUpdated = fileInfo?.lastUpdated || crimeReportsState.lastUpdated;
+      const isStale = lastUpdated ? (Date.now() - new Date(lastUpdated).getTime() > 7 * 24 * 60 * 60 * 1000) : true;
+
+      const status = {
+        ok: true,
+        lastRefreshAttempt: crimeReportsState.lastRefreshAttempt,
+        lastRefreshOk: crimeReportsState.lastRefreshOk,
+        lastRefreshMessage: crimeReportsState.lastRefreshMessage,
+        lastUpdated: lastUpdated,
+        pdfCount: fileInfo?.pdfCount || crimeReportsState.pdfCount,
+        incidentsCount: fileInfo?.incidentsCount || crimeReportsState.incidentsCount,
+        isStale: isStale
+      };
+
+      return send(res, 200, JSON.stringify(status, null, 2), { "Content-Type": "application/json" });
     }
 
     if (urlObj.pathname === "/api/fxbg/crime-reports/incidents") {
