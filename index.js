@@ -1751,19 +1751,43 @@
   // Crime Reports UI State & Persistence
   // -----------------------------
   const CRIME_UI_DEFAULTS = {
-    enabled: true,
+    enabled: false,
     windowDays: 30,
+    appliedWindowDays: 30,
+    lastAppliedAt: null,
     sort: "newest",
     menuAutoOpen: true
   };
 
   function loadCrimeUI() {
     try {
-      const stored = localStorage.getItem("fxbg.crimeUI");
-      if (stored) {
-        const parsed = safeJsonParse(stored, null, "crime UI");
+      const enabledRaw = localStorage.getItem("fxbg.crimeOverlayEnabled");
+      const daysRaw = localStorage.getItem("fxbg.crimeOverlayDays");
+      const appliedRaw = localStorage.getItem("fxbg.lastAppliedCrimeFilter");
+      const legacy = localStorage.getItem("fxbg.crimeUI");
+
+      const enabled = enabledRaw === null ? null : enabledRaw === "true";
+      const windowDays = daysRaw ? Number(daysRaw) : null;
+      const applied = appliedRaw ? safeJsonParse(appliedRaw, null, "crime applied filter") : null;
+
+      if (enabled !== null || Number.isFinite(windowDays) || applied) {
+        return {
+          ...CRIME_UI_DEFAULTS,
+          enabled: enabled !== null ? enabled : CRIME_UI_DEFAULTS.enabled,
+          windowDays: Number.isFinite(windowDays) ? windowDays : CRIME_UI_DEFAULTS.windowDays,
+          appliedWindowDays: Number.isFinite(applied?.days) ? applied.days : (Number.isFinite(windowDays) ? windowDays : CRIME_UI_DEFAULTS.windowDays),
+          lastAppliedAt: applied?.ts || CRIME_UI_DEFAULTS.lastAppliedAt
+        };
+      }
+
+      if (legacy) {
+        const parsed = safeJsonParse(legacy, null, "crime UI");
         if (parsed && typeof parsed === "object") {
-          return { ...CRIME_UI_DEFAULTS, ...parsed };
+          return {
+            ...CRIME_UI_DEFAULTS,
+            ...parsed,
+            appliedWindowDays: parsed.windowDays || CRIME_UI_DEFAULTS.appliedWindowDays
+          };
         }
       }
     } catch (err) {
@@ -1774,7 +1798,18 @@
 
   function saveCrimeUI(state) {
     try {
-      localStorage.setItem("fxbg.crimeUI", JSON.stringify(state));
+      localStorage.setItem("fxbg.crimeOverlayEnabled", String(Boolean(state.enabled)));
+      localStorage.setItem("fxbg.crimeOverlayDays", String(state.appliedWindowDays || state.windowDays || CRIME_UI_DEFAULTS.windowDays));
+      localStorage.setItem("fxbg.lastAppliedCrimeFilter", JSON.stringify({
+        days: state.appliedWindowDays || state.windowDays || CRIME_UI_DEFAULTS.windowDays,
+        ts: state.lastAppliedAt || new Date().toISOString()
+      }));
+      localStorage.setItem("fxbg.crimeUI", JSON.stringify({
+        enabled: state.enabled,
+        windowDays: state.windowDays,
+        sort: state.sort,
+        menuAutoOpen: state.menuAutoOpen
+      }));
     } catch (err) {
       console.warn("[Crime UI] Failed to save to localStorage:", err);
     }
@@ -3223,6 +3258,131 @@
   });
   map.addLayer(clusters);
 
+  const reportsLayer = L.layerGroup().addTo(map);
+
+  // -----------------------------
+  // Location Awareness
+  // -----------------------------
+  const LOCATION_STORAGE_KEY = "fxbg.lastLocation";
+  const LOCATION_STALE_MS = 6 * 60 * 60 * 1000;
+  let userLocationMarker = null;
+  let userLocationCircle = null;
+
+  function readStoredLocation() {
+    try {
+      const raw = localStorage.getItem(LOCATION_STORAGE_KEY);
+      if (!raw) return null;
+      const parsed = safeJsonParse(raw, null, "last location");
+      if (!parsed || !Number.isFinite(parsed.lat) || !Number.isFinite(parsed.lng)) return null;
+      if (parsed.ts && Date.now() - parsed.ts > LOCATION_STALE_MS) return null;
+      return parsed;
+    } catch (err) {
+      return null;
+    }
+  }
+
+  function saveStoredLocation(loc) {
+    try {
+      localStorage.setItem(LOCATION_STORAGE_KEY, JSON.stringify({
+        lat: loc.lat,
+        lng: loc.lng,
+        accuracy: loc.accuracy,
+        zoom: loc.zoom,
+        ts: Date.now()
+      }));
+    } catch (err) {
+      console.warn("[Location] Failed to save location:", err);
+    }
+  }
+
+  function updateUserLocationMarker(lat, lng, accuracy) {
+    const icon = L.divIcon({ className: "userLocationMarker" });
+    if (!userLocationMarker) {
+      userLocationMarker = L.marker([lat, lng], { icon }).addTo(map);
+      userLocationMarker.bindTooltip("You are here");
+    } else {
+      userLocationMarker.setLatLng([lat, lng]);
+    }
+
+    if (Number.isFinite(accuracy) && accuracy > 0) {
+      if (!userLocationCircle) {
+        userLocationCircle = L.circle([lat, lng], {
+          radius: accuracy,
+          color: "#4fd1ff",
+          weight: 1,
+          opacity: 0.5,
+          fillColor: "#4fd1ff",
+          fillOpacity: 0.08
+        }).addTo(map);
+      } else {
+        userLocationCircle.setLatLng([lat, lng]);
+        userLocationCircle.setRadius(accuracy);
+      }
+    }
+  }
+
+  function applyUserLocation({ lat, lng, accuracy, zoom, persist = true, animate = true } = {}) {
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+    const nextZoom = Number.isFinite(zoom) ? zoom : 15;
+    map.setView([lat, lng], nextZoom, { animate });
+    updateUserLocationMarker(lat, lng, accuracy);
+    if (persist) {
+      saveStoredLocation({ lat, lng, accuracy, zoom: nextZoom });
+    }
+  }
+
+  function locateUser({ animate = true } = {}) {
+    if (!navigator.geolocation) {
+      console.warn("[Location] Geolocation unavailable.");
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const coords = pos.coords || {};
+        applyUserLocation({
+          lat: coords.latitude,
+          lng: coords.longitude,
+          accuracy: coords.accuracy,
+          zoom: map.getZoom() || 15,
+          animate
+        });
+      },
+      (err) => {
+        console.warn("[Location] Geolocation failed:", err?.message || err);
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: 8000,
+        maximumAge: 60000
+      }
+    );
+  }
+
+  const storedLocation = readStoredLocation();
+  if (storedLocation) {
+    applyUserLocation({ ...storedLocation, persist: false, animate: false, zoom: storedLocation.zoom });
+  }
+  locateUser({ animate: true });
+
+  const LocateControl = L.Control.extend({
+    onAdd() {
+      const container = L.DomUtil.create("div", "locateControl leaflet-bar");
+      const button = L.DomUtil.create("button", "", container);
+      button.type = "button";
+      button.title = "Locate me";
+      button.setAttribute("aria-label", "Locate me");
+      button.textContent = "📍";
+      L.DomEvent.disableClickPropagation(container);
+      button.addEventListener("click", (e) => {
+        e.preventDefault();
+        locateUser({ animate: true });
+      });
+      return container;
+    }
+  });
+
+  new LocateControl({ position: "topright" }).addTo(map);
+
   // -----------------------------
   // GIS Overlays (ArcGIS layers) - QQMS GIS Safeguards
   // -----------------------------
@@ -3782,14 +3942,18 @@
   function restoreHeaderIfNoBlockingPanels() {
     const newsPanel = $("newsFlashPanel");
     const radioPanel = $("radioPanel");
+    const crimePanel = $("crimePanel");
+    const reportPanel = $("reportPanel");
     const diagnosticsDrawer = $("diagnosticsDrawer");
     const newsHidden = newsPanel?.classList.contains("newsFlashPanel--hidden") ?? true;
     const radioHidden = radioPanel?.classList.contains("radioPanel--hidden") ?? true;
+    const crimeHidden = crimePanel?.classList.contains("crimePanel--hidden") ?? true;
+    const reportHidden = reportPanel?.classList.contains("reportPanel--hidden") ?? true;
     const diagnosticsHidden = diagnosticsDrawer?.classList.contains("diagnosticsDrawer--hidden") ?? true;
     const dockOpen = dockState?.isOpen ?? false;
 
     // If both panels are hidden AND dock is closed, restore the header
-    if (newsHidden && radioHidden && diagnosticsHidden && !dockOpen) {
+    if (newsHidden && radioHidden && crimeHidden && reportHidden && diagnosticsHidden && !dockOpen) {
       setMobileHeaderCollapsed(false);
     }
   }
@@ -4041,7 +4205,17 @@
     air: { aqi: null, timestamp: null },  // Air quality data cache
     openUV: { value: null, status: "unknown", displayText: null, timestamp: null },
     weather: { baseText: "Weather: Loading…" },
-    crime: null  // Will be initialized with loadCrimeUI()
+    crime: null,  // Will be initialized with loadCrimeUI()
+    reports: {
+      items: [],
+      layer: null,
+      markers: new Map(),
+      enabled: true,
+      lastFetch: 0,
+      draftLocation: null,
+      pickMode: false,
+      pickMarker: null
+    }
   };
 
   /**
@@ -6596,7 +6770,7 @@ function selectItem(id) {
     if (!store.crime) return;
 
     const now = Date.now();
-    const cutoff = now - store.crime.windowDays * 86400000;
+    const cutoff = now - store.crime.appliedWindowDays * 86400000;
 
     for (const id of store.crime.ids) {
       const item = store.itemsById.get(id);
@@ -6716,26 +6890,9 @@ function selectItem(id) {
   function toggleCrimeOverlay(fromUser = true) {
     if (!store.crime) return;
 
-    store.crime.enabled = !store.crime.enabled;
-
-    // Save to localStorage
-    saveCrimeUI({
-      enabled: store.crime.enabled,
-      windowDays: store.crime.windowDays,
-      sort: store.crime.sort,
-      menuAutoOpen: store.crime.menuAutoOpen
-    });
-
-    // Apply visibility
-    applyCrimeOverlayVisibility();
-
-    // Update button state
-    updateCrimeButtonActiveState();
-
-    // Auto-open menu if enabled and menuAutoOpen is true
-    if (store.crime.enabled && store.crime.menuAutoOpen && fromUser) {
-      openCrimeMenuPanel();
-    }
+    store.crime.pendingEnabled = !store.crime.enabled;
+    store.crime.windowDays = store.crime.appliedWindowDays;
+    applyCrimeOverlaySettings(fromUser);
 
     console.log(`[Crime Overlay] ${store.crime.enabled ? "Enabled" : "Disabled"}`);
   }
@@ -6777,13 +6934,27 @@ function selectItem(id) {
     // Update enable toggle
     const enableToggle = $("crimeEnableToggle");
     if (enableToggle) {
-      enableToggle.checked = store.crime.enabled;
+      enableToggle.checked = store.crime.pendingEnabled;
     }
 
     // Update window days dropdown
     const windowDropdown = $("crimeWindowDays");
     if (windowDropdown) {
-      windowDropdown.value = String(store.crime.windowDays);
+      const standardOptions = ["7", "30", "90", "180", "365"];
+      const targetValue = String(store.crime.windowDays);
+      if (standardOptions.includes(targetValue)) {
+        windowDropdown.value = targetValue;
+      } else {
+        windowDropdown.value = "custom";
+      }
+      const customRow = $("crimeCustomRow");
+      const customInput = $("crimeWindowCustom");
+      if (customRow) {
+        customRow.style.display = windowDropdown.value === "custom" ? "flex" : "none";
+      }
+      if (customInput && windowDropdown.value === "custom") {
+        customInput.value = String(store.crime.windowDays);
+      }
     }
 
     // Update sort toggle
@@ -6805,8 +6976,44 @@ function selectItem(id) {
       menuAutoOpenToggle.checked = store.crime.menuAutoOpen;
     }
 
+    updateCrimeAppliedLabel();
+
     // Update incidents list
     updateCrimeIncidentsList();
+  }
+
+  function updateCrimeAppliedLabel() {
+    const label = $("crimeAppliedLabel");
+    if (!label || !store.crime) return;
+    const days = store.crime.appliedWindowDays || CRIME_UI_DEFAULTS.windowDays;
+    label.textContent = `Applied: Last ${days} days`;
+  }
+
+  function applyCrimeOverlaySettings(fromUser = true) {
+    if (!store.crime) return;
+
+    store.crime.enabled = store.crime.pendingEnabled;
+    store.crime.appliedWindowDays = store.crime.windowDays;
+    store.crime.lastAppliedAt = new Date().toISOString();
+    store.crime.pendingEnabled = store.crime.enabled;
+
+    saveCrimeUI({
+      enabled: store.crime.enabled,
+      windowDays: store.crime.windowDays,
+      appliedWindowDays: store.crime.appliedWindowDays,
+      lastAppliedAt: store.crime.lastAppliedAt,
+      sort: store.crime.sort,
+      menuAutoOpen: store.crime.menuAutoOpen
+    });
+
+    applyCrimeOverlayVisibility();
+    updateCrimeButtonActiveState();
+    updateCrimeAppliedLabel();
+    updateCrimeIncidentsList();
+
+    if (store.crime.enabled && store.crime.menuAutoOpen && fromUser) {
+      openCrimeMenuPanel();
+    }
   }
 
   /**
@@ -6818,7 +7025,7 @@ function selectItem(id) {
 
     // Get filtered incidents
     const now = Date.now();
-    const cutoff = now - store.crime.windowDays * 86400000;
+    const cutoff = now - store.crime.appliedWindowDays * 86400000;
 
     const incidents = Array.from(store.crime.ids)
       .map(id => store.itemsById.get(id))
@@ -6868,15 +7075,8 @@ function selectItem(id) {
         if (id) {
           // Ensure overlay is enabled
           if (!store.crime.enabled) {
-            store.crime.enabled = true;
-            saveCrimeUI({
-              enabled: store.crime.enabled,
-              windowDays: store.crime.windowDays,
-              sort: store.crime.sort,
-              menuAutoOpen: store.crime.menuAutoOpen
-            });
-            applyCrimeOverlayVisibility();
-            updateCrimeButtonActiveState();
+            store.crime.pendingEnabled = true;
+            applyCrimeOverlaySettings(false);
           }
 
           // Select and zoom to item
@@ -6890,6 +7090,246 @@ function selectItem(id) {
   // -----------------------------
   // Controls
   // -----------------------------
+  // -----------------------------
+  // Reports (Field Notes / Incidents)
+  // -----------------------------
+
+  const REPORT_TYPES = [
+    "Suspicious",
+    "Hazard",
+    "Medical",
+    "Traffic",
+    "Fire",
+    "Other"
+  ];
+
+  const REPORT_TYPE_EMOJI = {
+    Suspicious: "🕵️",
+    Hazard: "⚠️",
+    Medical: "🩺",
+    Traffic: "🚧",
+    Fire: "🔥",
+    Other: "📝"
+  };
+
+  function reportEmojiFor(type, severity) {
+    const base = REPORT_TYPE_EMOJI[type] || REPORT_TYPE_EMOJI.Other;
+    if (severity >= 5) return "🚨";
+    if (severity >= 4 && type === "Medical") return "🚑";
+    if (severity >= 4 && type === "Fire") return "🔥";
+    if (severity >= 4 && type === "Traffic") return "🚧";
+    if (severity >= 4) return "🚨";
+    return base;
+  }
+
+  function formatReportLocation(loc) {
+    if (!loc) return "No location selected.";
+    const accuracy = loc.accuracy ? ` ±${Math.round(loc.accuracy)}m` : "";
+    return `${loc.lat.toFixed(5)}, ${loc.lng.toFixed(5)}${accuracy}`;
+  }
+
+  function setReportStatus(message, tone = "muted") {
+    const status = $("reportStatus");
+    if (!status) return;
+    status.textContent = message;
+    status.dataset.tone = tone;
+  }
+
+  function updateReportLocationUI() {
+    const label = $("reportLocationValue");
+    if (label) {
+      label.textContent = formatReportLocation(store.reports?.draftLocation || null);
+    }
+  }
+
+  function setReportLocation(loc, { fromPick = false } = {}) {
+    if (!store.reports) return;
+    store.reports.draftLocation = loc;
+    if (store.reports.pickMarker) {
+      store.reports.pickMarker.remove();
+      store.reports.pickMarker = null;
+    }
+    if (loc) {
+      const icon = L.divIcon({
+        className: "reportPickMarker",
+        html: `<span>📍</span>`
+      });
+      store.reports.pickMarker = L.marker([loc.lat, loc.lng], { icon }).addTo(map);
+      if (fromPick) {
+        map.panTo([loc.lat, loc.lng]);
+      }
+    }
+    updateReportLocationUI();
+  }
+
+  function updateReportSeverityLabel() {
+    const input = $("reportSeverity");
+    const label = $("reportSeverityLabel");
+    if (!input || !label) return;
+    const value = Number(input.value || 3);
+    const emoji = value >= 4 ? "🚨" : value >= 3 ? "⚠️" : "✅";
+    label.textContent = `${emoji} ${value}`;
+  }
+
+  function buildReportPopup(item) {
+    const date = new Date(item.ts || item.timestamp || Date.now()).toLocaleString();
+    const note = item.note ? escapeHtml(item.note) : "—";
+    const photoHtml = item.photo?.url
+      ? `<div class="reportPopupPhoto"><img src="${escapeAttr(item.photo.url)}" alt="Report photo"/></div>`
+      : "";
+    return `
+      <div class="reportPopup">
+        <div class="reportPopup__title">${escapeHtml(item.type || "Report")} • Severity ${item.severity || 3}</div>
+        <div class="reportPopup__meta">${escapeHtml(date)}</div>
+        <div class="reportPopup__note">${note}</div>
+        ${photoHtml}
+      </div>
+    `;
+  }
+
+  function addReportMarker(item) {
+    const emoji = reportEmojiFor(item.type, Number(item.severity || 3));
+    const icon = L.divIcon({
+      className: "reportMarker",
+      html: `<span>${emoji}</span>`
+    });
+    const marker = L.marker([item.lat, item.lng], { icon });
+    marker.bindPopup(buildReportPopup(item), { maxWidth: 240 });
+    return marker;
+  }
+
+  function renderReportsLayer() {
+    if (!store.reports || !store.reports.layer) return;
+    store.reports.layer.clearLayers();
+    store.reports.markers.clear();
+    if (!store.reports.enabled) return;
+
+    for (const item of store.reports.items) {
+      if (!Number.isFinite(item.lat) || !Number.isFinite(item.lng)) continue;
+      const marker = addReportMarker(item);
+      store.reports.layer.addLayer(marker);
+      store.reports.markers.set(item.id, marker);
+    }
+  }
+
+  async function fetchReports({ sinceDays = 90 } = {}) {
+    if (!store.reports) return;
+    try {
+      const params = new URLSearchParams();
+      if (sinceDays) params.set("sinceDays", String(sinceDays));
+      const res = await fetch(`/api/reports?${params.toString()}`);
+      if (!res.ok) {
+        setReportStatus("Reports feed unavailable.", "warn");
+        return;
+      }
+      const data = await res.json();
+      if (!data.ok || !Array.isArray(data.items)) {
+        setReportStatus("Reports feed unavailable.", "warn");
+        return;
+      }
+      store.reports.items = data.items;
+      store.reports.lastFetch = Date.now();
+      renderReportsLayer();
+    } catch (err) {
+      console.warn("[Reports] Fetch failed:", err);
+    }
+  }
+
+  function addReportItem(item) {
+    if (!store.reports) return;
+    const existing = store.reports.items.findIndex((entry) => entry.id === item.id);
+    if (existing >= 0) {
+      store.reports.items[existing] = item;
+    } else {
+      store.reports.items.unshift(item);
+    }
+    renderReportsLayer();
+  }
+
+  async function submitReport() {
+    if (!store.reports) return;
+    const type = $("reportType")?.value || "Other";
+    const severity = Number($("reportSeverity")?.value || 3);
+    const note = $("reportNote")?.value?.trim() || "";
+    const loc = store.reports.draftLocation;
+
+    if (!loc) {
+      setReportStatus("Select a location before submitting.", "warn");
+      return;
+    }
+
+    if (note.length > 2000) {
+      setReportStatus("Notes are too long (max 2000 characters).", "warn");
+      return;
+    }
+
+    const photoInput = $("reportPhoto");
+    const photoFile = photoInput?.files?.[0] || null;
+    if (photoFile && photoFile.size > 5 * 1024 * 1024) {
+      setReportStatus("Photo is too large (max 5MB).", "warn");
+      return;
+    }
+
+    const tempId = `local-${Date.now()}`;
+    const tempItem = {
+      id: tempId,
+      ts: new Date().toISOString(),
+      lat: loc.lat,
+      lng: loc.lng,
+      accuracy: loc.accuracy,
+      type,
+      severity,
+      note
+    };
+    addReportItem(tempItem);
+
+    try {
+      let res;
+      if (photoFile) {
+        const form = new FormData();
+        form.append("type", type);
+        form.append("severity", String(severity));
+        form.append("note", note);
+        form.append("lat", String(loc.lat));
+        form.append("lng", String(loc.lng));
+        if (loc.accuracy) form.append("accuracy", String(loc.accuracy));
+        form.append("photo", photoFile);
+        res = await fetch("/api/reports", { method: "POST", body: form });
+      } else {
+        res = await fetch("/api/reports", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            type,
+            severity,
+            note,
+            lat: loc.lat,
+            lng: loc.lng,
+            accuracy: loc.accuracy
+          })
+        });
+      }
+
+      const data = await res.json();
+      if (!res.ok || !data.ok) {
+        throw new Error(data.error || "submit_failed");
+      }
+
+      store.reports.items = store.reports.items.filter(item => item.id !== tempId);
+      addReportItem(data.item);
+      setReportStatus("Report submitted.", "ok");
+
+      if ($("reportNote")) $("reportNote").value = "";
+      if ($("reportPhoto")) $("reportPhoto").value = "";
+      if ($("reportPhotoPreviewWrap")) $("reportPhotoPreviewWrap").style.display = "none";
+    } catch (err) {
+      store.reports.items = store.reports.items.filter(item => item.id !== tempId);
+      renderReportsLayer();
+      setReportStatus("Report failed to submit. Try again.", "warn");
+      console.warn("[Reports] Submit failed:", err);
+    }
+  }
+
   function setLastUpdate() {
     const el = getChipElement("lastUpdate");
     if (el) el.textContent = fmtTime(new Date());
@@ -7544,30 +7984,36 @@ function selectItem(id) {
   // Enable toggle
   $("crimeEnableToggle").addEventListener("change", (e) => {
     if (!store.crime) return;
-    store.crime.enabled = e.target.checked;
-    saveCrimeUI({
-      enabled: store.crime.enabled,
-      windowDays: store.crime.windowDays,
-      sort: store.crime.sort,
-      menuAutoOpen: store.crime.menuAutoOpen
-    });
-    applyCrimeOverlayVisibility();
-    updateCrimeButtonActiveState();
+    store.crime.pendingEnabled = e.target.checked;
   });
 
   // Window days dropdown
   $("crimeWindowDays").addEventListener("change", (e) => {
     if (!store.crime) return;
-    store.crime.windowDays = parseInt(e.target.value, 10);
-    saveCrimeUI({
-      enabled: store.crime.enabled,
-      windowDays: store.crime.windowDays,
-      sort: store.crime.sort,
-      menuAutoOpen: store.crime.menuAutoOpen
-    });
-    applyCrimeOverlayVisibility();
-    updateCrimeIncidentsList();
+    const value = e.target.value;
+    const customRow = $("crimeCustomRow");
+    const customInput = $("crimeWindowCustom");
+    if (value === "custom") {
+      if (customRow) customRow.style.display = "flex";
+      store.crime.windowDays = parseInt(customInput?.value || "30", 10);
+    } else {
+      if (customRow) customRow.style.display = "none";
+      store.crime.windowDays = parseInt(value, 10);
+      if (customInput) customInput.value = String(store.crime.windowDays);
+    }
+    updateCrimeAppliedLabel();
   });
+
+  const crimeCustomInput = $("crimeWindowCustom");
+  if (crimeCustomInput) {
+    crimeCustomInput.addEventListener("change", (e) => {
+      if (!store.crime) return;
+      const value = parseInt(e.target.value, 10);
+      if (Number.isFinite(value) && value > 0) {
+        store.crime.windowDays = value;
+      }
+    });
+  }
 
   // Sort toggles
   $("crimeSortNewest").addEventListener("click", () => {
@@ -7576,6 +8022,8 @@ function selectItem(id) {
     saveCrimeUI({
       enabled: store.crime.enabled,
       windowDays: store.crime.windowDays,
+      appliedWindowDays: store.crime.appliedWindowDays,
+      lastAppliedAt: store.crime.lastAppliedAt,
       sort: store.crime.sort,
       menuAutoOpen: store.crime.menuAutoOpen
     });
@@ -7588,6 +8036,8 @@ function selectItem(id) {
     saveCrimeUI({
       enabled: store.crime.enabled,
       windowDays: store.crime.windowDays,
+      appliedWindowDays: store.crime.appliedWindowDays,
+      lastAppliedAt: store.crime.lastAppliedAt,
       sort: store.crime.sort,
       menuAutoOpen: store.crime.menuAutoOpen
     });
@@ -7601,10 +8051,19 @@ function selectItem(id) {
     saveCrimeUI({
       enabled: store.crime.enabled,
       windowDays: store.crime.windowDays,
+      appliedWindowDays: store.crime.appliedWindowDays,
+      lastAppliedAt: store.crime.lastAppliedAt,
       sort: store.crime.sort,
       menuAutoOpen: store.crime.menuAutoOpen
     });
   });
+
+  const crimeApplyBtn = $("crimeApply");
+  if (crimeApplyBtn) {
+    crimeApplyBtn.addEventListener("click", () => {
+      applyCrimeOverlaySettings(true);
+    });
+  }
 
   // Refresh button
   $("crimeRefresh").addEventListener("click", async () => {
@@ -7638,6 +8097,136 @@ function selectItem(id) {
     } catch (err) {
       console.error("[Crime Reports] Refresh error:", err);
     }
+  });
+
+  // -----------------------------
+  // Reports Panel Event Listeners
+  // -----------------------------
+  $("reportClose").addEventListener("click", () => {
+    playClickSound('close');
+    $("reportPanel").classList.add("reportPanel--hidden");
+    if (store.reports) {
+      store.reports.pickMode = false;
+      const pickBtn = $("reportPickLocation");
+      if (pickBtn) pickBtn.textContent = "Pick on map";
+    }
+    restoreHeaderIfNoBlockingPanels();
+  });
+
+  const reportSeverityInput = $("reportSeverity");
+  if (reportSeverityInput) {
+    reportSeverityInput.addEventListener("input", updateReportSeverityLabel);
+  }
+
+  const reportUseLocation = $("reportUseLocation");
+  if (reportUseLocation) {
+    reportUseLocation.addEventListener("click", () => {
+      if (!navigator.geolocation) {
+        setReportStatus("Geolocation unavailable.", "warn");
+        return;
+      }
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          const coords = pos.coords || {};
+          setReportLocation({
+            lat: coords.latitude,
+            lng: coords.longitude,
+            accuracy: coords.accuracy
+          });
+          map.panTo([coords.latitude, coords.longitude]);
+          setReportStatus("Location updated from device.", "ok");
+        },
+        () => {
+          setReportStatus("Unable to fetch device location.", "warn");
+        },
+        {
+          enableHighAccuracy: true,
+          timeout: 8000,
+          maximumAge: 60000
+        }
+      );
+    });
+  }
+
+  const reportPickLocation = $("reportPickLocation");
+  if (reportPickLocation) {
+    reportPickLocation.addEventListener("click", () => {
+      if (!store.reports) return;
+      store.reports.pickMode = !store.reports.pickMode;
+      reportPickLocation.textContent = store.reports.pickMode ? "Tap map…" : "Pick on map";
+      setReportStatus(store.reports.pickMode ? "Tap map to set location." : "Pick mode canceled.", "muted");
+    });
+  }
+
+  const reportClearLocation = $("reportClearLocation");
+  if (reportClearLocation) {
+    reportClearLocation.addEventListener("click", () => {
+      setReportLocation(null);
+      setReportStatus("Location cleared.", "muted");
+    });
+  }
+
+  const reportPhotoInput = $("reportPhoto");
+  if (reportPhotoInput) {
+    reportPhotoInput.addEventListener("change", () => {
+      const file = reportPhotoInput.files?.[0];
+      const previewWrap = $("reportPhotoPreviewWrap");
+      const previewImg = $("reportPhotoPreview");
+      if (!previewWrap || !previewImg) return;
+      if (!file) {
+        previewWrap.style.display = "none";
+        previewImg.src = "";
+        return;
+      }
+      if (file.size > 5 * 1024 * 1024) {
+        setReportStatus("Photo is too large (max 5MB).", "warn");
+        reportPhotoInput.value = "";
+        previewWrap.style.display = "none";
+        return;
+      }
+      previewImg.src = URL.createObjectURL(file);
+      previewWrap.style.display = "block";
+    });
+  }
+
+  const reportLayerToggle = $("reportLayerToggle");
+  if (reportLayerToggle) {
+    reportLayerToggle.addEventListener("change", () => {
+      if (!store.reports) return;
+      store.reports.enabled = reportLayerToggle.checked;
+      renderReportsLayer();
+    });
+  }
+
+  const reportExportCsv = $("reportExportCsv");
+  if (reportExportCsv) {
+    reportExportCsv.addEventListener("click", () => {
+      window.location.href = "/api/reports/export.csv";
+    });
+  }
+  const reportExportGeojson = $("reportExportGeojson");
+  if (reportExportGeojson) {
+    reportExportGeojson.addEventListener("click", () => {
+      window.location.href = "/api/reports/export.geojson";
+    });
+  }
+
+  const reportSubmit = $("reportSubmit");
+  if (reportSubmit) {
+    reportSubmit.addEventListener("click", () => {
+      submitReport();
+    });
+  }
+
+  map.on("click", (event) => {
+    if (!store.reports || !store.reports.pickMode) return;
+    setReportLocation({
+      lat: event.latlng.lat,
+      lng: event.latlng.lng
+    }, { fromPick: true });
+    store.reports.pickMode = false;
+    if (reportPickLocation) reportPickLocation.textContent = "Pick on map";
+    setReportStatus("Location set from map.", "ok");
   });
 
   // -----------------------------
@@ -8796,6 +9385,10 @@ function selectItem(id) {
           <span class="btn__icon">🚓</span>
           <span class="btn__label">Crime</span>
         </button>
+        <button class="btn" id="btnReport" title="Field Notes / Incidents">
+          <span class="btn__icon">📝</span>
+          <span class="btn__label">Report</span>
+        </button>
         <button class="btn" id="btnNewsFlash" title="Regional News Flash Dashboard">
           <span class="btn__icon">📰</span>
           <span class="btn__label">News Flash</span>
@@ -8842,7 +9435,6 @@ function selectItem(id) {
           return;
         }
         openCrimeMenuPanel();
-        toggleCrimeOverlay(true);
       });
 
       // Right-click (desktop): open menu without toggling
@@ -8878,6 +9470,25 @@ function selectItem(id) {
         if (pressTimer) {
           clearTimeout(pressTimer);
           pressTimer = null;
+        }
+      });
+    }
+
+    // Report button
+    const btnReport = $("btnReport");
+    if (btnReport) {
+      btnReport.addEventListener("click", () => {
+        const panel = $("reportPanel");
+        if (!panel) return;
+        const isHidden = panel.classList.contains("reportPanel--hidden");
+        if (isHidden) {
+          playClickSound('open');
+          panel.classList.remove("reportPanel--hidden");
+          setMobileHeaderCollapsed(true);
+        } else {
+          playClickSound('close');
+          panel.classList.add("reportPanel--hidden");
+          restoreHeaderIfNoBlockingPanels();
         }
       });
     }
@@ -9000,13 +9611,25 @@ function selectItem(id) {
   store.crime = {
     enabled: crimeUI.enabled,
     windowDays: crimeUI.windowDays,
+    appliedWindowDays: crimeUI.appliedWindowDays,
+    lastAppliedAt: crimeUI.lastAppliedAt,
+    pendingEnabled: crimeUI.enabled,
     sort: crimeUI.sort,
     menuAutoOpen: crimeUI.menuAutoOpen,
     ids: new Set(),
     markersOnMap: new Set()
   };
+  store.reports.layer = reportsLayer;
+  updateReportSeverityLabel();
+  updateReportLocationUI();
+  const reportLayerToggle = $("reportLayerToggle");
+  if (reportLayerToggle) {
+    reportLayerToggle.checked = store.reports.enabled;
+  }
+  fetchReports({ sinceDays: 90 });
 
   syncUiMode();
+  updateCrimeButtonActiveState();
   ensureOverlayLegendControl();
 
   // Set a short timeout to ensure chips update even if refreshAll hangs
@@ -9022,4 +9645,5 @@ function selectItem(id) {
   setInterval(fetchCDC, CONFIG.polling.cdc);
   setInterval(fetchAirQuality, CONFIG.air.refreshMs);
   setInterval(pollFxbgCrimeReports, CONFIG.fxbgCrimeReports.polling);
+  setInterval(() => fetchReports({ sinceDays: 90 }), 60 * 1000);
 })();

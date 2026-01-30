@@ -16,6 +16,7 @@ const fs = require("fs");
 const fsp = require("fs/promises");
 const path = require("path");
 const os = require("os");
+const crypto = require("crypto");
 const dotenv = require("dotenv");
 const { upstreamFetch } = require("./server/upstreamFetch");
 const { createCache } = require("./server/cache");
@@ -197,6 +198,141 @@ function resolvePayloadLimit(contentType, expectedType) {
   if (ct.includes("json")) return PAYLOAD_LIMITS.json;
   if (ct.startsWith("text/") || ct.includes("xml")) return PAYLOAD_LIMITS.text;
   return PAYLOAD_LIMITS.binary;
+}
+
+const REPORTS_FILE = path.join(__dirname, "data", "reports.json");
+const REPORT_UPLOAD_DIR = path.join(__dirname, "data", "uploads", "reports");
+const REPORT_ALLOWED_MIME = new Set(["image/jpeg", "image/png", "image/webp"]);
+const REPORT_UPLOAD_LIMIT = 5 * 1024 * 1024;
+const REPORT_FORM_LIMIT = REPORT_UPLOAD_LIMIT + (1 * 1024 * 1024);
+const REPORT_NOTE_LIMIT = 2000;
+
+async function ensureReportsFile() {
+  const dir = path.dirname(REPORTS_FILE);
+  await fsp.mkdir(dir, { recursive: true });
+  try {
+    await fsp.access(REPORTS_FILE);
+  } catch {
+    await fsp.writeFile(REPORTS_FILE, "[]", "utf8");
+  }
+}
+
+async function readReports() {
+  await ensureReportsFile();
+  const raw = await fsp.readFile(REPORTS_FILE, "utf8");
+  const parsed = safeJsonParse(raw, [], "reports");
+  return Array.isArray(parsed) ? parsed : [];
+}
+
+async function writeReports(items) {
+  await ensureReportsFile();
+  const tmp = `${REPORTS_FILE}.tmp`;
+  await fsp.writeFile(tmp, JSON.stringify(items, null, 2), "utf8");
+  await fsp.rename(tmp, REPORTS_FILE);
+}
+
+function parseMultipart(buffer, boundary) {
+  const delimiter = `--${boundary}`;
+  const body = buffer.toString("latin1");
+  const parts = body.split(delimiter).slice(1, -1);
+  const fields = {};
+  let file = null;
+
+  for (const part of parts) {
+    const cleaned = part.replace(/^\r\n/, "");
+    const [rawHeaders, rawBody] = cleaned.split("\r\n\r\n");
+    if (!rawHeaders || rawBody === undefined) continue;
+    const headers = rawHeaders.split("\r\n").reduce((acc, line) => {
+      const [key, ...rest] = line.split(":");
+      acc[key.toLowerCase()] = rest.join(":").trim();
+      return acc;
+    }, {});
+    const disposition = headers["content-disposition"] || "";
+    const nameMatch = disposition.match(/name="([^"]+)"/i);
+    const fileMatch = disposition.match(/filename="([^"]*)"/i);
+    const name = nameMatch ? nameMatch[1] : null;
+    const bodyContent = rawBody.replace(/\r\n$/, "");
+    if (!name) continue;
+
+    if (fileMatch && fileMatch[1]) {
+      const mime = headers["content-type"] || "application/octet-stream";
+      file = {
+        field: name,
+        filename: fileMatch[1],
+        mime,
+        buffer: Buffer.from(bodyContent, "latin1")
+      };
+    } else {
+      fields[name] = Buffer.from(bodyContent, "latin1").toString("utf8");
+    }
+  }
+
+  return { fields, file };
+}
+
+async function readBody(req, limit) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let received = 0;
+    req.on("data", (chunk) => {
+      received += chunk.length;
+      if (received > limit) {
+        reject(new Error("payload_too_large"));
+        req.destroy();
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on("end", () => resolve(Buffer.concat(chunks, received)));
+    req.on("error", reject);
+  });
+}
+
+function filterReports(items, { since, sinceDays, bbox } = {}) {
+  let cutoff = null;
+  if (since) {
+    const ts = Date.parse(since);
+    if (!Number.isNaN(ts)) cutoff = ts;
+  }
+  if (sinceDays) {
+    const days = Number(sinceDays);
+    if (Number.isFinite(days)) {
+      const sinceTs = Date.now() - days * 86400000;
+      cutoff = cutoff ? Math.max(cutoff, sinceTs) : sinceTs;
+    }
+  }
+  let bounds = null;
+  if (bbox) {
+    const parts = bbox.split(",").map(Number);
+    if (parts.length === 4 && parts.every(Number.isFinite)) {
+      bounds = {
+        minLng: parts[0],
+        minLat: parts[1],
+        maxLng: parts[2],
+        maxLat: parts[3]
+      };
+    }
+  }
+
+  return items.filter((item) => {
+    if (cutoff) {
+      const ts = Date.parse(item.ts);
+      if (Number.isNaN(ts) || ts < cutoff) return false;
+    }
+    if (bounds) {
+      if (item.lng < bounds.minLng || item.lng > bounds.maxLng) return false;
+      if (item.lat < bounds.minLat || item.lat > bounds.maxLat) return false;
+    }
+    return true;
+  }).sort((a, b) => new Date(b.ts).getTime() - new Date(a.ts).getTime());
+}
+
+function toCsvValue(value) {
+  const str = value === null || value === undefined ? "" : String(value);
+  if (/[",\n]/.test(str)) {
+    return `"${str.replace(/"/g, '""')}"`;
+  }
+  return str;
 }
 
 function isJsonContentType(contentType) {
@@ -2436,6 +2572,22 @@ const server = http.createServer(async (req, res) => {
       });
     });
 
+    if (urlObj.pathname.startsWith("/uploads/reports/")) {
+      const filename = path.basename(urlObj.pathname);
+      const filePath = path.join(REPORT_UPLOAD_DIR, filename);
+      if (!filePath.startsWith(REPORT_UPLOAD_DIR)) {
+        return send(res, 403, "Forbidden");
+      }
+      if (!fs.existsSync(filePath)) {
+        return send(res, 404, "Not found");
+      }
+      const ext = path.extname(filePath).toLowerCase();
+      const type = MIME[ext] || "application/octet-stream";
+      res.writeHead(200, { "Content-Type": type, "Cache-Control": "no-store" });
+      fs.createReadStream(filePath).pipe(res);
+      return;
+    }
+
     // Health check endpoint (legacy, kept for backward compatibility)
     if (urlObj.pathname === "/health") {
       const uptimeMs = Date.now() - SERVER_START_TIME;
@@ -2560,6 +2712,145 @@ const server = http.createServer(async (req, res) => {
       };
 
       return send(res, 200, JSON.stringify(health, null, 2), { "Content-Type": "application/json" });
+    }
+
+    if (urlObj.pathname === "/api/reports" && req.method === "GET") {
+      const items = await readReports();
+      const filtered = filterReports(items, {
+        since: urlObj.searchParams.get("since"),
+        sinceDays: urlObj.searchParams.get("sinceDays"),
+        bbox: urlObj.searchParams.get("bbox")
+      });
+      return send(res, 200, JSON.stringify({ ok: true, count: filtered.length, items: filtered }, null, 2), {
+        "Content-Type": "application/json"
+      });
+    }
+
+    if (urlObj.pathname === "/api/reports" && req.method === "POST") {
+      try {
+        const contentType = String(req.headers["content-type"] || "");
+        let fields = {};
+        let upload = null;
+
+        if (contentType.includes("multipart/form-data")) {
+          const boundaryMatch = contentType.match(/boundary=([^;]+)/i);
+          if (!boundaryMatch) {
+            return send(res, 400, JSON.stringify({ ok: false, error: "invalid_multipart" }), { "Content-Type": "application/json" });
+          }
+          const boundary = boundaryMatch[1].replace(/^"|"$/g, "");
+          const body = await readBody(req, REPORT_FORM_LIMIT);
+          const parsed = parseMultipart(body, boundary);
+          fields = parsed.fields || {};
+          upload = parsed.file || null;
+        } else {
+          const body = await readBody(req, PAYLOAD_LIMITS.json);
+          fields = safeJsonParse(body.toString("utf8"), {}, "reports payload");
+        }
+
+        const lat = Number(fields.lat);
+        const lng = Number(fields.lng);
+        const accuracy = fields.accuracy !== undefined ? Number(fields.accuracy) : undefined;
+        const severity = Number(fields.severity);
+        const type = String(fields.type || "Other");
+        const note = String(fields.note || "");
+
+        if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+          return send(res, 400, JSON.stringify({ ok: false, error: "invalid_coordinates" }), { "Content-Type": "application/json" });
+        }
+        if (!Number.isFinite(severity) || severity < 1 || severity > 5) {
+          return send(res, 400, JSON.stringify({ ok: false, error: "invalid_severity" }), { "Content-Type": "application/json" });
+        }
+        if (note.length > REPORT_NOTE_LIMIT) {
+          return send(res, 400, JSON.stringify({ ok: false, error: "note_too_long" }), { "Content-Type": "application/json" });
+        }
+
+        const id = crypto.randomUUID();
+        let photo = null;
+
+        if (upload && upload.buffer && upload.buffer.length) {
+          if (!REPORT_ALLOWED_MIME.has(upload.mime)) {
+            return send(res, 400, JSON.stringify({ ok: false, error: "invalid_photo_type" }), { "Content-Type": "application/json" });
+          }
+          if (upload.buffer.length > REPORT_UPLOAD_LIMIT) {
+            return send(res, 400, JSON.stringify({ ok: false, error: "photo_too_large" }), { "Content-Type": "application/json" });
+          }
+          await fsp.mkdir(REPORT_UPLOAD_DIR, { recursive: true });
+          const ext = upload.mime === "image/jpeg" ? "jpg" : upload.mime === "image/png" ? "png" : "webp";
+          const filename = `${id}.${ext}`;
+          const filePath = path.join(REPORT_UPLOAD_DIR, filename);
+          await fsp.writeFile(filePath, upload.buffer);
+          photo = {
+            filename,
+            mime: upload.mime,
+            size: upload.buffer.length,
+            path: filePath,
+            url: `/uploads/reports/${filename}`
+          };
+        }
+
+        const item = {
+          id,
+          ts: new Date().toISOString(),
+          lat,
+          lng,
+          accuracy: Number.isFinite(accuracy) ? accuracy : undefined,
+          type,
+          severity,
+          note,
+          photo,
+          userAgent: req.headers["user-agent"] || undefined,
+          deviceLabel: fields.deviceLabel || undefined
+        };
+
+        const items = await readReports();
+        items.push(item);
+        await writeReports(items);
+
+        return send(res, 200, JSON.stringify({ ok: true, item }, null, 2), { "Content-Type": "application/json" });
+      } catch (err) {
+        const status = err.message === "payload_too_large" ? 413 : 500;
+        return send(res, status, JSON.stringify({ ok: false, error: "report_save_failed" }), { "Content-Type": "application/json" });
+      }
+    }
+
+    if (urlObj.pathname === "/api/reports/export.csv") {
+      const items = await readReports();
+      const headers = ["id", "ts", "lat", "lng", "accuracy", "type", "severity", "note", "photoUrl"];
+      const rows = items.map((item) => [
+        item.id,
+        item.ts,
+        item.lat,
+        item.lng,
+        item.accuracy || "",
+        item.type,
+        item.severity,
+        item.note,
+        item.photo?.url || ""
+      ]);
+      const csv = [headers.map(toCsvValue).join(","), ...rows.map(row => row.map(toCsvValue).join(","))].join("\n");
+      return send(res, 200, csv, { "Content-Type": "text/csv; charset=utf-8" });
+    }
+
+    if (urlObj.pathname === "/api/reports/export.geojson") {
+      const items = await readReports();
+      const features = items.map((item) => ({
+        type: "Feature",
+        geometry: {
+          type: "Point",
+          coordinates: [item.lng, item.lat]
+        },
+        properties: {
+          id: item.id,
+          ts: item.ts,
+          accuracy: item.accuracy,
+          type: item.type,
+          severity: item.severity,
+          note: item.note,
+          photoUrl: item.photo?.url || null
+        }
+      }));
+      const geojson = { type: "FeatureCollection", features };
+      return send(res, 200, JSON.stringify(geojson, null, 2), { "Content-Type": "application/geo+json" });
     }
 
     // Upstream health endpoint - compact report of key upstreams

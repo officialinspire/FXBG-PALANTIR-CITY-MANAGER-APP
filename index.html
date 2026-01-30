@@ -103,6 +103,10 @@
           <span class="btn__icon">🚓</span>
           <span class="btn__label">Crime</span>
         </button>
+        <button class="btn" id="btnReport" title="Field Notes / Incidents">
+          <span class="btn__icon">📝</span>
+          <span class="btn__label">Report</span>
+        </button>
         <button class="btn" id="btnNewsFlash" title="Regional News Flash Dashboard">
           <span class="btn__icon">📰</span>
           <span class="btn__label">News Flash</span>
@@ -285,8 +289,20 @@
                 <option value="30" selected>Last 30 days</option>
                 <option value="90">Last 90 days</option>
                 <option value="180">Last 180 days</option>
+                <option value="365">Last 365 days</option>
+                <option value="custom">Custom…</option>
               </select>
             </label>
+
+            <label class="crime-control-row crime-control-row--custom" id="crimeCustomRow">
+              <span>Custom days</span>
+              <input type="number" id="crimeWindowCustom" min="1" max="3650" value="30" />
+            </label>
+
+            <div class="crime-control-row crime-actions">
+              <div class="crime-applied" id="crimeAppliedLabel">Applied: —</div>
+              <button class="btn btnSmall" id="crimeApply">Apply Overlay</button>
+            </div>
 
             <div class="crime-control-row">
               <span>Sort By</span>
@@ -308,6 +324,79 @@
 
           <div class="crime-incidents-list" id="crimeIncidentsList">
             <div class="crime-list-empty">Loading crime reports...</div>
+          </div>
+        </div>
+      </aside>
+
+      <!-- Reports Panel -->
+      <aside class="reportPanel reportPanel--hidden" id="reportPanel" aria-label="Field Notes / Reports">
+        <div class="reportPanel__header">
+          <div class="reportPanel__title">
+            <span class="reportPanel__emoji">📝</span>
+            <span>Field Notes / Incidents</span>
+          </div>
+          <button class="iconBtn" id="reportClose" title="Close">✖️</button>
+        </div>
+        <div class="reportPanel__body">
+          <div class="reportPanel__section">
+            <label for="reportType">Type</label>
+            <select id="reportType">
+              <option value="Suspicious">Suspicious</option>
+              <option value="Hazard">Hazard</option>
+              <option value="Medical">Medical</option>
+              <option value="Traffic">Traffic</option>
+              <option value="Fire">Fire</option>
+              <option value="Other">Other</option>
+            </select>
+          </div>
+
+          <div class="reportPanel__section">
+            <label for="reportSeverity">Severity</label>
+            <div class="reportSeverity">
+              <input type="range" id="reportSeverity" min="1" max="5" step="1" value="3" />
+              <span class="reportSeverity__label" id="reportSeverityLabel">⚠️ 3</span>
+            </div>
+          </div>
+
+          <div class="reportPanel__section">
+            <label for="reportNote">Notes</label>
+            <textarea id="reportNote" rows="4" maxlength="2000" placeholder="Add field notes, observed details, or incident summary…"></textarea>
+          </div>
+
+          <div class="reportPanel__section">
+            <label>Location</label>
+            <div class="reportLocationControls">
+              <button class="btn btnSmall" id="reportUseLocation">Use my location</button>
+              <button class="btn btnSmall" id="reportPickLocation">Pick on map</button>
+              <button class="btn btnSmall btn--ghost" id="reportClearLocation">Clear</button>
+            </div>
+            <div class="reportLocationValue" id="reportLocationValue">No location selected.</div>
+          </div>
+
+          <div class="reportPanel__section">
+            <label for="reportPhoto">Photo (optional)</label>
+            <input type="file" id="reportPhoto" accept="image/jpeg,image/png,image/webp" />
+            <div class="reportPhotoPreview" id="reportPhotoPreviewWrap">
+              <img id="reportPhotoPreview" alt="Report photo preview" />
+            </div>
+          </div>
+
+          <div class="reportPanel__section">
+            <label class="reportLayerToggle">
+              <span>Reports layer</span>
+              <input type="checkbox" id="reportLayerToggle" checked />
+            </label>
+          </div>
+
+          <div class="reportPanel__section reportPanel__exports">
+            <button class="btn btnSmall" id="reportExportCsv">Export CSV</button>
+            <button class="btn btnSmall" id="reportExportGeojson">Export GeoJSON</button>
+          </div>
+
+          <div class="reportStatus" id="reportStatus" role="status" aria-live="polite"></div>
+
+          <div class="reportPanel__submitBar">
+            <button class="btn" id="reportSubmit">Submit Report</button>
           </div>
         </div>
       </aside>

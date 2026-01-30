@@ -28,6 +28,12 @@ parse_json_ok() {
         const ok = data && (data.ok === true || String(data.status || "").toLowerCase() === "ok");
         process.exit(ok ? 0 : 1);
       }
+      if (mode === "reports") {
+        process.exit(data && data.ok === true ? 0 : 1);
+      }
+      if (mode === "geojson") {
+        process.exit(data && data.type === "FeatureCollection" ? 0 : 1);
+      }
       process.exit(1);
     } catch (err) {
       process.exit(2);
@@ -59,6 +65,8 @@ echo "[smoke] Running against $BASE_URL"
 
 check_ok "$BASE_URL/api/health" "health" "health"
 check_ok "$BASE_URL/api/fxbg/crime-reports/status" "crime-reports status" "crime"
+check_ok "$BASE_URL/api/reports" "reports" "reports"
+check_ok "$BASE_URL/api/reports/export.geojson" "reports geojson" "geojson"
 
 curl -s "$BASE_URL/api/fxbg/crime-reports/incidents" | head -c 800 >/dev/null
 curl -s "$BASE_URL/api/health/test-upstreams?quick=1" | head -c 800 >/dev/null
