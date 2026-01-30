@@ -1738,6 +1738,11 @@ function httpsGet(url, options = {}) {
 async function fetchCrimeReportPdfLinks() {
   console.log("[Crime Reports] Fetching crime reports page...");
 
+  let responseStatus = null;
+  let responseContentType = null;
+  let bodyLength = 0;
+  let bodySnippet = "";
+
   try {
     const response = await httpsGet(FXBG_CRIME_REPORTS_URL, {
       accept: "text/html",
@@ -1746,16 +1751,25 @@ async function fetchCrimeReportPdfLinks() {
       maxBytes: PAYLOAD_LIMITS.text
     });
 
+    responseStatus = response.statusCode;
+    responseContentType = response.headers && response.headers["content-type"];
+
     if (response.statusCode !== 200) {
       throw new Error(`HTTP ${response.statusCode}`);
     }
 
     const html = response.text();
+    bodyLength = html.length;
+    bodySnippet = html.substring(0, 300);
 
-    // Extract PDF links - look for DocumentCenter/View/ links
-    // Pattern: /DocumentCenter/View/12345/Crime-Report-Week-of-01-01-2026
-    const pdfLinkRegex = /\/DocumentCenter\/View\/(\d+)[^"'>\s]*/gi;
-    const matches = [...html.matchAll(pdfLinkRegex)];
+    // Extract ALL DocumentCenter/View links (relative and absolute)
+    // Matches:
+    //   /DocumentCenter/View/12345
+    //   /DocumentCenter/View/12345/optional-slug
+    //   https://www.fredericksburgva.gov/DocumentCenter/View/12345
+    //   https://fredericksburgva.gov/DocumentCenter/View/12345/slug
+    const docCenterRegex = /(?:https?:\/\/(?:www\.)?fredericksburgva\.gov)?\/DocumentCenter\/View\/(\d+)(?:\/[^"'<>\s]*)?/gi;
+    const matches = [...html.matchAll(docCenterRegex)];
 
     const pdfLinks = [];
     const seenIds = new Set();
@@ -1765,39 +1779,32 @@ async function fetchCrimeReportPdfLinks() {
       if (seenIds.has(docId)) continue;
       seenIds.add(docId);
 
+      // Normalize to absolute URL with https://www.fredericksburgva.gov prefix
       const fullPath = match[0];
-      // Check if it looks like a crime report
-      if (fullPath.toLowerCase().includes("crime") ||
-          fullPath.toLowerCase().includes("weekly") ||
-          fullPath.toLowerCase().includes("report")) {
-        pdfLinks.push({
-          id: docId,
-          url: FXBG_DOCUMENT_CENTER_BASE + docId,
-          path: fullPath
-        });
-      }
+      const normalizedUrl = fullPath.startsWith("http")
+        ? fullPath.replace(/^https?:\/\/fredericksburgva\.gov/, "https://www.fredericksburgva.gov")
+        : `https://www.fredericksburgva.gov${fullPath}`;
+
+      pdfLinks.push({
+        id: docId,
+        url: normalizedUrl,
+        path: fullPath
+      });
     }
 
-    // Also look for direct links to crime report PDFs
-    const directPdfRegex = /href=["']([^"']*(?:crime|weekly)[^"']*\.pdf)["']/gi;
-    const directMatches = [...html.matchAll(directPdfRegex)];
-    for (const match of directMatches) {
-      const pdfUrl = match[1].startsWith("http")
-        ? match[1]
-        : `https://www.fredericksburgva.gov${match[1].startsWith("/") ? "" : "/"}${match[1]}`;
-      const docId = `direct-${pdfLinks.length}`;
-      if (!seenIds.has(pdfUrl)) {
-        seenIds.add(pdfUrl);
-        pdfLinks.push({
-          id: docId,
-          url: pdfUrl,
-          path: pdfUrl
-        });
-      }
-    }
+    console.log(`[Crime Reports] Found ${pdfLinks.length} DocumentCenter links (methodUsed: directHtml)`);
 
-    console.log(`[Crime Reports] Found ${pdfLinks.length} potential crime report PDFs`);
-    return pdfLinks;
+    // Return with metadata for response
+    return {
+      links: pdfLinks,
+      methodUsed: "directHtml",
+      diagnostics: pdfLinks.length === 0 ? {
+        status: responseStatus,
+        contentType: responseContentType,
+        bodyLength: bodyLength,
+        bodySnippet: bodySnippet
+      } : null
+    };
   } catch (e) {
     console.error("[Crime Reports] Failed to fetch crime reports page:", e.message);
     logApp({
@@ -1806,7 +1813,17 @@ async function fetchCrimeReportPdfLinks() {
       msg: "Crime reports page fetch failed",
       errorCode: e.code || e.message
     });
-    return [];
+    return {
+      links: [],
+      methodUsed: "directHtml",
+      diagnostics: {
+        status: responseStatus,
+        contentType: responseContentType,
+        bodyLength: bodyLength,
+        bodySnippet: bodySnippet,
+        error: e.message
+      }
+    };
   }
 }
 
@@ -2067,16 +2084,30 @@ async function refreshCrimeReports(months = 6) {
     // Load geocode cache
     await loadGeocodeCache();
 
-    // Fetch PDF links
-    const pdfLinks = await fetchCrimeReportPdfLinks();
+    // Fetch PDF links (returns { links, methodUsed, diagnostics })
+    const fetchResult = await fetchCrimeReportPdfLinks();
+    const pdfLinks = fetchResult.links;
+    const methodUsed = fetchResult.methodUsed;
 
     if (pdfLinks.length === 0) {
       console.warn("[Crime Reports] No PDF links found, using sample data fallback");
-      return { success: false, count: 0, message: "No crime report PDFs found on source page" };
+      const result = {
+        success: false,
+        count: 0,
+        pdfCount: 0,
+        message: "No crime report PDFs found on source page",
+        methodUsed: methodUsed
+      };
+      // Include diagnostics if available
+      if (fetchResult.diagnostics) {
+        result.diagnostics = fetchResult.diagnostics;
+      }
+      return result;
     }
 
     // Process up to 10 most recent PDFs (to avoid overwhelming the server)
     const pdfsToProcess = pdfLinks.slice(0, 10);
+    const sampleUrls = pdfLinks.slice(0, 3).map(p => p.url);
 
     for (const pdf of pdfsToProcess) {
       try {
@@ -2157,6 +2188,8 @@ async function refreshCrimeReports(months = 6) {
       count: deduped.length,
       pdfCount: pdfsToProcess.length,
       geocoded: geocoded,
+      sample: sampleUrls,
+      methodUsed: methodUsed,
       message: `Successfully refreshed ${deduped.length} crime incidents from ${pdfsToProcess.length} PDFs`
     };
 
@@ -2510,6 +2543,11 @@ const server = http.createServer(async (req, res) => {
           geocoded: result.geocoded || 0,
           timestamp: new Date().toISOString()
         };
+        // Include sample URLs and methodUsed if present
+        if (result.sample) response.sample = result.sample;
+        if (result.methodUsed) response.methodUsed = result.methodUsed;
+        // Include diagnostics if present (for debugging 0-link cases)
+        if (result.diagnostics) response.diagnostics = result.diagnostics;
 
         return send(res, result.success ? 200 : 500, JSON.stringify(response, null, 2), { "Content-Type": "application/json" });
       } catch (err) {
