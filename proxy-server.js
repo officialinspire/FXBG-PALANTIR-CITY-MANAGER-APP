@@ -12,12 +12,13 @@
  */
 
 const http = require("http");
-const https = require("https");
 const fs = require("fs");
 const fsp = require("fs/promises");
 const path = require("path");
 const os = require("os");
 const dotenv = require("dotenv");
+const { upstreamFetch } = require("./server/upstreamFetch");
+const { createCache } = require("./server/cache");
 
 // -----------------------------
 // Environment & Logging Setup
@@ -106,6 +107,24 @@ function requestLogUrl(urlObj) {
     return target ? redactUrl(target) : "/proxy";
   }
   return urlObj.pathname;
+}
+
+function toCacheMeta(cache, ttlMs) {
+  if (!cache) return null;
+  return {
+    hit: Boolean(cache.hit),
+    stale: Boolean(cache.stale),
+    ageSec: Math.floor((cache.ageMs || 0) / 1000),
+    ttlSec: Math.floor((ttlMs || 0) / 1000)
+  };
+}
+
+function getClientKey(req) {
+  const forwarded = req.headers["x-forwarded-for"];
+  if (forwarded) {
+    return forwarded.split(",")[0].trim();
+  }
+  return req.socket?.remoteAddress || "unknown";
 }
 
 function logProxyOutcome({ url, status, cacheState, upstreamHost, elapsedMs, error }) {
@@ -409,11 +428,41 @@ const REQUIRED_UPSTREAMS = [
   }
 ];
 
+const UPSTREAM_CACHE_TTLS = {
+  // Crime incidents: 30m TTL, stale window 24h
+  crimeIncidents: { ttlMs: 30 * 60 * 1000, staleTtlMs: 24 * 60 * 60 * 1000 },
+  // Cameras/VDOT feeds: 5-15m TTL, 1h stale window (conservative defaults)
+  va511Cameras: { ttlMs: 5 * 60 * 1000, staleTtlMs: 60 * 60 * 1000 },
+  va511Events: { ttlMs: 10 * 60 * 1000, staleTtlMs: 60 * 60 * 1000 },
+  nwsPoints: { ttlMs: 15 * 60 * 1000, staleTtlMs: 60 * 60 * 1000 },
+  diagnostics: { ttlMs: 30 * 1000, staleTtlMs: 2 * 60 * 1000 }
+};
+
 const DIAG_TIMEOUT_MS = 8000;
 const DIAG_CONCURRENCY = 3;
-const DIAG_CACHE_TTL_MS = 30_000;
-const diagCache = { ts: 0, data: null };
 const upstreamLastSuccess = new Map();
+const upstreamStatus = new Map();
+const upstreamCache = createCache();
+const upstreamTestRateLimit = new Map();
+const UPSTREAM_TEST_RATE_LIMIT_MS = 10_000;
+
+function updateUpstreamStatus(name, { ok, status, elapsedMs, cacheHit = false, stale = false, message } = {}) {
+  if (!name) return;
+  const existing = upstreamStatus.get(name) || {};
+  const nowIso = new Date().toISOString();
+  const next = {
+    name,
+    lastAttemptAt: nowIso,
+    lastOkAt: ok ? nowIso : existing.lastOkAt || null,
+    lastOk: typeof ok === "boolean" ? ok : existing.lastOk ?? null,
+    lastStatus: status ?? existing.lastStatus ?? null,
+    lastElapsedMs: Number.isFinite(elapsedMs) ? elapsedMs : existing.lastElapsedMs ?? null,
+    cacheHit: Boolean(cacheHit),
+    stale: Boolean(stale),
+    message: message || (!ok ? existing.message : null) || null
+  };
+  upstreamStatus.set(name, next);
+}
 
 /**
  * Private IP ranges to block (RFC 1918 + loopback + link-local)
@@ -1010,43 +1059,29 @@ function expectedTypeFromExpectList(expectList = []) {
   return null;
 }
 
-async function fetchUpstreamWithLimits(url, { expectedType = null, timeoutMs = DIAG_TIMEOUT_MS } = {}) {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort("timeout"), timeoutMs);
+async function fetchUpstreamWithLimits(url, { expectedType = null, timeoutMs = DIAG_TIMEOUT_MS, name = "Upstream Diagnostics", route } = {}) {
   const start = Date.now();
-  try {
-    const response = await fetch(url, {
-      method: "GET",
-      redirect: "follow",
-      headers: {
-        "Accept": expectedType === "json" ? "application/json,*/*" : "*/*",
-        "User-Agent": "FXBG-PALANTIR-CityManager/1.0 (diagnostics)"
-      },
-      signal: controller.signal
-    });
-    const contentType = response.headers.get("content-type") || "";
-    const limitBytes = resolvePayloadLimit(contentType, expectedType);
-    const bodyBuffer = await readResponseBodyWithLimit(response, limitBytes);
-    const validation = validateContentType(expectedType, contentType, bodyBuffer);
-    if (!validation.ok) {
-      throw new UpstreamError(validation.errorCode, `Unexpected content type: ${contentType || "unknown"}`);
+  const result = await runUpstreamFetch(name, url, {
+    route,
+    expectedType,
+    timeoutMs,
+    headers: {
+      "User-Agent": "FXBG-PALANTIR-CityManager/1.0 (diagnostics)"
     }
-    return {
-      ok: response.ok,
-      status: response.status,
-      contentType,
-      bytes: bodyBuffer.length,
-      ms: Date.now() - start
-    };
-  } catch (err) {
-    if (err instanceof UpstreamError) {
-      throw err;
-    }
-    const code = err.name === "AbortError" || err === "timeout" ? "timeout" : "fetch_failed";
-    throw new UpstreamError(code, err.message || "Upstream fetch failed");
-  } finally {
-    clearTimeout(timeoutId);
+  });
+
+  if (!result.ok) {
+    const errorCode = result.error || (result.status ? `http_${result.status}` : "fetch_failed");
+    throw new UpstreamError(errorCode, result.error || "Upstream fetch failed");
   }
+
+  return {
+    ok: result.ok,
+    status: result.status,
+    contentType: result.contentType,
+    bytes: result.bytes || 0,
+    ms: Date.now() - start
+  };
 }
 
 async function mapWithConcurrency(items, limit, mapper) {
@@ -1073,7 +1108,9 @@ async function validateRequiredUpstreams() {
       try {
         const result = await fetchUpstreamWithLimits(upstream.url, {
           expectedType,
-          timeoutMs: DIAG_TIMEOUT_MS
+          timeoutMs: DIAG_TIMEOUT_MS,
+          name: upstream.name,
+          route: "startup-validation"
         });
         if (result.status === 200) {
           success = true;
@@ -1676,77 +1713,32 @@ async function saveGeocodeCache() {
   }
 }
 
-// Simple HTTPS fetch helper
-function httpsGet(url, options = {}) {
-  return new Promise((resolve, reject) => {
-    const urlObj = new URL(url);
-    const expectedType = options.expectedType || null;
-    const limitBytes = Number.isFinite(options.maxBytes)
-      ? options.maxBytes
-      : resolvePayloadLimit("", expectedType);
-    const reqOptions = {
-      hostname: urlObj.hostname,
-      port: urlObj.port || 443,
-      path: urlObj.pathname + urlObj.search,
-      method: "GET",
-      headers: {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Accept": options.accept || "*/*",
-        ...options.headers
-      },
-      timeout: options.timeout || 30000
-    };
-
-    const req = https.request(reqOptions, (res) => {
-      // Handle redirects
-      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-        const redirectUrl = res.headers.location.startsWith("http")
-          ? res.headers.location
-          : new URL(res.headers.location, url).href;
-        return httpsGet(redirectUrl, options).then(resolve).catch(reject);
-      }
-
-      const contentType = res.headers["content-type"] || "";
-      const contentLength = Number(res.headers["content-length"] || 0);
-      if (contentLength && limitBytes && contentLength > limitBytes) {
-        res.destroy();
-        return reject(new UpstreamError("payload_too_large", `Payload exceeds ${limitBytes} bytes`));
-      }
-
-      const chunks = [];
-      let received = 0;
-      res.on("data", chunk => {
-        received += chunk.length;
-        if (limitBytes && received > limitBytes) {
-          res.destroy();
-          return reject(new UpstreamError("payload_too_large", `Payload exceeds ${limitBytes} bytes`));
-        }
-        chunks.push(chunk);
-      });
-      res.on("end", () => {
-        const buffer = Buffer.concat(chunks, received || undefined);
-        if (expectedType && expectedType !== "binary") {
-          const validation = validateContentType(expectedType, contentType, buffer);
-          if (!validation.ok) {
-            return reject(new UpstreamError(validation.errorCode, `Unexpected content type: ${contentType || "unknown"}`));
-          }
-        }
-        resolve({
-          statusCode: res.statusCode,
-          headers: res.headers,
-          body: buffer,
-          text: () => buffer.toString("utf8")
-        });
-      });
-    });
-
-    req.on("error", reject);
-    req.on("timeout", () => {
-      req.destroy();
-      reject(new Error("Request timeout"));
-    });
-    req.end();
+async function runUpstreamFetch(name, url, options = {}) {
+  const result = await upstreamFetch(url, {
+    upstreamName: name,
+    route: options.route,
+    expectedType: options.expectedType,
+    allowJsonp: options.allowJsonp,
+    timeoutMs: options.timeoutMs,
+    maxBytes: options.maxBytes,
+    headers: options.headers,
+    accept: options.accept,
+    method: options.method,
+    includeBodyText: options.includeBodyText,
+    includeBodyBuffer: options.includeBodyBuffer,
+    cacheState: options.cacheState || "miss"
   });
+
+  updateUpstreamStatus(name, {
+    ok: result.ok,
+    status: result.status,
+    elapsedMs: result.elapsedMs,
+    cacheHit: options.cacheState === "hit",
+    stale: options.cacheState === "stale",
+    message: result.error || (result.warnings ? result.warnings.join("; ") : null)
+  });
+
+  return result;
 }
 
 // Fetch crime reports page and extract PDF links
@@ -1816,37 +1808,50 @@ async function fetchCrimeReportPdfLinks() {
     // Add cache-busting query param
     const cacheBustedUrl = `${FXBG_CRIME_REPORTS_URL}?_ts=${Date.now()}`;
 
-    const response = await httpsGet(cacheBustedUrl, {
-      accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-      timeout: 30000,
-      expectedType: "html",
-      maxBytes: PAYLOAD_LIMITS.text,
-      headers: {
-        "Cache-Control": "no-cache",
-        "Pragma": "no-cache"
-      }
-    });
+    const cachePolicy = UPSTREAM_CACHE_TTLS.crimeIncidents;
+    const cacheKey = "crime-reports-page";
+    const pageFetch = await upstreamCache.wrap(
+      cacheKey,
+      cachePolicy.ttlMs,
+      async () => {
+        const result = await runUpstreamFetch("Fredericksburg Crime Reports Page", cacheBustedUrl, {
+          accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+          timeoutMs: 30000,
+          expectedType: "html",
+          maxBytes: PAYLOAD_LIMITS.text,
+          includeBodyText: true,
+          headers: {
+            "Cache-Control": "no-cache",
+            "Pragma": "no-cache"
+          }
+        });
+        if (!result.ok || result.status !== 200) {
+          throw new Error(`HTTP ${result.status || 0}`);
+        }
+        return result;
+      },
+      { staleTtlMs: cachePolicy.staleTtlMs }
+    );
 
-    responseStatus = response.statusCode;
-    responseContentType = response.headers && response.headers["content-type"];
-
-    if (response.statusCode !== 200) {
-      throw new Error(`HTTP ${response.statusCode}`);
+    if (pageFetch.cache?.hit) {
+      updateUpstreamStatus("Fredericksburg Crime Reports Page", {
+        ok: true,
+        status: pageFetch.value?.status,
+        elapsedMs: pageFetch.value?.elapsedMs,
+        cacheHit: true,
+        stale: pageFetch.cache.stale,
+        message: pageFetch.warning || null
+      });
     }
 
-    const html = response.text();
+    const response = pageFetch.value;
+    const cacheWarning = pageFetch.warning || null;
+    responseStatus = response.status;
+    responseContentType = response.contentType;
+
+    const html = response.bodyText || "";
     bodyLength = html.length;
     bodySnippet = html.substring(0, 300);
-
-    // Log upstream fetch
-    logUpstream({
-      level: "INFO",
-      kind: "crime_reports_fetch",
-      msg: "Fetched crime reports page",
-      url: FXBG_CRIME_REPORTS_URL,
-      status: responseStatus,
-      bytes: bodyLength
-    });
 
     // Extract links using strategies 1 & 2
     const { links: pdfLinks, seenIds } = extractDocCenterLinks(html);
@@ -1868,19 +1873,20 @@ async function fetchCrimeReportPdfLinks() {
 
           console.log(`[Crime Reports] Attempting Strategy 3: Content/Load at ${fullContentUrl}`);
 
-          const contentResponse = await httpsGet(fullContentUrl, {
+          const contentResponse = await runUpstreamFetch("Fredericksburg Crime Reports ContentLoad", fullContentUrl, {
             accept: "text/html,*/*",
-            timeout: 15000,
+            timeoutMs: 15000,
             expectedType: "html",
             maxBytes: PAYLOAD_LIMITS.text,
+            includeBodyText: true,
             headers: {
               "Cache-Control": "no-cache",
               "X-Requested-With": "XMLHttpRequest"
             }
           });
 
-          if (contentResponse.statusCode === 200) {
-            const contentHtml = contentResponse.text();
+          if (contentResponse.status === 200 && contentResponse.ok) {
+            const contentHtml = contentResponse.bodyText || "";
             const contentResult = extractDocCenterLinks(contentHtml);
 
             for (const link of contentResult.links) {
@@ -1912,6 +1918,7 @@ async function fetchCrimeReportPdfLinks() {
       links: pdfLinks,
       strategyUsed: strategyUsed,
       debug: debug,
+      warning: cacheWarning,
       diagnostics: pdfLinks.length === 0 ? {
         status: responseStatus,
         contentType: responseContentType,
@@ -1925,13 +1932,6 @@ async function fetchCrimeReportPdfLinks() {
       level: "ERROR",
       kind: "crime_reports_fetch_failed",
       msg: "Crime reports page fetch failed",
-      errorCode: e.code || e.message
-    });
-    logUpstream({
-      level: "ERROR",
-      kind: "crime_reports_fetch",
-      msg: "Crime reports page fetch failed",
-      url: FXBG_CRIME_REPORTS_URL,
       errorCode: e.code || e.message
     });
     return {
@@ -1958,21 +1958,23 @@ async function downloadAndParsePdf(pdfUrl) {
 
   try {
     console.log(`[Crime Reports] Downloading PDF: ${pdfUrl}`);
-    const response = await httpsGet(pdfUrl, {
+    const response = await runUpstreamFetch("Crime Reports PDF", pdfUrl, {
       accept: "application/pdf",
-      timeout: 60000,
-      expectedType: "binary",
-      maxBytes: PAYLOAD_LIMITS.binary
+      timeoutMs: 60000,
+      expectedType: "pdf",
+      maxBytes: PAYLOAD_LIMITS.binary,
+      includeBodyBuffer: true
     });
 
-    if (response.statusCode !== 200) {
-      console.warn(`[Crime Reports] PDF download failed: HTTP ${response.statusCode}`);
+    if (response.status !== 200 || !response.ok) {
+      console.warn(`[Crime Reports] PDF download failed: HTTP ${response.status || 0}`);
       return null;
     }
 
     // Check if we got a PDF (content-type or magic bytes)
-    const contentType = response.headers["content-type"] || "";
-    const isHtml = contentType.includes("text/html") || response.body.slice(0, 15).toString().includes("<!DOCTYPE");
+    const contentType = response.contentType || "";
+    const bodyBuffer = response.bodyBuffer || Buffer.alloc(0);
+    const isHtml = contentType.includes("text/html") || bodyBuffer.slice(0, 15).toString().includes("<!DOCTYPE");
 
     if (isHtml) {
       console.warn(`[Crime Reports] Got HTML instead of PDF for: ${pdfUrl}`);
@@ -1980,7 +1982,7 @@ async function downloadAndParsePdf(pdfUrl) {
     }
 
     // Parse PDF
-    const data = await pdfParse(response.body);
+    const data = await pdfParse(bodyBuffer);
     return {
       text: data.text,
       numPages: data.numpages,
@@ -2149,22 +2151,24 @@ async function geocodeLocation(locationRaw, retryCount = 0) {
     await new Promise(r => setTimeout(r, 1000 + retryCount * 1000));
 
     const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(searchQuery)}&limit=1`;
-    const response = await httpsGet(url, {
+    const response = await runUpstreamFetch("Nominatim Geocode", url, {
       accept: "application/json",
       headers: {
         "User-Agent": "FXBG-PALANTIR-CityManager/1.0 (crime-reports-geocoding)"
       },
-      timeout: 15000,
+      timeoutMs: 15000,
       expectedType: "json",
       maxBytes: PAYLOAD_LIMITS.json
     });
 
-    if (response.statusCode !== 200) {
-      console.warn(`[Geocode] HTTP ${response.statusCode} for: ${locationRaw}`);
+    if (response.status !== 200 || !response.ok) {
+      console.warn(`[Geocode] HTTP ${response.status || 0} for: ${locationRaw}`);
       return null;
     }
 
-    const results = safeJsonParse(response.text(), [], "geocode response");
+    const results = Array.isArray(response.json)
+      ? response.json
+      : safeJsonParse(response.bodyText || "[]", [], "geocode response");
     if (results.length > 0) {
       const result = {
         lat: parseFloat(results[0].lat),
@@ -2213,6 +2217,7 @@ async function refreshCrimeReports(months = 6) {
     const fetchResult = await fetchCrimeReportPdfLinks();
     const pdfLinks = fetchResult.links;
     const strategyUsed = fetchResult.strategyUsed || "none";
+    const fetchWarning = fetchResult.warning || null;
 
     if (pdfLinks.length === 0) {
       console.warn("[Crime Reports] No PDF links found");
@@ -2222,7 +2227,8 @@ async function refreshCrimeReports(months = 6) {
         pdfCount: 0,
         message: "No crime report PDFs found on source page",
         strategyUsed: strategyUsed,
-        debug: fetchResult.debug
+        debug: fetchResult.debug,
+        warning: fetchWarning || undefined
       };
       // Include diagnostics if available
       if (fetchResult.diagnostics) {
@@ -2327,7 +2333,8 @@ async function refreshCrimeReports(months = 6) {
       sample: sampleUrls,
       strategyUsed: strategyUsed,
       debug: fetchResult.debug,
-      message: crimeReportsState.lastRefreshMessage
+      message: crimeReportsState.lastRefreshMessage,
+      warning: fetchWarning || undefined
     };
 
   } catch (e) {
@@ -2500,6 +2507,38 @@ const server = http.createServer(async (req, res) => {
         version = pkg.version || version;
       } catch (e) {}
 
+      const upstreams = REQUIRED_UPSTREAMS.map((upstream) => {
+        const state = upstreamStatus.get(upstream.name) || {};
+        return {
+          name: upstream.name,
+          ok: state.lastOk === true,
+          lastOkAt: state.lastOkAt || null,
+          lastAttemptAt: state.lastAttemptAt || null,
+          lastStatus: state.lastStatus || null,
+          lastElapsedMs: state.lastElapsedMs || null,
+          cacheHit: Boolean(state.cacheHit),
+          stale: Boolean(state.stale),
+          message: state.message || null,
+          required: upstream.required
+        };
+      });
+
+      const degraded = upstreams.some((upstream) => {
+        if (!upstream.required) return false;
+        if (upstream.ok && !upstream.stale) return false;
+        if (upstream.cacheHit && !upstream.stale) return false;
+        return true;
+      });
+
+      const crimeCachePolicy = UPSTREAM_CACHE_TTLS.crimeIncidents;
+      const crimeAgeMs = crimeStatus.lastUpdated ? Date.now() - new Date(crimeStatus.lastUpdated).getTime() : null;
+      const crimeCacheMeta = {
+        hit: Boolean(crimeStatus.lastUpdated),
+        stale: crimeAgeMs !== null ? crimeAgeMs > crimeCachePolicy.ttlMs : true,
+        ageSec: crimeAgeMs !== null ? Math.floor(crimeAgeMs / 1000) : null,
+        ttlSec: Math.floor(crimeCachePolicy.ttlMs / 1000)
+      };
+
       const health = {
         ok: true,
         status: "ok",
@@ -2512,7 +2551,12 @@ const server = http.createServer(async (req, res) => {
           OPENUV_API_KEY: !!OPENUV_API_KEY,
           WAQI_TOKEN: !!WAQI_TOKEN
         },
-        crimeReports: crimeStatus
+        degraded,
+        upstreams,
+        crimeReports: {
+          ...crimeStatus,
+          cache: crimeCacheMeta
+        }
       };
 
       return send(res, 200, JSON.stringify(health, null, 2), { "Content-Type": "application/json" });
@@ -2541,6 +2585,99 @@ const server = http.createServer(async (req, res) => {
           openuv: OPENUV_API_KEY ? "enabled" : "disabled (missing key)",
           waqi: WAQI_TOKEN ? "enabled" : "disabled (missing token)"
         }
+      };
+
+      return send(res, 200, JSON.stringify(response, null, 2), { "Content-Type": "application/json" });
+    }
+
+    // Upstream test endpoint - safe connectivity check
+    if (urlObj.pathname === "/api/health/test-upstreams") {
+      const clientKey = getClientKey(req);
+      const now = Date.now();
+      const lastRun = upstreamTestRateLimit.get(clientKey) || 0;
+      if (now - lastRun < UPSTREAM_TEST_RATE_LIMIT_MS) {
+        const retryAfterSec = Math.ceil((UPSTREAM_TEST_RATE_LIMIT_MS - (now - lastRun)) / 1000);
+        const response = {
+          ok: false,
+          error: "rate_limited",
+          message: "Upstream tests are limited to once per 10 seconds per client.",
+          retryAfterSec
+        };
+        return send(res, 200, JSON.stringify(response, null, 2), { "Content-Type": "application/json" });
+      }
+      upstreamTestRateLimit.set(clientKey, now);
+
+      const quick = urlObj.searchParams.get("quick") !== "0";
+      const cachePolicy = UPSTREAM_CACHE_TTLS.diagnostics;
+      const cacheKey = quick ? "test-upstreams-quick" : "test-upstreams-full";
+
+      const cacheResult = await upstreamCache.wrap(
+        cacheKey,
+        cachePolicy.ttlMs,
+        async () => {
+          const results = await mapWithConcurrency(REQUIRED_UPSTREAMS, DIAG_CONCURRENCY, async (upstream) => {
+            const expectedType = expectedTypeFromExpectList(upstream.expect);
+            const method = expectedType === "image" ? "HEAD" : "GET";
+            const maxBytes = expectedType === "image" ? 0 : quick ? 64 * 1024 : 256 * 1024;
+
+            const result = await runUpstreamFetch(upstream.name, upstream.url, {
+              route: "test-upstreams",
+              expectedType,
+              timeoutMs: quick ? 5000 : 8000,
+              method,
+              maxBytes,
+              includeBodyText: expectedType === "html" || expectedType === "text"
+            });
+
+            const status = result.status || 0;
+            const connectionOk = status > 0;
+            const httpOk = status >= 200 && status < 400;
+            const contentTypeOk = result.error !== "unexpected_content_type";
+            const parseOk = result.error !== "invalid_json" && contentTypeOk;
+            const ok = connectionOk && httpOk && contentTypeOk && parseOk;
+
+            let recommendation = "Upstream healthy.";
+            if (!connectionOk) {
+              recommendation = "Check DNS/connectivity; rely on cached data.";
+            } else if (status === 403 || status === 429) {
+              recommendation = "Upstream blocking or rate-limiting; use cached data.";
+            } else if (status >= 500) {
+              recommendation = "Upstream server error; use cached data.";
+            } else if (!contentTypeOk || !parseOk) {
+              recommendation = "Upstream returned unexpected data; use cached data.";
+            }
+
+            return {
+              name: upstream.name,
+              url: upstream.url,
+              ok,
+              dnsOk: connectionOk,
+              httpStatus: status,
+              elapsedMs: result.elapsedMs,
+              contentType: result.contentType || null,
+              contentTypeOk,
+              parseOk,
+              notes: result.error || (!httpOk && status ? `http_${status}` : null),
+              recommendation
+            };
+          });
+
+          const okCount = results.filter(r => r.ok).length;
+          return {
+            ok: okCount === results.length,
+            summary: `${okCount}/${results.length} upstreams healthy`,
+            timestamp: new Date().toISOString(),
+            quick,
+            upstreams: results
+          };
+        },
+        { staleTtlMs: cachePolicy.staleTtlMs }
+      );
+
+      const response = {
+        ...cacheResult.value,
+        cache: toCacheMeta(cacheResult.cache, cachePolicy.ttlMs),
+        warning: cacheResult.warning || undefined
       };
 
       return send(res, 200, JSON.stringify(response, null, 2), { "Content-Type": "application/json" });
@@ -2587,70 +2724,79 @@ const server = http.createServer(async (req, res) => {
 
     // Diagnostics endpoint - test upstream service connectivity
     if (urlObj.pathname === "/api/diag/upstreams") {
-      const now = Date.now();
-      if (diagCache.data && now - diagCache.ts < DIAG_CACHE_TTL_MS) {
-        return send(res, 200, JSON.stringify(diagCache.data, null, 2), {
-          "Content-Type": "application/json",
-          "X-Diagnostics-Cache": "hit"
-        });
-      }
+      const cachePolicy = UPSTREAM_CACHE_TTLS.diagnostics;
+      const cacheKey = "diag-upstreams";
+      const cacheResult = await upstreamCache.wrap(
+        cacheKey,
+        cachePolicy.ttlMs,
+        async () => {
+          const results = await mapWithConcurrency(REQUIRED_UPSTREAMS, DIAG_CONCURRENCY, async (upstream) => {
+            const expectedType = expectedTypeFromExpectList(upstream.expect);
+            const start = Date.now();
+            const lastSuccess = upstreamLastSuccess.get(upstream.name) || null;
+            const result = {
+              name: upstream.name,
+              url: upstream.url,
+              ok: false,
+              status: "error",
+              contentType: null,
+              ms: null,
+              bytes: null,
+              errorCode: null,
+              lastSuccess,
+              required: upstream.required
+            };
 
-      const results = await mapWithConcurrency(REQUIRED_UPSTREAMS, DIAG_CONCURRENCY, async (upstream) => {
-        const expectedType = expectedTypeFromExpectList(upstream.expect);
-        const start = Date.now();
-        const lastSuccess = upstreamLastSuccess.get(upstream.name) || null;
-        const result = {
-          name: upstream.name,
-          url: upstream.url,
-          ok: false,
-          status: "error",
-          contentType: null,
-          ms: null,
-          bytes: null,
-          errorCode: null,
-          lastSuccess,
-          required: upstream.required
-        };
+            try {
+              const response = await fetchUpstreamWithLimits(upstream.url, {
+                expectedType,
+                timeoutMs: DIAG_TIMEOUT_MS,
+                name: upstream.name,
+                route: "diag-upstreams"
+              });
+              result.ms = response.ms;
+              result.contentType = response.contentType || null;
+              result.bytes = response.bytes || null;
 
-        try {
-          const response = await fetchUpstreamWithLimits(upstream.url, { expectedType, timeoutMs: DIAG_TIMEOUT_MS });
-          result.ms = response.ms;
-          result.contentType = response.contentType || null;
-          result.bytes = response.bytes || null;
+              if (response.status === 200) {
+                result.ok = true;
+                result.status = "ok";
+                const successTs = new Date().toISOString();
+                result.lastSuccess = successTs;
+                upstreamLastSuccess.set(upstream.name, successTs);
+              } else {
+                result.errorCode = `http_${response.status}`;
+                result.status = lastSuccess ? "stale" : "error";
+              }
+            } catch (err) {
+              result.ms = Date.now() - start;
+              result.errorCode = err.code || "fetch_failed";
+              result.status = lastSuccess ? "stale" : "error";
+            }
 
-          if (response.status === 200) {
-            result.ok = true;
-            result.status = "ok";
-            const successTs = new Date().toISOString();
-            result.lastSuccess = successTs;
-            upstreamLastSuccess.set(upstream.name, successTs);
-          } else {
-            result.errorCode = `http_${response.status}`;
-            result.status = lastSuccess ? "stale" : "error";
-          }
-        } catch (err) {
-          result.ms = Date.now() - start;
-          result.errorCode = err.code || "fetch_failed";
-          result.status = lastSuccess ? "stale" : "error";
-        }
+            return result;
+          });
 
-        return result;
-      });
+          const okCount = results.filter(r => r.status === "ok").length;
+          return {
+            ok: okCount === results.length,
+            summary: `${okCount}/${results.length} upstreams healthy`,
+            timestamp: new Date().toISOString(),
+            upstreams: results,
+            optionalServices: {
+              openuv: OPENUV_API_KEY ? "enabled" : "disabled (missing key)",
+              waqi: WAQI_TOKEN ? "enabled" : "disabled (missing token)"
+            }
+          };
+        },
+        { staleTtlMs: cachePolicy.staleTtlMs }
+      );
 
-      const okCount = results.filter(r => r.status === "ok").length;
       const response = {
-        ok: okCount === results.length,
-        summary: `${okCount}/${results.length} upstreams healthy`,
-        timestamp: new Date().toISOString(),
-        upstreams: results,
-        optionalServices: {
-          openuv: OPENUV_API_KEY ? "enabled" : "disabled (missing key)",
-          waqi: WAQI_TOKEN ? "enabled" : "disabled (missing token)"
-        }
+        ...cacheResult.value,
+        cache: toCacheMeta(cacheResult.cache, cachePolicy.ttlMs),
+        warning: cacheResult.warning || undefined
       };
-
-      diagCache.ts = now;
-      diagCache.data = response;
       return send(res, 200, JSON.stringify(response, null, 2), { "Content-Type": "application/json" });
     }
 
@@ -2784,6 +2930,8 @@ const server = http.createServer(async (req, res) => {
         // Add optional fields
         if (!result.success) {
           response.warning = result.message;
+        } else if (result.warning) {
+          response.warning = result.warning;
         }
         if (result.debug) {
           response.debug = result.debug;
@@ -2875,43 +3023,55 @@ const server = http.createServer(async (req, res) => {
     if (urlObj.pathname === "/api/fxbg/crime-reports/incidents") {
       const months = parseInt(urlObj.searchParams.get("months") || "6", 10);
       try {
-        // Check for cached incidents data
         const dataDir = path.join(__dirname, "data", "fxbg-crime-reports");
         const incidentsFile = path.join(dataDir, "incidents.json");
+        const cachePolicy = UPSTREAM_CACHE_TTLS.crimeIncidents;
+        const cacheKey = "crime-incidents";
 
-        let incidents = [];
-        let lastUpdated = null;
-        let dataSource = "sample"; // Track data source for response
+        const cachedResult = await upstreamCache.wrap(
+          cacheKey,
+          cachePolicy.ttlMs,
+          async () => {
+            let incidents = [];
+            let lastUpdated = null;
+            let dataSource = "sample";
 
-        // Try to load existing incidents
-        try {
-          const data = await fsp.readFile(incidentsFile, "utf8");
-          const parsed = safeJsonParse(data, null, "crime incidents cache");
+            try {
+              const data = await fsp.readFile(incidentsFile, "utf8");
+              const parsed = safeJsonParse(data, null, "crime incidents cache");
 
-          // Handle both old format (array) and new format (object with metadata)
-          if (Array.isArray(parsed)) {
-            incidents = parsed;
-          } else if (parsed && parsed.incidents && Array.isArray(parsed.incidents)) {
-            incidents = parsed.incidents;
-            lastUpdated = parsed.lastUpdated;
-            dataSource = "scraped";
-          }
-        } catch (err) {
-          // No cached data, generate sample incidents for testing
-          console.log("[Crime Reports API] No cached data, generating sample incidents");
-          incidents = generateSampleIncidents(months);
-          dataSource = "sample";
+              if (Array.isArray(parsed)) {
+                incidents = parsed;
+              } else if (parsed && parsed.incidents && Array.isArray(parsed.incidents)) {
+                incidents = parsed.incidents;
+                lastUpdated = parsed.lastUpdated;
+                dataSource = "scraped";
+              }
+            } catch (err) {
+              console.log("[Crime Reports API] No cached data, generating sample incidents");
+              incidents = generateSampleIncidents(months);
+              dataSource = "sample";
 
-          // Save sample data (in new format)
-          await fsp.mkdir(dataDir, { recursive: true });
-          const sampleData = {
-            lastUpdated: new Date().toISOString(),
-            sourceUrl: "sample-data",
-            incidentCount: incidents.length,
-            incidents: incidents
-          };
-          await fsp.writeFile(incidentsFile, JSON.stringify(sampleData, null, 2), "utf8");
-        }
+              await fsp.mkdir(dataDir, { recursive: true });
+              const sampleData = {
+                lastUpdated: new Date().toISOString(),
+                sourceUrl: "sample-data",
+                incidentCount: incidents.length,
+                incidents: incidents
+              };
+              await fsp.writeFile(incidentsFile, JSON.stringify(sampleData, null, 2), "utf8");
+            }
+
+            return { incidents, lastUpdated, dataSource };
+          },
+          { staleTtlMs: cachePolicy.staleTtlMs }
+        );
+
+        const incidents = cachedResult.value?.incidents || [];
+        const lastUpdated = cachedResult.value?.lastUpdated || null;
+        const dataSource = cachedResult.value?.dataSource || "sample";
+        const cacheMeta = toCacheMeta(cachedResult.cache, cachePolicy.ttlMs);
+        const cacheWarning = cachedResult.warning ? "Serving cached crime incidents data." : null;
 
         // Filter by date range
         const cutoffDate = new Date();
@@ -2942,11 +3102,13 @@ const server = http.createServer(async (req, res) => {
           dataSource: dataSource,
           lastUpdated: lastUpdated,
           isStale: isStale,
+          cache: cacheMeta,
+          warning: cacheWarning || undefined,
           incidents: filtered
         }, null, 2), { "Content-Type": "application/json" });
       } catch (err) {
         console.error("[Crime Reports API] Incidents error:", err);
-        return send(res, 500, JSON.stringify({ ok: false, error: err.message }), { "Content-Type": "application/json" });
+        return send(res, 200, JSON.stringify({ ok: false, error: err.message }), { "Content-Type": "application/json" });
       }
     }
 

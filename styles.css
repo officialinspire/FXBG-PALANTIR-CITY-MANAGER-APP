@@ -2518,6 +2518,20 @@ html, body{
   margin-bottom: 8px;
 }
 
+.diagnosticsSection__titleRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.diagnosticsSection__content--subtle {
+  color: var(--muted2);
+  font-size: 11px;
+  margin-top: 6px;
+}
+
 .diagnosticsSection__content {
   font-size: 12px;
   color: var(--txt);
