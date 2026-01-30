@@ -29,7 +29,7 @@
   • Virginia Crash data loads last after RSS feeds and other APIs for optimal performance
 
   API Keys:
-  • OpenUV API key configured in index.js: CONFIG.openUV.apiKey
+  • OpenUV + WAQI keys are configured server-side via .env
   • Most other endpoints are public and do not require API keys
 -->
 <head>
@@ -343,6 +343,32 @@
     <span class="healthBadge__dot" id="healthBadgeDot"></span>
     <span class="healthBadge__text" id="healthBadgeText">Health: ...</span>
   </div>
+
+  <!-- Diagnostics Drawer -->
+  <aside id="diagnosticsDrawer" class="diagnosticsDrawer diagnosticsDrawer--hidden" aria-label="Diagnostics">
+    <div class="diagnosticsDrawer__header">
+      <div class="diagnosticsDrawer__title">
+        <span class="diagnosticsDrawer__emoji">🩺</span>
+        <span>Health & Diagnostics</span>
+      </div>
+      <button class="iconBtn" id="diagnosticsClose" title="Close diagnostics">✖️</button>
+    </div>
+    <div class="diagnosticsDrawer__body">
+      <div class="diagnosticsSection">
+        <div class="diagnosticsSection__title">System Summary</div>
+        <div id="diagnosticsSummary" class="diagnosticsSection__content">Loading…</div>
+      </div>
+      <div class="diagnosticsSection">
+        <div class="diagnosticsSection__title">Upstreams</div>
+        <div id="diagnosticsUpstreams" class="diagnosticsSection__content">Loading…</div>
+      </div>
+      <div class="diagnosticsSection">
+        <div class="diagnosticsSection__title">Cache</div>
+        <div id="diagnosticsCache" class="diagnosticsSection__content">Loading…</div>
+      </div>
+    </div>
+  </aside>
+  <div id="diagnosticsOverlay" class="diagnosticsOverlay diagnosticsOverlay--hidden" aria-hidden="true"></div>
 
   <footer class="bottombar">
     <div class="dock" id="dock">
