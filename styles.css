@@ -2314,6 +2314,20 @@ html, body{
   border-color: rgba(255, 255, 255, .20);
 }
 
+.crime-control-row--custom {
+  display: none;
+}
+
+.crime-control-row--custom input[type="number"] {
+  width: 120px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, .15);
+  background: rgba(120, 120, 120, .25);
+  color: var(--txt);
+  font-size: 13px;
+}
+
 .crime-sort-buttons {
   display: flex;
   gap: 6px;
@@ -2379,6 +2393,11 @@ html, body{
   color: var(--muted2);
 }
 
+.crime-applied {
+  font-size: 12px;
+  color: var(--muted2);
+}
+
 /* Responsive adjustments */
 @media (max-width: 900px) {
   .crimePanel {
@@ -2390,6 +2409,274 @@ html, body{
   .crimePanel--hidden {
     transform: translateY(110%);
   }
+}
+
+/* ========================================
+   REPORTS PANEL
+   ======================================== */
+
+.reportPanel {
+  position: fixed;
+  top: calc(var(--topH) + 20px);
+  right: 10px;
+  width: 420px;
+  max-height: calc(100vh - var(--topH) - var(--botH) - 40px);
+  z-index: 10400;
+  border: 1px solid var(--stroke);
+  background: rgba(15, 23, 48, .92);
+  backdrop-filter: blur(20px);
+  border-radius: var(--radius);
+  box-shadow: 0 18px 50px var(--shadowA), 0 -1px 0 var(--shadowB) inset;
+  display: flex;
+  flex-direction: column;
+  transition: transform 0.3s ease, opacity 0.3s ease;
+}
+
+.reportPanel--hidden {
+  transform: translateX(110%);
+  opacity: 0;
+  pointer-events: none;
+}
+
+.reportPanel__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--stroke);
+  background: rgba(255, 255, 255, .03);
+}
+
+.reportPanel__title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--txt);
+}
+
+.reportPanel__emoji {
+  font-size: 20px;
+}
+
+.reportPanel__body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.reportPanel__section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--txt);
+}
+
+.reportPanel__section select,
+.reportPanel__section textarea,
+.reportPanel__section input[type="file"] {
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, .15);
+  background: rgba(120, 120, 120, .25);
+  color: var(--txt);
+  padding: 8px 10px;
+  font-size: 13px;
+}
+
+.reportSeverity {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.reportSeverity input[type="range"] {
+  flex: 1;
+}
+
+.reportSeverity__label {
+  font-size: 14px;
+  min-width: 48px;
+  text-align: right;
+}
+
+.reportLocationControls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.reportLocationValue {
+  font-size: 12px;
+  color: var(--muted2);
+}
+
+.reportPhotoPreview {
+  display: none;
+  border-radius: 12px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, .12);
+  background: rgba(255, 255, 255, .03);
+}
+
+.reportPhotoPreview img {
+  display: block;
+  width: 100%;
+  max-height: 180px;
+  object-fit: cover;
+}
+
+.reportLayerToggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.reportLayerToggle input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+}
+
+.reportPanel__exports {
+  display: flex;
+  gap: 8px;
+}
+
+.reportStatus {
+  font-size: 12px;
+  color: var(--muted2);
+  min-height: 18px;
+}
+
+.reportStatus[data-tone="ok"] {
+  color: var(--good);
+}
+
+.reportStatus[data-tone="warn"] {
+  color: var(--warn);
+}
+
+.reportPanel__submitBar {
+  position: sticky;
+  bottom: 0;
+  padding: 10px 0 4px;
+  background: rgba(15, 23, 48, 0.9);
+}
+
+.reportPanel__submitBar .btn {
+  width: 100%;
+}
+
+.reportMarker span,
+.reportPickMarker span {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: rgba(15, 23, 48, 0.9);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  box-shadow: 0 6px 16px rgba(0,0,0,0.35);
+}
+
+.reportPopup__title {
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.reportPopup__meta {
+  font-size: 11px;
+  color: var(--muted2);
+  margin-bottom: 6px;
+}
+
+.reportPopup__note {
+  font-size: 12px;
+  color: var(--txt);
+  margin-bottom: 6px;
+}
+
+.reportPopupPhoto img {
+  width: 100%;
+  border-radius: 8px;
+  display: block;
+}
+
+@media (max-width: 900px) {
+  .reportPanel {
+    width: calc(100vw - 20px);
+    left: 10px;
+    right: 10px;
+  }
+
+  .reportPanel--hidden {
+    transform: translateY(110%);
+  }
+
+  .reportLocationControls .btn {
+    flex: 1 1 auto;
+  }
+}
+
+/* ========================================
+   LOCATION CONTROL
+   ======================================== */
+
+.locateControl.leaflet-control {
+  margin-top: 12px;
+}
+
+.locateControl button {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, .2);
+  background: rgba(15, 23, 48, .85);
+  color: #fff;
+  font-size: 18px;
+  cursor: pointer;
+  box-shadow: 0 6px 18px rgba(0,0,0,.35);
+}
+
+.locateControl button:active {
+  transform: translateY(1px);
+}
+
+.userLocationMarker {
+  position: relative;
+  width: 18px;
+  height: 18px;
+}
+
+.userLocationMarker::before {
+  content: "";
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #4fd1ff;
+  box-shadow: 0 0 12px rgba(79, 209, 255, 0.6);
+  border: 2px solid #0b2238;
+}
+
+.userLocationMarker::after {
+  content: "";
+  position: absolute;
+  top: -2px;
+  left: -2px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 1px solid rgba(79, 209, 255, 0.4);
 }
 
 /* Health Badge - Floating indicator */

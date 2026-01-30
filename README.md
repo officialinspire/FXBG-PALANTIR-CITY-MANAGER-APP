@@ -156,6 +156,25 @@ Edit `CONFIG` object in `index.js` to:
 - Change map center/zoom
 - Modify region bounding box
 
+## 📝 Field Reports (Report Panel)
+
+The **Report** panel supports offline-ish field notes and incident logging. Reports persist on the server in `data/reports.json` and render as their own map layer after reload.
+
+### API Endpoints
+- `GET /api/reports` — list reports `{ ok, count, items }`.
+  - Optional filters: `since=ISO`, `sinceDays=number`, `bbox=minLng,minLat,maxLng,maxLat`.
+- `POST /api/reports` — create a report (JSON or multipart form with optional `photo`).
+  - Fields: `lat`, `lng`, `accuracy`, `type`, `severity` (1–5), `note` (max 2000).
+  - Photo limits: 5MB max, JPEG/PNG/WebP only.
+- `GET /api/reports/export.csv` — export CSV.
+- `GET /api/reports/export.geojson` — export GeoJSON FeatureCollection.
+- `GET /uploads/reports/<filename>` — serve uploaded photos.
+
+### Usage Notes
+- Reports are stored locally on the server for resiliency if external feeds are down.
+- Use the Report panel to submit incidents, pick a map location, and export data.
+- For light operational checks, run `npm run smoke` after the server starts.
+
 ## 📝 Notes
 
 - **Sample Data**: When external APIs are unreachable (no internet, sandbox environment), the app loads demonstration markers so you can test the interface
