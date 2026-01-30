@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-APP_DIR="${APP_DIR:-$HOME/Downloads/FXBG-PALANTIR-CITY-MANAGER-APP-main}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+APP_DIR="${APP_DIR:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 cd "$APP_DIR"
 
 echo "[up] cwd: $(pwd)"
@@ -41,4 +42,3 @@ npm run doctor
 # 5) Start
 echo "[up] Starting server…"
 npm start
-
