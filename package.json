@@ -6,7 +6,8 @@
   "scripts": {
     "start": "node proxy-server.js",
     "dev": "PORT=8000 node proxy-server.js",
-    "doctor": "node scripts/doctor.js"
+    "doctor": "node scripts/doctor.js",
+    "smoke": "bash scripts/smoke.sh"
   },
   "dependencies": {
     "dotenv": "^16.4.5",

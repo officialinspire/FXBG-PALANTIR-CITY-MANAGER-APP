@@ -7049,13 +7049,17 @@ function selectItem(id) {
   const diagnosticsOverlay = $("diagnosticsOverlay");
   const diagnosticsSummary = $("diagnosticsSummary");
   const diagnosticsUpstreams = $("diagnosticsUpstreams");
+  const diagnosticsUpstreamTests = $("diagnosticsUpstreamTests");
   const diagnosticsCache = $("diagnosticsCache");
   const diagnosticsRequiredBanner = $("diagnosticsRequiredBanner");
+  const diagnosticsBannerTitle = $("diagnosticsBannerTitle");
   const diagnosticsRequiredText = $("diagnosticsRequiredText");
   const diagnosticsRefresh = $("diagnosticsRefresh");
   const diagnosticsCopy = $("diagnosticsCopy");
+  const diagnosticsTestUpstreams = $("diagnosticsTestUpstreams");
 
   let lastDiagnosticsPayload = null;
+  let lastHealthPayload = null;
 
   function setDiagnosticsDrawerOpen(isOpen) {
     if (!diagnosticsDrawer || !diagnosticsOverlay) return;
@@ -7100,6 +7104,7 @@ function selectItem(id) {
     const localHealth = healthTracker.computeHealth();
     const serverStatus = healthData?.status || "unknown";
     const uptimeSec = healthData?.uptimeSec ?? (healthData?.uptimeMs ? Math.floor(healthData.uptimeMs / 1000) : null);
+    const upstreams = Array.isArray(healthData?.upstreams) ? healthData.upstreams : [];
 
     // Format uptime
     let uptimeStr = "—";
@@ -7115,6 +7120,12 @@ function selectItem(id) {
     const crimeIsStale = crimeStatus?.isStale ?? true;
     const crimeBadgeClass = crimeStatus?.lastRefreshOk === false ? "diagnosticsBadge--error" : crimeIsStale ? "diagnosticsBadge--warn" : "diagnosticsBadge--ok";
     const crimeBadgeText = crimeStatus?.lastRefreshOk === false ? "ERROR" : crimeIsStale ? "STALE" : "OK";
+
+    const hasStale = upstreams.some(upstream => upstream.stale);
+    const hasCached = upstreams.some(upstream => upstream.cacheHit);
+    const dataBadgeText = healthData?.degraded ? "STALE" : hasStale ? "STALE" : hasCached ? "CACHED" : "FRESH";
+    const dataBadgeClass = dataBadgeText === "FRESH" ? "diagnosticsBadge--ok" : dataBadgeText === "CACHED" ? "diagnosticsBadge--warn" : "diagnosticsBadge--error";
+    const dataDetail = healthData?.degraded ? "Degraded mode" : dataBadgeText === "FRESH" ? "Live upstream data" : dataBadgeText === "CACHED" ? "Cached responses" : "Stale cache in use";
 
     // Optional keys
     const optKeys = healthData?.optionalKeys || {};
@@ -7151,6 +7162,13 @@ function selectItem(id) {
       </div>
       <div class="diagnosticsRow">
         <div>
+          <div class="diagnosticsRow__title">Data Freshness</div>
+          <div>${dataDetail}</div>
+        </div>
+        <div class="diagnosticsBadge ${dataBadgeClass}">${dataBadgeText}</div>
+      </div>
+      <div class="diagnosticsRow">
+        <div>
           <div class="diagnosticsRow__title">Crime Reports</div>
           <div>Last: ${crimeLastUpdated} (${crimeCount} incidents)</div>
         </div>
@@ -7176,26 +7194,38 @@ function selectItem(id) {
     }
 
     diagnosticsUpstreams.innerHTML = upstreams.map(upstream => {
-      const status = (upstream.status || "unknown").toLowerCase();
-      const badgeClass = status === "ok"
+      const status = (upstream.status || (upstream.ok ? "ok" : "error")).toLowerCase();
+      const stateLabel = upstream.stale
+        ? "STALE"
+        : upstream.cacheHit
+          ? "CACHED"
+          : upstream.ok
+            ? "OK"
+            : status === "stale"
+              ? "STALE"
+              : "ERROR";
+      const badgeClass = stateLabel === "OK"
         ? "diagnosticsBadge--ok"
-        : status === "stale"
-          ? "diagnosticsBadge--stale"
-          : "diagnosticsBadge--error";
-      const latency = Number.isFinite(upstream.ms) ? `${upstream.ms}ms` : "—";
+        : stateLabel === "CACHED"
+          ? "diagnosticsBadge--warn"
+          : stateLabel === "STALE"
+            ? "diagnosticsBadge--stale"
+            : "diagnosticsBadge--error";
+      const latency = Number.isFinite(upstream.ms) ? `${upstream.ms}ms` : Number.isFinite(upstream.lastElapsedMs) ? `${upstream.lastElapsedMs}ms` : "—";
       const contentType = upstream.contentType ? ` • ${escapeHtml(upstream.contentType)}` : "";
-      const errorHint = upstream.errorCode ? ` • ${escapeHtml(upstream.errorCode)}` : "";
+      const errorHint = upstream.errorCode || upstream.message ? ` • ${escapeHtml(upstream.errorCode || upstream.message)}` : "";
       const requiredLabel = upstream.required ? " • Required" : "";
-      const lastSuccess = upstream.lastSuccess ? ` • Last OK ${new Date(upstream.lastSuccess).toLocaleTimeString()}` : "";
+      const lastSuccess = upstream.lastSuccess || upstream.lastOkAt ? ` • Last OK ${new Date(upstream.lastSuccess || upstream.lastOkAt).toLocaleTimeString()}` : "";
+      const lastAttempt = upstream.lastAttemptAt ? ` • Last Attempt ${new Date(upstream.lastAttemptAt).toLocaleTimeString()}` : "";
       return `
         <div class="diagnosticsRow">
           <div>
             <div class="diagnosticsRow__title">${escapeHtml(upstream.name || "Unknown")}</div>
             <div>${escapeHtml(upstream.url || "")}${requiredLabel}</div>
-            <div style="font-size:11px;color:var(--muted2);margin-top:4px;">${latency}${contentType}${errorHint}${lastSuccess}</div>
+            <div style="font-size:11px;color:var(--muted2);margin-top:4px;">${latency}${contentType}${errorHint}${lastSuccess}${lastAttempt}</div>
           </div>
           <div style="text-align:right;">
-            <div class="diagnosticsBadge ${badgeClass}">${status.toUpperCase()}</div>
+            <div class="diagnosticsBadge ${badgeClass}">${stateLabel}</div>
           </div>
         </div>
       `;
@@ -7235,6 +7265,33 @@ function selectItem(id) {
     `;
   }
 
+  function renderDiagnosticsUpstreamTests(testData) {
+    if (!diagnosticsUpstreamTests) return;
+    if (!testData || !Array.isArray(testData.upstreams)) {
+      diagnosticsUpstreamTests.textContent = "Unable to load upstream test results.";
+      return;
+    }
+
+    diagnosticsUpstreamTests.innerHTML = testData.upstreams.map(upstream => {
+      const badgeClass = upstream.ok ? "diagnosticsBadge--ok" : "diagnosticsBadge--error";
+      const latency = Number.isFinite(upstream.elapsedMs) ? `${upstream.elapsedMs}ms` : "—";
+      const notes = upstream.notes ? ` • ${escapeHtml(upstream.notes)}` : "";
+      const recommendation = upstream.recommendation ? ` • ${escapeHtml(upstream.recommendation)}` : "";
+      return `
+        <div class="diagnosticsRow">
+          <div>
+            <div class="diagnosticsRow__title">${escapeHtml(upstream.name || "Unknown")}</div>
+            <div>${escapeHtml(upstream.url || "")}</div>
+            <div style="font-size:11px;color:var(--muted2);margin-top:4px;">${latency}${notes}${recommendation}</div>
+          </div>
+          <div style="text-align:right;">
+            <div class="diagnosticsBadge ${badgeClass}">${upstream.ok ? "OK" : "FAIL"}</div>
+          </div>
+        </div>
+      `;
+    }).join("");
+  }
+
   // Store last known data for offline fallback
   let lastKnownDiagnostics = null;
 
@@ -7242,6 +7299,7 @@ function selectItem(id) {
     if (!diagnosticsDrawer) return;
     if (diagnosticsSummary) diagnosticsSummary.textContent = "Loading…";
     if (diagnosticsUpstreams) diagnosticsUpstreams.textContent = "Loading…";
+    if (diagnosticsUpstreamTests) diagnosticsUpstreamTests.textContent = "Run “Test Upstreams” to see results.";
     if (diagnosticsCache) diagnosticsCache.textContent = "Loading…";
 
     // Fetch from new endpoints (with fallback to legacy)
@@ -7272,7 +7330,8 @@ function selectItem(id) {
     }
 
     renderDiagnosticsSummary(healthRes.data || null, crimeStatusRes.data || null);
-    renderDiagnosticsUpstreams(upstreamRes.data?.upstreams || null);
+    const upstreamList = healthRes.data?.upstreams || upstreamRes.data?.upstreams || null;
+    renderDiagnosticsUpstreams(upstreamList);
     renderDiagnosticsCache(cacheRes.data || null);
 
     lastDiagnosticsPayload = {
@@ -7288,17 +7347,50 @@ function selectItem(id) {
       lastKnownDiagnostics = lastDiagnosticsPayload;
     }
 
+    if (healthRes.ok) {
+      lastHealthPayload = healthRes.data;
+    }
+
     if (diagnosticsRequiredBanner && diagnosticsRequiredText) {
-      const requiredFailures = (upstreamRes.data?.upstreams || [])
-        .filter(upstream => upstream.required && String(upstream.status).toLowerCase() !== "ok");
-      if (requiredFailures.length > 0) {
-        diagnosticsRequiredText.textContent = requiredFailures.map(upstream => upstream.name).join(", ");
+      const upstreamFailures = (healthRes.data?.upstreams || upstreamRes.data?.upstreams || [])
+        .filter(upstream => upstream.required && (upstream.stale || upstream.ok === false || String(upstream.status).toLowerCase() !== "ok"));
+      if (healthRes.data?.degraded || upstreamFailures.length > 0) {
+        if (diagnosticsBannerTitle) {
+          diagnosticsBannerTitle.textContent = "Degraded mode: showing cached data";
+        }
+        diagnosticsRequiredText.textContent = upstreamFailures.length > 0
+          ? upstreamFailures.map(upstream => upstream.name).join(", ")
+          : "Upstream connectivity issues detected.";
         diagnosticsRequiredBanner.classList.remove("diagnosticsBanner--hidden");
       } else {
         diagnosticsRequiredBanner.classList.add("diagnosticsBanner--hidden");
         diagnosticsRequiredText.textContent = "";
+        if (diagnosticsBannerTitle) {
+          diagnosticsBannerTitle.textContent = "Required upstreams failing";
+        }
       }
     }
+  }
+
+  let lastTestRunAt = 0;
+
+  async function runUpstreamTests() {
+    if (!diagnosticsUpstreamTests) return;
+    const now = Date.now();
+    if (now - lastTestRunAt < 10000) {
+      diagnosticsUpstreamTests.textContent = "Please wait a few seconds before rerunning tests.";
+      return;
+    }
+    lastTestRunAt = now;
+    diagnosticsUpstreamTests.textContent = "Running upstream tests…";
+
+    const testRes = await fetchDiagnosticsJson("/api/health/test-upstreams?quick=1");
+    if (!testRes.ok) {
+      diagnosticsUpstreamTests.textContent = "Upstream tests failed. Check connectivity and retry.";
+      return;
+    }
+
+    renderDiagnosticsUpstreamTests(testRes.data);
   }
 
   // Auto-refresh diagnostics drawer every 30 seconds when open
@@ -7340,10 +7432,17 @@ function selectItem(id) {
       });
     });
   }
+  if (diagnosticsTestUpstreams) {
+    diagnosticsTestUpstreams.addEventListener("click", () => {
+      runUpstreamTests().catch(err => {
+        console.warn("[Diagnostics] Upstream test failed:", err);
+      });
+    });
+  }
   if (diagnosticsCopy) {
     diagnosticsCopy.addEventListener("click", async () => {
-      if (!lastDiagnosticsPayload) return;
-      const text = JSON.stringify(lastDiagnosticsPayload, null, 2);
+      if (!lastHealthPayload) return;
+      const text = JSON.stringify(lastHealthPayload, null, 2);
       try {
         await navigator.clipboard.writeText(text);
         diagnosticsCopy.textContent = "Copied!";

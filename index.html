@@ -359,7 +359,7 @@
     </div>
     <div class="diagnosticsDrawer__body">
       <div id="diagnosticsRequiredBanner" class="diagnosticsBanner diagnosticsBanner--hidden" role="alert">
-        <div class="diagnosticsBanner__title">Required upstreams failing</div>
+        <div class="diagnosticsBanner__title" id="diagnosticsBannerTitle">Required upstreams failing</div>
         <div class="diagnosticsBanner__text" id="diagnosticsRequiredText">—</div>
       </div>
       <div class="diagnosticsSection">
@@ -367,8 +367,12 @@
         <div id="diagnosticsSummary" class="diagnosticsSection__content">Loading…</div>
       </div>
       <div class="diagnosticsSection">
-        <div class="diagnosticsSection__title">Upstreams</div>
+        <div class="diagnosticsSection__titleRow">
+          <div class="diagnosticsSection__title">Upstreams</div>
+          <button class="btn btn--ghost" id="diagnosticsTestUpstreams" type="button" title="Run upstream connectivity test">Test Upstreams</button>
+        </div>
         <div id="diagnosticsUpstreams" class="diagnosticsSection__content">Loading…</div>
+        <div id="diagnosticsUpstreamTests" class="diagnosticsSection__content diagnosticsSection__content--subtle">Click “Test Upstreams” to run a quick connectivity check.</div>
       </div>
       <div class="diagnosticsSection">
         <div class="diagnosticsSection__title">Cache</div>
