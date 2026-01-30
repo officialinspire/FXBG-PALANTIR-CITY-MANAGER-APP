@@ -2189,7 +2189,7 @@
       "chipTraffic", "trafficText",
       "chipNet", "netText",
       "chipAir", "airDot", "airText",
-      "btnNewsFlash", "btnRadioScanner", "btnRefresh",
+      "btnCrime", "btnNewsFlash", "btnRadioScanner", "btnRefresh",
       "lastUpdate"
     ];
 
@@ -4039,6 +4039,8 @@
       requests: new Map()  // Track in-flight requests for cancellation: overlayId -> { controller, cacheKey }
     },
     air: { aqi: null, timestamp: null },  // Air quality data cache
+    openUV: { value: null, status: "unknown", displayText: null, timestamp: null },
+    weather: { baseText: "Weather: Loading…" },
     crime: null  // Will be initialized with loadCrimeUI()
   };
 
@@ -4861,14 +4863,27 @@ function selectItem(id) {
   // -----------------------------
   // NWS: current + 3 day + alerts
   // -----------------------------
+  function updateWeatherChipText(nextBaseText) {
+    if (typeof nextBaseText === "string") {
+      store.weather.baseText = nextBaseText;
+    }
+    const baseText = store.weather.baseText || "Weather: Loading…";
+    const uvSuffix = store.openUV.displayText ? ` • ${store.openUV.displayText}` : "";
+    const weatherTextEl = getChipElement("weatherText");
+    if (weatherTextEl) {
+      const weatherText = `${baseText}${uvSuffix}`;
+      weatherTextEl.textContent = weatherText;
+      if (CONFIG.debug.chips) console.log(`[Chip Update] Weather: ${weatherText}`);
+    }
+  }
+
   async function fetchNWS() {
     if (store.locks.nws) return;
     store.locks.nws = true;
     try {
 
     if (!CONFIG.nws.enabled) {
-      const weatherTextEl = getChipElement("weatherText");
-      if (weatherTextEl) weatherTextEl.textContent = "Weather: Disabled";
+      updateWeatherChipText("Weather: Disabled");
       return;
     }
 
@@ -4876,8 +4891,7 @@ function selectItem(id) {
     const backoffCheck = checkSourceBackoff('nws');
     if (!backoffCheck.allowed) {
       console.log(`[NWS Backoff] Skipping (backoff: ${Math.round(backoffCheck.delayMs / 1000)}s remaining)`);
-      const weatherTextEl = getChipElement("weatherText");
-      if (weatherTextEl) weatherTextEl.textContent = "Weather: Waiting...";
+      updateWeatherChipText("Weather: Waiting...");
       return;
     }
 
@@ -4901,12 +4915,8 @@ function selectItem(id) {
 
     const currentText = now ? `${now.temperature}°${now.temperatureUnit} • ${now.shortForecast}` : "Weather: Unavailable";
     const threeDay = day3.length ? day3.map(p => `${p.name.replace("This ","").slice(0,10)} ${p.temperature}°${p.temperatureUnit}`).slice(0, 6).join(" · ") : "";
-    const weatherTextEl = getChipElement("weatherText");
-    if (weatherTextEl) {
-      const weatherText = threeDay ? `${currentText} — ${threeDay}` : currentText;
-      weatherTextEl.textContent = weatherText;
-      if (CONFIG.debug.chips) console.log(`[Chip Update] Weather: ${weatherText}`);
-    }
+    const weatherText = threeDay ? `${currentText} — ${threeDay}` : currentText;
+    updateWeatherChipText(weatherText);
 
     // Alerts
     try {
@@ -4932,8 +4942,7 @@ function selectItem(id) {
     } catch (e) {
       if (!store._nwsErrorLogged) {
         console.warn("NWS weather fetch failed:", e.message || e);
-        const weatherTextEl = getChipElement("weatherText");
-        if (weatherTextEl) weatherTextEl.textContent = "Weather: Unable to connect (check network)";
+        updateWeatherChipText("Weather: Unable to connect (check network)");
         store._nwsErrorLogged = true;
       }
 
@@ -6165,6 +6174,24 @@ function selectItem(id) {
   // -----------------------------
   // OpenUV API - UV Index data
   // -----------------------------
+  async function fetchJsonWithStatus(url, opts = {}) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort("Timeout"), opts.timeoutMs || 15000);
+    try {
+      const response = await fetch(url, {
+        signal: controller.signal,
+        headers: opts.headers
+      });
+      const text = await response.text();
+      const data = safeJsonParse(text, null, `json ${url}`);
+      return { ok: response.ok, status: response.status, data };
+    } catch (err) {
+      return { ok: false, status: 0, error: err.message || String(err), data: null };
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
   async function fetchOpenUV() {
     if (!CONFIG.openUV.enabled) return;
     if (store.locks.openUV) return;
@@ -6180,23 +6207,35 @@ function selectItem(id) {
 
     try {
       const url = `${CONFIG.openUV.baseUrl}?lat=${CONFIG.openUV.lat}&lng=${CONFIG.openUV.lon}`;
-      const data = await fetchWithProxies(url, {
-        expect: "json",
-        skipProxy: true,
-        headers: {
-          "Accept": "application/json"
-        }
+      const response = await fetchJsonWithStatus(url, {
+        headers: { "Accept": "application/json" }
       });
 
-      if (!data || !data.result) {
+      if (response.status === 503 && response.data?.disabled) {
+        store.openUV.status = "disabled";
+        store.openUV.displayText = "UV: N/A";
+        store.openUV.timestamp = Date.now();
+        updateWeatherChipText();
+        if (!store._openUVDisabledLogged) {
+          console.warn(`[OpenUV] Disabled: ${response.data?.reason || "missing API key"}`);
+          store._openUVDisabledLogged = true;
+        }
+        return;
+      }
+
+      const data = response.data;
+      if (!response.ok || !data || !data.result) {
         console.warn("[OpenUV] No valid UV data received");
         recordSourceFailure('openuv', 'invalid_data');
         recordFeedError('openuv');
+        store.openUV.status = "error";
+        store.openUV.displayText = "UV: N/A";
+        updateWeatherChipText();
         return;
       }
 
       const uv = data.result;
-      const uvValue = uv.uv || uv.uv_max || 0;
+      const uvValue = typeof uv.uv === "number" ? uv.uv : (typeof uv.uv_max === "number" ? uv.uv_max : 0);
       const uvTime = uv.uv_time || new Date().toISOString();
 
       // Determine UV level and appropriate emoji/tone
@@ -6237,6 +6276,12 @@ function selectItem(id) {
         console.log(`[OpenUV] UV Index: ${uvValue.toFixed(1)} (${uvLevel})`);
       }
 
+      store.openUV.value = uvValue;
+      store.openUV.status = "ok";
+      store.openUV.displayText = `UV ${uvValue.toFixed(1)}`;
+      store.openUV.timestamp = Date.now();
+      updateWeatherChipText();
+
       // Round 3: Record success to clear backoff
       recordSourceSuccess('openuv');
 
@@ -6246,6 +6291,9 @@ function selectItem(id) {
       // Round 3: Record failure and apply backoff
       recordSourceFailure('openuv', 'fetch_error');
       recordFeedError('openuv');
+      store.openUV.status = "error";
+      store.openUV.displayText = "UV: N/A";
+      updateWeatherChipText();
     } finally {
       store.locks.openUV = false;
     }
@@ -6474,23 +6522,38 @@ function selectItem(id) {
     store.locks.air = true;
 
     try {
-      const url = `${CONFIG.air.baseUrl}?lat=${CONFIG.air.lat}&lon=${CONFIG.air.lon}`;
-      const data = await fetchWithProxies(url, { expect: "json", skipProxy: true });
+      const airTextEl = getChipElement("airText");
+      const airDotEl = getChipElement("airDot");
+      if (airTextEl) airTextEl.textContent = "AQI: Loading…";
+      if (airDotEl) airDotEl.style.backgroundColor = "#888";
 
-      if (data && data.status === "ok" && data.data && typeof data.data.aqi === "number") {
+      const url = `${CONFIG.air.baseUrl}?lat=${CONFIG.air.lat}&lon=${CONFIG.air.lon}`;
+      const response = await fetchJsonWithStatus(url, { headers: { "Accept": "application/json" } });
+
+      if (response.status === 503 && response.data?.disabled) {
+        if (!store._airDisabledLogged) {
+          console.warn(`[Air Quality] Disabled: ${response.data?.reason || "missing token"}`);
+          store._airDisabledLogged = true;
+        }
+        if (airTextEl) airTextEl.textContent = "AQI: N/A";
+        if (airDotEl) airDotEl.style.backgroundColor = "#888";
+        return;
+      }
+
+      const data = response.data;
+
+      if (response.ok && data && data.status === "ok" && data.data && typeof data.data.aqi === "number") {
         const aqi = data.data.aqi;
         store.air.aqi = aqi;
         store.air.timestamp = Date.now();
 
         // Update chip text
-        const airTextEl = getChipElement("airText");
         if (airTextEl) {
           airTextEl.textContent = `AQI: ${aqi}`;
           if (CONFIG.debug.chips) console.log(`[Chip Update] AQI: ${aqi}`);
         }
 
         // Update dot color based on AQI ranges
-        const airDotEl = getChipElement("airDot");
         if (airDotEl) {
           let color;
           if (aqi <= 50) color = "#00e400";  // Good (green)
@@ -6506,15 +6569,17 @@ function selectItem(id) {
         console.log(`[Air Quality] AQI: ${aqi}`);
       } else {
         console.warn("[Air Quality] No valid AQI data received");
-        const airTextEl = getChipElement("airText");
         if (airTextEl) airTextEl.textContent = "AQI: N/A";
+        if (airDotEl) airDotEl.style.backgroundColor = "#888";
         recordSourceFailure('air', 'invalid_data');
         recordFeedError('air');
       }
     } catch (err) {
       console.error("[Air Quality] Fetch failed:", err.message);
       const airTextEl = getChipElement("airText");
+      const airDotEl = getChipElement("airDot");
       if (airTextEl) airTextEl.textContent = "AQI: N/A";
+      if (airDotEl) airDotEl.style.backgroundColor = "#888";
     } finally {
       store.locks.air = false;
     }
@@ -8761,10 +8826,22 @@ function selectItem(id) {
     }
 
     // Crime Reports button
-    const btnCrime = $("btnCrime");
+    const btnCrime = IS_MOBILE_UI
+      ? (document.getElementById("btnCrimeMobile") || document.getElementById("btnCrime"))
+      : document.getElementById("btnCrime");
     if (btnCrime) {
+      let pressTimer = null;
+      let suppressNextClick = false;
+
       // Single click: toggle overlay
-      btnCrime.addEventListener("click", () => {
+      btnCrime.addEventListener("click", (e) => {
+        if (suppressNextClick) {
+          suppressNextClick = false;
+          e.preventDefault();
+          e.stopPropagation();
+          return;
+        }
+        openCrimeMenuPanel();
         toggleCrimeOverlay(true);
       });
 
@@ -8775,9 +8852,6 @@ function selectItem(id) {
       });
 
       // Long-press (mobile): open menu without toggling
-      let pressTimer = null;
-      let suppressNextClick = false;
-
       btnCrime.addEventListener("pointerdown", (e) => {
         pressTimer = setTimeout(() => {
           openCrimeMenuPanel();
@@ -8806,18 +8880,6 @@ function selectItem(id) {
           pressTimer = null;
         }
       });
-
-      // Intercept click if suppressNextClick is true
-      const originalClickHandler = btnCrime.onclick;
-      btnCrime.onclick = (e) => {
-        if (suppressNextClick) {
-          suppressNextClick = false;
-          e.stopPropagation();
-          e.preventDefault();
-          return false;
-        }
-        if (originalClickHandler) originalClickHandler.call(btnCrime, e);
-      };
     }
 
     // News Flash button

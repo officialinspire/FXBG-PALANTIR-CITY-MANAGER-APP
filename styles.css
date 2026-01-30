@@ -120,6 +120,24 @@ body{
 }
 .topbar__right{ display:flex; gap:10px; align-items:center; justify-content:flex-end; }
 
+@media (min-width: 900px){
+  .topbar{
+    grid-template-columns: minmax(220px, 320px) minmax(0, 1fr) max-content;
+  }
+  .topbar__left,
+  .topbar__center,
+  .topbar__right{
+    min-width: 0;
+  }
+  .topbar__center{
+    flex-wrap: nowrap;
+    overflow-x: auto;
+  }
+  .topbar__right{
+    flex-wrap: nowrap;
+  }
+}
+
 .chip{
   display:flex; align-items:center; gap:8px;
   padding: 10px 14px;
