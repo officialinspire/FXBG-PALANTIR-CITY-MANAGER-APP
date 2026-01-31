@@ -44,6 +44,9 @@
     // Region filter bbox (expanded to include all data source areas: FXBG, Stafford, Spotsy, Caroline, Warrenton, etc.)
     bbox: { minLat: 37.9, maxLat: 38.9, minLon: -78.0, maxLon: -77.0 },
 
+    // POI-specific bbox (tighter bounds for schools, hospitals, clinics to avoid scattered far-away POIs)
+    poiBbox: { minLat: 38.20, maxLat: 38.42, minLon: -77.62, maxLon: -77.34 },
+
     // I‑95 corridor bbox near FXBG metro (for traffic indicator)
     i95Bbox: { minLat: 38.15, maxLat: 38.55, minLon: -77.70, maxLon: -77.20 },
 
@@ -1592,6 +1595,47 @@
           specialPrograms: "Gifted Services, Reading Recovery, Special Education, Extended Day Programs",
           address: "3529 Germanna Hwy, Locust Grove, VA 22508",
           phone: "(540) 661-4580"
+        },
+        // UNIVERSITIES / COMMUNITY COLLEGES - FXBG Metro Area
+        {
+          id: "school_umw",
+          name: "University of Mary Washington",
+          lat: 38.3013039,
+          lon: -77.47447,
+          url: "https://www.umw.edu/",
+          type: "school",
+          info: "1301 College Ave, Fredericksburg, VA 22401 | University | (540) 654-1000",
+          yearFounded: 1908,
+          enrollment: 4500,
+          grades: "University",
+          mascot: "Eagles",
+          colors: "Navy Blue & Silver",
+          sports: "NCAA Division III - Baseball, Basketball, Cross Country, Equestrian, Field Hockey, Golf, Lacrosse, Soccer, Softball, Swimming, Tennis, Track & Field, Volleyball",
+          achievements: "Top-ranked Public Liberal Arts University, Historic Campus, Strong Arts & Sciences Programs",
+          programs: "Liberal Arts & Sciences, Business, Education, Computer Science, Data Science, Historic Preservation",
+          specialPrograms: "Honors Program, Undergraduate Research, Study Abroad, Pre-Law, Pre-Med",
+          address: "1301 College Ave, Fredericksburg, VA 22401",
+          phone: "(540) 654-1000"
+        },
+        {
+          id: "school_germanna_fxbg",
+          name: "Germanna Community College — Fredericksburg Area Campus",
+          lat: 38.3012220,
+          lon: -77.5124009,
+          url: "https://www.germanna.edu/",
+          type: "school",
+          info: "10000 Germanna Point Dr, Fredericksburg, VA 22408 | Community College | (540) 891-3000",
+          yearFounded: 2007,
+          enrollment: 8000,
+          grades: "Community College",
+          mascot: "Grizzlies",
+          colors: "Green & Gold",
+          sports: "N/A",
+          achievements: "Fastest Growing CC in Virginia, Transfer Agreements with UMW & VCU, Workforce Development",
+          programs: "Associate Degrees, Transfer Programs, Workforce Credentials, Dual Enrollment, Adult Education",
+          specialPrograms: "Nursing, IT & Cybersecurity, Business Administration, Health Sciences, STEM Transfer",
+          address: "10000 Germanna Point Dr, Fredericksburg, VA 22408",
+          phone: "(540) 891-3000"
         }
       ]
     },
@@ -2144,6 +2188,14 @@
 
   function inBbox(lat, lon, bbox) {
     return lat >= bbox.minLat && lat <= bbox.maxLat && lon >= bbox.minLon && lon <= bbox.maxLon;
+  }
+
+  // Returns the appropriate bbox for an item: poiBbox for POIs, otherwise the default bbox
+  function getBboxForItem(item) {
+    if (item?.meta?.isPoi) {
+      return CONFIG.poiBbox;
+    }
+    return CONFIG.bbox;
   }
 
   function pickEmojiCategory(text, fallbackEmoji, fallbackCategory, fallbackTone) {
@@ -4685,7 +4737,7 @@ function selectItem(id) {
         filtered.category++;
         continue;
       }
-      if (!inBbox(item.lat, item.lon, CONFIG.bbox)) {
+      if (!inBbox(item.lat, item.lon, getBboxForItem(item))) {
         filtered.bbox++;
         continue;
       }
@@ -5843,6 +5895,9 @@ function selectItem(id) {
         sourceId = "hope-springs";
       }
 
+      // Determine if this is a POI (school, hospital, clinic)
+      const isPoi = cam.type === "hospital" || cam.type === "clinic" || cam.type === "school";
+
       const item = {
         id: key,
         category,
@@ -5860,7 +5915,8 @@ function selectItem(id) {
         dedupeKey: key,
         message,
         panelHtml,
-        source: { id: sourceId, name: sourceName, category, url: cam.url }
+        source: { id: sourceId, name: sourceName, category, url: cam.url },
+        meta: isPoi ? { isPoi: true, poiType: cam.type } : undefined
       };
 
       store.itemsById.set(item.id, item);
@@ -6848,7 +6904,7 @@ function selectItem(id) {
 
       const shouldShow = isCrimeItemVisible(item, days)
         && activeCategories.has(item.category)
-        && inBbox(item.lat, item.lon, CONFIG.bbox);
+        && inBbox(item.lat, item.lon, getBboxForItem(item));
 
       const hadMarker = store.markersById.has(id);
       if (shouldShow) {
