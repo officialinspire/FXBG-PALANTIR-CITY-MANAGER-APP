@@ -14,11 +14,13 @@
 
 const fs = require("fs");
 const path = require("path");
+const crypto = require("crypto");
 
 const ROOT_DIR = path.resolve(__dirname, "..");
 const ENV_PATH = path.join(ROOT_DIR, ".env");
 const ENV_EXAMPLE_PATH = path.join(ROOT_DIR, ".env.example");
 const PKG_PATH = path.join(ROOT_DIR, "package.json");
+const SCHOOLS_PATH = path.join(ROOT_DIR, "data", "schools_fxbg.json");
 
 // Colors for terminal output
 const colors = {
@@ -148,6 +150,19 @@ function checkEnvFile() {
   if (fs.existsSync(ENV_PATH)) {
     ok(`.env file exists`);
 
+    // Provenance proof: path, mtime, size, sha256
+    try {
+      const stats = fs.statSync(ENV_PATH);
+      const content = fs.readFileSync(ENV_PATH);
+      const sha256 = crypto.createHash("sha256").update(content).digest("hex").slice(0, 8);
+      info(`Path: ${ENV_PATH}`);
+      info(`Modified: ${stats.mtime.toISOString()}`);
+      info(`Size: ${stats.size} bytes`);
+      info(`SHA256: ${sha256}...`);
+    } catch (e) {
+      warn(`Could not read .env stats: ${e.message}`);
+    }
+
     const envVars = loadEnvFile();
     const keyCount = Object.keys(envVars).length;
     info(`Found ${keyCount} environment variable(s) defined`);
@@ -209,25 +224,36 @@ function checkRequiredEnvVars() {
   }
 }
 
-// Check 5: Optional environment variables
+// Check 5: Optional environment variables (with alias support)
 function checkOptionalEnvVars() {
   header("Optional Environment Variables");
 
   const envVars = loadEnvFile();
 
-  const optional = [
-    { key: "OPENUV_API_KEY", desc: "OpenUV API (UV index)", url: "https://www.openuv.io/" },
-    { key: "WAQI_TOKEN", desc: "WAQI API (air quality)", url: "https://aqicn.org/data-platform/token/" }
-  ];
+  // OpenUV: check primary key and alias
+  const openuvValue = envVars.OPENUV_API_KEY || envVars.OPENUV_KEY || process.env.OPENUV_API_KEY || process.env.OPENUV_KEY || "";
+  const openuvAlias = envVars.OPENUV_KEY ? " (via OPENUV_KEY alias)" : "";
+  if (openuvValue && openuvValue.length > 5 && !openuvValue.startsWith("your-")) {
+    ok(`OPENUV_API_KEY${openuvAlias} is configured (OpenUV API - UV index)`);
+    info(`  Key length: ${openuvValue.length} chars`);
+  } else {
+    warn(`OPENUV_API_KEY not configured - OpenUV (UV index) will be disabled`);
+    info(`  Accepts: OPENUV_API_KEY or OPENUV_KEY`);
+    info(`  Get an API key at: https://www.openuv.io/`);
+  }
 
-  for (const { key, desc, url } of optional) {
-    const value = envVars[key] || process.env[key];
-    if (value && value.length > 5 && !value.startsWith("your-")) {
-      ok(`${key} is configured (${desc})`);
-    } else {
-      warn(`${key} not configured - ${desc} will be disabled`);
-      info(`  Get an API key at: ${url}`);
-    }
+  // WAQI: check primary key and aliases
+  const waqiValue = envVars.WAQI_TOKEN || envVars.WAQI_API_KEY || envVars.AQICN_TOKEN ||
+                    process.env.WAQI_TOKEN || process.env.WAQI_API_KEY || process.env.AQICN_TOKEN || "";
+  const waqiAlias = envVars.WAQI_API_KEY ? " (via WAQI_API_KEY alias)" :
+                    envVars.AQICN_TOKEN ? " (via AQICN_TOKEN alias)" : "";
+  if (waqiValue && waqiValue.length > 5 && !waqiValue.startsWith("your-")) {
+    ok(`WAQI_TOKEN${waqiAlias} is configured (WAQI API - air quality)`);
+    info(`  Key length: ${waqiValue.length} chars`);
+  } else {
+    warn(`WAQI_TOKEN not configured - WAQI (air quality) will be disabled`);
+    info(`  Accepts: WAQI_TOKEN, WAQI_API_KEY, or AQICN_TOKEN`);
+    info(`  Get a token at: https://aqicn.org/data-platform/token/`);
   }
 }
 
@@ -268,6 +294,46 @@ function checkPort() {
   });
 }
 
+// Check 7: Schools dataset
+function checkSchoolsDataset() {
+  header("Schools Dataset (NCES)");
+
+  if (fs.existsSync(SCHOOLS_PATH)) {
+    ok(`Schools dataset exists`);
+    try {
+      const stats = fs.statSync(SCHOOLS_PATH);
+      info(`Path: ${SCHOOLS_PATH}`);
+      info(`Size: ${(stats.size / 1024).toFixed(1)} KB`);
+      info(`Modified: ${stats.mtime.toISOString()}`);
+
+      // Check age
+      const ageHours = (Date.now() - stats.mtimeMs) / (1000 * 60 * 60);
+      if (ageHours > 168) { // 7 days
+        warn(`Dataset is ${Math.floor(ageHours / 24)} days old. Consider running: npm run build:schools`);
+      } else if (ageHours > 24) {
+        info(`Dataset is ${Math.floor(ageHours / 24)} days old`);
+      } else {
+        info(`Dataset is ${ageHours.toFixed(1)} hours old`);
+      }
+
+      // Try to read and validate
+      try {
+        const data = JSON.parse(fs.readFileSync(SCHOOLS_PATH, "utf8"));
+        if (data.schools && Array.isArray(data.schools)) {
+          info(`Contains ${data.schools.length} schools`);
+        }
+      } catch (e) {
+        warn(`Could not parse schools data: ${e.message}`);
+      }
+    } catch (e) {
+      warn(`Could not read schools file stats: ${e.message}`);
+    }
+  } else {
+    warn(`Schools dataset missing: ${SCHOOLS_PATH}`);
+    info(`Run: npm run build:schools`);
+  }
+}
+
 // Main
 async function main() {
   console.log(`\n${colors.cyan}FXBG Palantir City Manager - Doctor${colors.reset}`);
@@ -278,6 +344,7 @@ async function main() {
   checkRequiredEnvVars();
   checkOptionalEnvVars();
   checkLogDir();
+  checkSchoolsDataset();
   await checkPort();
 
   // Summary
