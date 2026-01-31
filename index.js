@@ -3365,7 +3365,33 @@
     "Dark (Esri)": esriBaseLayer,
     "Standard (OSM)": osmLayer
   };
-  L.control.layers(baseLayers, null, { position: "topright", collapsed: true }).addTo(map);
+
+  // Helper to determine control position based on viewport
+  function getControlPosition() {
+    return window.matchMedia("(max-width: 768px)").matches ? "bottomright" : "topright";
+  }
+
+  // Create basemap control with responsive positioning
+  let layersControl = L.control.layers(baseLayers, null, {
+    position: getControlPosition(),
+    collapsed: true
+  }).addTo(map);
+
+  // Update control position on viewport resize
+  let resizeTimeout = null;
+  window.addEventListener("resize", function() {
+    clearTimeout(resizeTimeout);
+    resizeTimeout = setTimeout(function() {
+      const newPos = getControlPosition();
+      if (layersControl.getPosition() !== newPos) {
+        layersControl.remove();
+        layersControl = L.control.layers(baseLayers, null, {
+          position: newPos,
+          collapsed: true
+        }).addTo(map);
+      }
+    }, 150);
+  });
 
   // Reference marker at downtown Fredericksburg for basemap alignment sanity check
   const refIcon = L.divIcon({
@@ -3510,7 +3536,21 @@
     }
   });
 
-  new LocateControl({ position: "topright" }).addTo(map);
+  // Use same responsive positioning as basemap control
+  let locateControl = new LocateControl({ position: getControlPosition() }).addTo(map);
+
+  // Update locate control position on viewport resize
+  let locateResizeTimeout = null;
+  window.addEventListener("resize", function() {
+    clearTimeout(locateResizeTimeout);
+    locateResizeTimeout = setTimeout(function() {
+      const newPos = getControlPosition();
+      if (locateControl.getPosition() !== newPos) {
+        locateControl.remove();
+        locateControl = new LocateControl({ position: newPos }).addTo(map);
+      }
+    }, 160); // Slightly different delay to avoid race conditions
+  });
 
   // -----------------------------
   // GIS Overlays (ArcGIS layers) - QQMS GIS Safeguards
