@@ -121,10 +121,30 @@ if [ "${SKIP_SCHOOLS_BUILD:-0}" = "1" ]; then
   echo "[schools] SKIP_SCHOOLS_BUILD=1 set; skipping build:schools"
 else
   if command -v npm >/dev/null 2>&1; then
-    echo "[schools] Running npm run build:schools..."
-    if ! npm run build:schools; then
-      echo "[up] ERROR: npm run build:schools failed"
-      exit 1
+    if [ -n "${NCES_SCHOOLS_CSV_PATH:-}" ] && [ -f "${NCES_SCHOOLS_CSV_PATH}" ]; then
+      echo "[schools] Running npm run build:schools (local CSV)..."
+      if ! npm run build:schools -- --input "$NCES_SCHOOLS_CSV_PATH"; then
+        if [ "${REQUIRE_SCHOOLS_BUILD:-0}" = "1" ]; then
+          echo "[up] ERROR: npm run build:schools failed (REQUIRE_SCHOOLS_BUILD=1)"
+          exit 1
+        fi
+        echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+        echo "!! WARNING: npm run build:schools failed (continuing).      !!"
+        echo "!! Schools layer may be missing until rebuilt.              !!"
+        echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+      fi
+    else
+      echo "[schools] Running npm run build:schools..."
+      if ! npm run build:schools; then
+        if [ "${REQUIRE_SCHOOLS_BUILD:-0}" = "1" ]; then
+          echo "[up] ERROR: npm run build:schools failed (REQUIRE_SCHOOLS_BUILD=1)"
+          exit 1
+        fi
+        echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+        echo "!! WARNING: npm run build:schools failed (continuing).      !!"
+        echo "!! Schools layer may be missing until rebuilt.              !!"
+        echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+      fi
     fi
     # Report result
     if [ -f data/schools_fxbg.json ]; then
