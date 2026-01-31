@@ -4,6 +4,7 @@ node_modules/
 # Runtime data (except .gitkeep)
 data/*
 !data/.gitkeep
+!data/colleges_fxbg.json
 
 # Logs
 *.log
