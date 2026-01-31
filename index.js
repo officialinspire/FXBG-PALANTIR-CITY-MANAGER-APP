@@ -117,7 +117,8 @@
     // Debug flags
     debug: {
       rss: true,  // Enable RSS feed ingestion debug logging
-      chips: true // Enable chip update debug logging
+      chips: true, // Enable chip update debug logging
+      poiCoords: false // Enable POI coordinate display in popups (for verification)
     },
 
     // FXBG PD Crime Reports configuration
@@ -687,6 +688,7 @@
     externalCameras: {
       enabled: true,
       cacheTtlMs: 60_000,
+      includeManualSchools: false, // Set to true to use manual school entries instead of NCES data
       cameras: [
         {
           id: "wetmet_wharf_dc",
@@ -1638,6 +1640,14 @@
           phone: "(540) 891-3000"
         }
       ]
+    },
+
+    // Schools from NCES EDGE (authoritative geocoded dataset)
+    // Built by: npm run build:schools
+    schoolsNces: {
+      enabled: true,
+      url: "/data/schools_fxbg.json",
+      cacheTtlMs: 6 * 60 * 60 * 1000  // 6 hours
     },
 
     // GIS Overlays (Fredericksburg OpenData + VDOT)
@@ -4274,7 +4284,7 @@
     markersById: new Map(),
     locks: { rss:false, nws:false, arcgis:false, virginiaCrashData:false, va511:false, openUV:false, cdc:false, air:false, crime:false },
     lastByCategory: new Map(),
-    lastFetch: { externalCameras: 0 },
+    lastFetch: { externalCameras: 0, schoolsNces: 0 },
     gis: {
       enabled: new Set(),
       layers: new Map(),
@@ -5777,6 +5787,11 @@ function selectItem(id) {
 
         panelHtml = clinicDetails;
       } else if (cam.type === "school") {
+        // Skip manual schools if NCES schools are preferred (default)
+        if (!CONFIG.externalCameras.includeManualSchools) {
+          store.seenKeys.delete(key);  // Remove from seen so it can be re-added if config changes
+          continue;
+        }
         // School marker
         category = "school";
         summary = cam.info || "School";
@@ -5944,6 +5959,113 @@ function selectItem(id) {
       console.log(`[ExternalCameras] Loaded ${result.added} external camera markers`);
     } catch (e) {
       console.error("[ExternalCameras] Failed to load:", e);
+    }
+  }
+
+  /**
+   * Ingest schools from NCES EDGE dataset (authoritative coordinates)
+   * Data format: { schools: [{ ncesId, name, lat, lon, address, grades, ... }] }
+   */
+  function ingestSchoolsNces(data) {
+    const schools = data?.schools || [];
+    let added = 0;
+
+    for (const school of schools) {
+      const lat = Number(school.lat);
+      const lon = Number(school.lon);
+      if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
+
+      const ncesId = school.ncesId || '';
+      const key = `school_nces::${ncesId || school.name}::${lat.toFixed(5)},${lon.toFixed(5)}`;
+      if (store.seenKeys.has(key)) continue;
+      store.seenKeys.add(key);
+
+      // Build school info panel
+      let schoolDetails = `<div style="padding:12px;background:rgba(20,20,20,0.95);border-radius:8px;">
+          <h3 style="margin:0 0 12px 0;color:#FFD700;font-size:18px;font-weight:bold;text-shadow:1px 1px 2px rgba(0,0,0,0.8);">🏫 ${escapeHtml(school.name)}</h3>`;
+
+      if (school.grades) {
+        schoolDetails += `<p style="margin:0 0 8px 0;color:#7FFF00;font-size:13px;"><strong style="color:#00E5FF;">📚 Grades:</strong> ${escapeHtml(school.grades)}</p>`;
+      }
+
+      if (school.address) {
+        schoolDetails += `<p style="margin:0 0 8px 0;color:#FFFFFF;font-size:13px;"><strong style="color:#00E5FF;">📍 Address:</strong> ${escapeHtml(school.address)}</p>`;
+      }
+
+      if (school.county) {
+        schoolDetails += `<p style="margin:0 0 8px 0;color:#FFFFFF;font-size:13px;"><strong style="color:#00E5FF;">🏛️ District:</strong> ${escapeHtml(school.county)}</p>`;
+      }
+
+      if (school.phone) {
+        schoolDetails += `<p style="margin:0 0 8px 0;color:#FFFFFF;font-size:13px;"><strong style="color:#00E5FF;">📞 Phone:</strong> ${escapeHtml(school.phone)}</p>`;
+      }
+
+      // Debug mode: show coordinates for verification
+      if (CONFIG.debug.poiCoords) {
+        schoolDetails += `<p style="margin:8px 0;color:#888;font-size:11px;font-family:monospace;"><strong>📍 Coords:</strong> ${lat.toFixed(6)}, ${lon.toFixed(6)}</p>`;
+        schoolDetails += `<button onclick="navigator.clipboard.writeText('${lat.toFixed(6)}, ${lon.toFixed(6)}')" style="font-size:10px;padding:4px 8px;background:#444;color:#fff;border:none;border-radius:4px;cursor:pointer;">Copy coords</button>`;
+      }
+
+      schoolDetails += `</div>`;
+
+      const summary = [school.grades, school.address].filter(Boolean).join(' | ') || 'School';
+
+      const item = {
+        id: key,
+        category: "school",
+        title: school.name,
+        summary: summary,
+        sourceName: "Schools (NCES)",
+        sourceId: "schools-nces",
+        timestamp: new Date().toISOString(),
+        lat,
+        lon,
+        emoji: "🏫",
+        tone: "good",
+        dedupeKey: key,
+        message: summary,
+        panelHtml: schoolDetails,
+        source: { id: "schools-nces", name: "Schools (NCES)", category: "school" },
+        meta: { isPoi: true, poiType: "school", nces: true }
+      };
+
+      store.itemsById.set(item.id, item);
+      added++;
+    }
+
+    return { added, total: schools.length };
+  }
+
+  /**
+   * Poll NCES schools data (fetches JSON once per boot or TTL)
+   */
+  async function pollSchoolsNces() {
+    if (!CONFIG.schoolsNces?.enabled) return;
+
+    const now = Date.now();
+    const ttl = CONFIG.schoolsNces.cacheTtlMs || (6 * 60 * 60 * 1000);
+
+    // Check if we need to refresh
+    if (store.lastFetch.schoolsNces && (now - store.lastFetch.schoolsNces) < ttl) {
+      return; // Still fresh, skip
+    }
+
+    try {
+      const url = CONFIG.schoolsNces.url;
+      console.log(`[SchoolsNCES] Fetching ${url}...`);
+
+      const response = await fetch(url);
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+
+      const data = await response.json();
+      const result = ingestSchoolsNces(data);
+      store.lastFetch.schoolsNces = now;
+      console.log(`[SchoolsNCES] Loaded ${result.added} schools from NCES dataset (${result.total} total in file)`);
+    } catch (e) {
+      console.warn("[SchoolsNCES] Failed to load:", e.message);
+      // Not critical - app works without this data
     }
   }
 
@@ -7546,6 +7668,7 @@ function selectItem(id) {
       CONFIG.cdc.enabled ? fetchCDC().catch(e => console.warn("CDC refresh partial", e)) : Promise.resolve(),
       CONFIG.air.enabled ? fetchAirQuality().catch(e => console.warn("Air quality refresh partial", e)) : Promise.resolve(),
       CONFIG.externalCameras.enabled ? pollExternalCameras().catch(e => console.warn("External cameras refresh partial", e)) : Promise.resolve(),
+      CONFIG.schoolsNces?.enabled ? pollSchoolsNces().catch(e => console.warn("NCES Schools refresh partial", e)) : Promise.resolve(),
       CONFIG.fxbgCrimeReports.enabled ? pollFxbgCrimeReports().catch(e => console.warn("Crime Reports refresh partial", e)) : Promise.resolve()
     ]);
 
