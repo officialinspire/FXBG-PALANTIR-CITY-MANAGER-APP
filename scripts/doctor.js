@@ -15,10 +15,12 @@
 const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
+const os = require("os");
 
 const ROOT_DIR = path.resolve(__dirname, "..");
 const ENV_PATH = path.join(ROOT_DIR, ".env");
 const ENV_EXAMPLE_PATH = path.join(ROOT_DIR, ".env.example");
+const GLOBAL_ENV_PATH = path.join(os.homedir(), ".config", "fxbg-palantir", ".env");
 const PKG_PATH = path.join(ROOT_DIR, "package.json");
 const SCHOOLS_PATH = path.join(ROOT_DIR, "data", "schools_fxbg.json");
 
@@ -52,15 +54,25 @@ function header(msg) {
   console.log(`\n${colors.cyan}=== ${msg} ===${colors.reset}`);
 }
 
+function resolveEnvSource() {
+  if (fs.existsSync(ENV_PATH)) {
+    return { path: ENV_PATH, label: "repo .env" };
+  }
+  if (fs.existsSync(GLOBAL_ENV_PATH)) {
+    return { path: GLOBAL_ENV_PATH, label: "global env" };
+  }
+  return { path: null, label: "missing" };
+}
+
 // Track overall status
 let hasBlockingErrors = false;
 
 // Load .env if exists (for checking)
-function loadEnvFile() {
-  if (!fs.existsSync(ENV_PATH)) {
+function loadEnvFile(envPath) {
+  if (!envPath || !fs.existsSync(envPath)) {
     return {};
   }
-  const content = fs.readFileSync(ENV_PATH, "utf8");
+  const content = fs.readFileSync(envPath, "utf8");
   const env = {};
   for (const line of content.split("\n")) {
     const trimmed = line.trim();
@@ -111,7 +123,8 @@ function checkNodeVersion() {
 function checkLogDir() {
   header("Log Directory");
 
-  const envVars = loadEnvFile();
+  const envSource = resolveEnvSource();
+  const envVars = loadEnvFile(envSource.path);
   const logDir = envVars.LOG_DIR || process.env.LOG_DIR || "logs";
   const absoluteLogDir = path.isAbsolute(logDir) ? logDir : path.join(ROOT_DIR, logDir);
 
@@ -147,15 +160,31 @@ function checkLogDir() {
 function checkEnvFile() {
   header(".env Configuration");
 
-  if (fs.existsSync(ENV_PATH)) {
-    ok(`.env file exists`);
+  const repoEnvExists = fs.existsSync(ENV_PATH);
+  const globalEnvExists = fs.existsSync(GLOBAL_ENV_PATH);
+  const envSource = resolveEnvSource();
+
+  if (repoEnvExists) {
+    ok(`Repo .env exists`);
+  } else {
+    warn(`Repo .env not found`);
+  }
+
+  if (globalEnvExists) {
+    ok(`Global env exists (${GLOBAL_ENV_PATH})`);
+  } else {
+    warn(`Global env not found (${GLOBAL_ENV_PATH})`);
+  }
+
+  if (envSource.path) {
+    info(`Using: ${envSource.label} (${envSource.path})`);
 
     // Provenance proof: path, mtime, size, sha256
     try {
-      const stats = fs.statSync(ENV_PATH);
-      const content = fs.readFileSync(ENV_PATH);
+      const stats = fs.statSync(envSource.path);
+      const content = fs.readFileSync(envSource.path);
       const sha256 = crypto.createHash("sha256").update(content).digest("hex").slice(0, 8);
-      info(`Path: ${ENV_PATH}`);
+      info(`Path: ${envSource.path}`);
       info(`Modified: ${stats.mtime.toISOString()}`);
       info(`Size: ${stats.size} bytes`);
       info(`SHA256: ${sha256}...`);
@@ -163,11 +192,11 @@ function checkEnvFile() {
       warn(`Could not read .env stats: ${e.message}`);
     }
 
-    const envVars = loadEnvFile();
+    const envVars = loadEnvFile(envSource.path);
     const keyCount = Object.keys(envVars).length;
     info(`Found ${keyCount} environment variable(s) defined`);
   } else {
-    warn(`.env file not found`);
+    warn(`No env file found in repo or global location`);
 
     // Show template
     const template = `# FXBG Palantir City Manager Configuration
@@ -197,6 +226,7 @@ WAQI_TOKEN=
     // Check if .env.example exists
     if (fs.existsSync(ENV_EXAMPLE_PATH)) {
       info(`You can also copy .env.example: cp .env.example .env`);
+      info(`Or install a global env: npm run install-env`);
     }
   }
 }
@@ -205,7 +235,8 @@ WAQI_TOKEN=
 function checkRequiredEnvVars() {
   header("Required Environment Variables");
 
-  const envVars = loadEnvFile();
+  const envSource = resolveEnvSource();
+  const envVars = loadEnvFile(envSource.path);
   const required = ["LOG_DIR"];
 
   for (const key of required) {
@@ -228,7 +259,8 @@ function checkRequiredEnvVars() {
 function checkOptionalEnvVars() {
   header("Optional Environment Variables");
 
-  const envVars = loadEnvFile();
+  const envSource = resolveEnvSource();
+  const envVars = loadEnvFile(envSource.path);
 
   // OpenUV: check primary key and alias
   const openuvValue = envVars.OPENUV_API_KEY || envVars.OPENUV_KEY || process.env.OPENUV_API_KEY || process.env.OPENUV_KEY || "";
@@ -261,7 +293,8 @@ function checkOptionalEnvVars() {
 function checkPort() {
   header("Server Port");
 
-  const envVars = loadEnvFile();
+  const envSource = resolveEnvSource();
+  const envVars = loadEnvFile(envSource.path);
   const port = parseInt(envVars.PORT || process.env.PORT || "8000", 10);
 
   info(`Server will run on port ${port}`);
