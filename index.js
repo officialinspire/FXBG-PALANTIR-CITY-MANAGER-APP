@@ -5967,12 +5967,23 @@ function selectItem(id) {
    * Data format: { schools: [{ ncesId, name, lat, lon, address, grades, ... }] }
    */
   function ingestSchoolsNces(data) {
-    const schools = data?.schools || [];
+    const schools = Array.isArray(data) ? data : (data?.schools || []);
     let added = 0;
 
+    if (CONFIG.debug?.schools) {
+      const examples = schools.slice(0, 2).map((school) => ({
+        name: school?.name,
+        ncesId: school?.ncesId,
+        lat: school?.lat ?? school?.latitude ?? school?.LAT,
+        lon: school?.lon ?? school?.longitude ?? school?.LON,
+        address: school?.address
+      }));
+      console.log("[SchoolsNCES] Sample records:", examples);
+    }
+
     for (const school of schools) {
-      const lat = Number(school.lat);
-      const lon = Number(school.lon);
+      const lat = Number(school.lat ?? school.latitude ?? school.LAT);
+      const lon = Number(school.lon ?? school.longitude ?? school.LON);
       if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
 
       const ncesId = school.ncesId || '';
