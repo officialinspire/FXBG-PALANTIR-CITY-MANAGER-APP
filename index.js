@@ -44,8 +44,9 @@
     // Region filter bbox (expanded to include all data source areas: FXBG, Stafford, Spotsy, Caroline, Warrenton, etc.)
     bbox: { minLat: 37.9, maxLat: 38.9, minLon: -78.0, maxLon: -77.0 },
 
-    // POI-specific bbox (tighter bounds for schools, hospitals, clinics to avoid scattered far-away POIs)
-    poiBbox: { minLat: 38.20, maxLat: 38.42, minLon: -77.62, maxLon: -77.34 },
+    // POI-specific bbox (bounds for schools, hospitals, clinics in FXBG metro area)
+    // Expanded to include full K-12 schools dataset: lat 38.1285–38.5312, lon -77.6215–-77.3425
+    poiBbox: { minLat: 38.12, maxLat: 38.54, minLon: -77.63, maxLon: -77.34 },
 
     // I‑95 corridor bbox near FXBG metro (for traffic indicator)
     i95Bbox: { minLat: 38.15, maxLat: 38.55, minLon: -77.70, maxLon: -77.20 },
@@ -1928,6 +1929,9 @@
   const $ = (id) => document.getElementById(id);
 
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+  // Schools debug mode: enabled via CONFIG.debug.schools or ?debugSchools URL parameter
+  const DEBUG_SCHOOLS = !!(CONFIG?.debug?.schools) || new URLSearchParams(location.search).has('debugSchools');
 
   function safeJsonParse(raw, fallback = null, context = "json") {
     if (raw === null || raw === undefined) return fallback;
@@ -5972,6 +5976,40 @@ function selectItem(id) {
   }
 
   /**
+   * Normalize school coordinates from various possible field names.
+   * Handles lat/lon, latitude/longitude, LAT/LON, y/x, and lng variants.
+   * Detects and corrects swapped coordinates (when lat looks like longitude and vice versa).
+   * Returns [lat, lng] for Leaflet or null if out of bounds.
+   */
+  function getSchoolLatLng(s) {
+    const lat = Number(s.lat ?? s.latitude ?? s.LAT ?? s.y);
+    const lon = Number(s.lon ?? s.lng ?? s.longitude ?? s.LON ?? s.x);
+
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+      return null;
+    }
+
+    // Detect swapped coords: if lat looks like a Virginia longitude (<0) and lon looks like latitude (>0)
+    let a = lat, b = lon;
+    if (a < 0 && b > 0) {
+      const tmp = a;
+      a = b;
+      b = tmp;
+      if (DEBUG_SCHOOLS) {
+        console.warn(`[Schools] Swapped coordinates detected for school: lat=${lat}, lon=${lon} -> corrected to [${a}, ${b}]`);
+      }
+    }
+
+    // Guardrail bounds for FXBG metro region (slightly expanded for safety)
+    const inBounds = (a >= 37.0 && a <= 39.5 && b >= -78.5 && b <= -76.0);
+    if (!inBounds) {
+      return null;
+    }
+
+    return [a, b]; // Leaflet expects [lat, lng]
+  }
+
+  /**
    * Ingest schools from NCES EDGE dataset (authoritative coordinates)
    * Data format: { schools: [{ ncesId, name, lat, lon, address, grades, ... }] }
    */
@@ -5979,26 +6017,36 @@ function selectItem(id) {
     const schools = Array.isArray(data) ? data : (data?.schools || []);
     let added = 0;
     let skippedInvalid = 0;
+    let skippedOutOfBounds = 0;
 
-    if (CONFIG.debug?.schools) {
-      const examples = schools.slice(0, 2).map((school) => ({
-        name: school?.name,
-        ncesId: school?.ncesId,
-        lat: school?.lat ?? school?.latitude ?? school?.LAT,
-        lon: school?.lon ?? school?.longitude ?? school?.LON,
-        address: school?.address
-      }));
-      console.log("[SchoolsNCES] Sample records:", examples);
+    // Debug: log first 5 schools with raw fields and computed coordinates
+    if (DEBUG_SCHOOLS) {
+      console.log("[Schools] DEBUG_SCHOOLS enabled - logging first 5 schools:");
+      schools.slice(0, 5).forEach((s, i) => {
+        const ll = getSchoolLatLng(s);
+        console.log(`[Schools] ${i + 1}. "${s.name}"`, {
+          raw: { lat: s.lat, lon: s.lon, latitude: s.latitude, longitude: s.longitude, lng: s.lng, x: s.x, y: s.y },
+          computed: ll ? `[${ll[0]}, ${ll[1]}]` : "null (out of bounds or invalid)"
+        });
+      });
     }
 
     for (const school of schools) {
-      const lat = Number(school.lat ?? school.latitude ?? school.LAT);
-      const lon = Number(school.lon ?? school.longitude ?? school.LON);
-      if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
-        skippedInvalid += 1;
+      // Use normalized helper for coordinate extraction
+      const ll = getSchoolLatLng(school);
+      if (!ll) {
+        // Determine if invalid coords or out of bounds for logging
+        const rawLat = Number(school.lat ?? school.latitude ?? school.LAT ?? school.y);
+        const rawLon = Number(school.lon ?? school.lng ?? school.longitude ?? school.LON ?? school.x);
+        if (!Number.isFinite(rawLat) || !Number.isFinite(rawLon)) {
+          skippedInvalid++;
+        } else {
+          skippedOutOfBounds++;
+        }
         continue;
       }
 
+      const [lat, lon] = ll;
       const ncesId = school.ncesId || '';
       const key = `school_nces::${ncesId || school.name}::${lat.toFixed(5)},${lon.toFixed(5)}`;
       if (store.seenKeys.has(key)) continue;
@@ -6057,15 +6105,20 @@ function selectItem(id) {
       added++;
     }
 
-    if (CONFIG.debug?.schools) {
-      console.log("[Schools diagnostics]", {
-        loadedCount: schools.length,
-        visibleMarkersAdded: added,
-        skippedInvalidCoords: skippedInvalid
+    // Always log summary (for console verification)
+    console.log(`[Schools] loaded=${schools.length} added=${added} skipped=${skippedInvalid + skippedOutOfBounds}`);
+
+    // Extended debug diagnostics
+    if (DEBUG_SCHOOLS) {
+      console.log("[Schools] Detailed diagnostics:", {
+        totalInFile: schools.length,
+        markersAdded: added,
+        skippedInvalidCoords: skippedInvalid,
+        skippedOutOfBounds: skippedOutOfBounds
       });
     }
 
-    return { added, total: schools.length };
+    return { added, total: schools.length, skippedInvalid, skippedOutOfBounds };
   }
 
   /**
@@ -6095,6 +6148,20 @@ function selectItem(id) {
       const result = ingestSchoolsNces(data);
       store.lastFetch.schoolsNces = now;
       console.log(`[SchoolsNCES] Loaded ${result.added} schools from NCES dataset (${result.total} total in file)`);
+
+      // Visual debug: draw bbox rectangle around schools region
+      if (DEBUG_SCHOOLS && typeof map !== 'undefined') {
+        const bbox = CONFIG.poiBbox;
+        const bounds = [[bbox.minLat, bbox.minLon], [bbox.maxLat, bbox.maxLon]];
+        L.rectangle(bounds, {
+          color: '#FFD700',
+          weight: 2,
+          fill: false,
+          dashArray: '8, 4',
+          opacity: 0.7
+        }).addTo(map).bindPopup('Schools POI Bounding Box (DEBUG)');
+        console.log('[Schools] Debug bbox rectangle added to map:', bounds);
+      }
     } catch (e) {
       console.warn("[SchoolsNCES] Failed to load:", e.message);
       // Not critical - app works without this data
