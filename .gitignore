@@ -1,8 +1,9 @@
 # Dependencies
 node_modules/
 
-# Runtime data
-data/
+# Runtime data (except .gitkeep)
+data/*
+!data/.gitkeep
 
 # Logs
 *.log
