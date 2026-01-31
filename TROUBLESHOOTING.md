@@ -10,13 +10,23 @@ This document describes known issues with external data sources and how to addre
 
 **Root Cause:** `.env` file or environment variables are missing required API keys.
 
-**Fix:**
-1. Create a `.env` file in the repo root (see `.env.example`)
-2. Add:
+**Fix (recommended - persistent across repo downloads):**
+1. Create a global env file once:
+   ```
+   npm run install-env
+   ```
+2. Edit `~/.config/fxbg-palantir/.env` and add:
    ```
    OPENUV_API_KEY=your-openuv-key
    WAQI_TOKEN=your-waqi-token
    ```
+3. Run `./scripts/up.sh` (it will copy your global env into the repo if `.env` is missing).
+
+**Fix (repo-local):**
+1. Create a `.env` file in the repo root (see `.env.example`)
+2. Add the API keys shown above.
+
+**Why this works:** The repo `.env` is gitignored (to keep secrets out of Git), while the global env file persists across repo downloads.
 
 **Note:** For local diagnostics-only sessions, you can bypass validation by setting `SKIP_CONFIG_VALIDATION=1` (not recommended for production).
 

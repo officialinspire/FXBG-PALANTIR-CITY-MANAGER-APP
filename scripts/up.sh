@@ -19,9 +19,13 @@ fi
 mkdir -p data
 
 # 3) Ensure .env exists (portable)
+GLOBAL_ENV="$HOME/.config/fxbg-palantir/.env"
 if [ ! -f .env ]; then
-  if [ -f .env.example ]; then
-    echo "[up] Creating .env from .env.example"
+  if [ -f "$GLOBAL_ENV" ]; then
+    echo "[up] Using GLOBAL env: $GLOBAL_ENV"
+    cp "$GLOBAL_ENV" .env
+  elif [ -f .env.example ]; then
+    echo "[up] Created repo .env from .env.example. Next: copy your real keys into $GLOBAL_ENV"
     cp .env.example .env
   else
     echo "[up] ERROR: .env missing and .env.example not found"
