@@ -4233,6 +4233,7 @@
     openUV: { value: null, status: "unknown", displayText: null, timestamp: null },
     weather: { baseText: "Weather: Loading…" },
     crime: null,  // Will be initialized with loadCrimeUI()
+    _crimeBootInitialized: false,  // Tracks if initial 30-day crime filter has been applied
     reports: {
       items: [],
       layer: null,
@@ -6920,21 +6921,45 @@ function selectItem(id) {
           meta: incident
         };
 
-        // Upsert to store
+        // Upsert to store (always store item so it's available when user expands window)
         store.itemsById.set(id, item);
         store.crime.ids.add(id);
 
-        // Attach marker if not exists
+        // At boot, only attach markers for items within the 30-day boot window
+        // After boot, applyCrimeOverlayVisibility() will handle marker creation
+        const isInBootWindow = isCrimeItemInWindow(item, CRIME_UI_DEFAULTS.windowDays);
+
+        // Attach marker only if:
+        // 1. No marker exists yet AND
+        // 2. Either boot is complete (user expanded window) OR item is in boot window
         if (!store.markersById.has(id)) {
-          attachMarker(item);
+          if (store._crimeBootInitialized || isInBootWindow) {
+            attachMarker(item);
+          }
         }
+      }
+
+      // Count items in boot window for logging
+      const bootWindowDays = CRIME_UI_DEFAULTS.windowDays;
+      let bootWindowCount = 0;
+      for (const id of store.crime.ids) {
+        const item = store.itemsById.get(id);
+        if (item && isCrimeItemInWindow(item, bootWindowDays)) {
+          bootWindowCount++;
+        }
+      }
+
+      // Mark boot as initialized after first successful poll
+      if (!store._crimeBootInitialized) {
+        store._crimeBootInitialized = true;
+        console.info(`[Crime Reports] Crime boot window: ${bootWindowDays} days — ${bootWindowCount} incidents visible`);
       }
 
       // Apply visibility based on current settings
       applyCrimeOverlayVisibility();
       updateCrimeIncidentsList();
 
-      console.log(`[Crime Reports] Total crime items in store: ${store.crime.ids.size}`);
+      console.log(`[Crime Reports] Total crime items in store: ${store.crime.ids.size} (${bootWindowCount} in ${bootWindowDays}-day window)`);
 
     } catch (err) {
       console.error("[Crime Reports] Poll error:", err);
