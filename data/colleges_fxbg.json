@@ -1,0 +1,18 @@
+[
+  {
+    "id": "umw",
+    "name": "University of Mary Washington",
+    "lat": 38.3013039,
+    "lng": -77.47447,
+    "city": "Fredericksburg",
+    "kind": "university"
+  },
+  {
+    "id": "germanna_fxbg",
+    "name": "Germanna Community College — Fredericksburg Area Campus",
+    "lat": 38.301222,
+    "lng": -77.5124009,
+    "city": "Fredericksburg",
+    "kind": "community_college"
+  }
+]

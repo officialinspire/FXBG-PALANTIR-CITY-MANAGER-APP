@@ -118,7 +118,8 @@
     debug: {
       rss: true,  // Enable RSS feed ingestion debug logging
       chips: true, // Enable chip update debug logging
-      poiCoords: false // Enable POI coordinate display in popups (for verification)
+      poiCoords: false, // Enable POI coordinate display in popups (for verification)
+      schools: false // Enable schools diagnostics logging
     },
 
     // FXBG PD Crime Reports configuration
@@ -1650,6 +1651,12 @@
       cacheTtlMs: 6 * 60 * 60 * 1000  // 6 hours
     },
 
+    colleges: {
+      enabled: true,
+      url: "/data/colleges_fxbg.json",
+      cacheTtlMs: 6 * 60 * 60 * 1000  // 6 hours
+    },
+
     // GIS Overlays (Fredericksburg OpenData + VDOT)
     gisOverlays: {
       enabled: true,
@@ -1776,6 +1783,7 @@
     hospital:                 { label: "Hospitals", emoji: "🏥" },
     clinic:                   { label: "Clinics", emoji: "⚕️" },
     school:                   { label: "Schools", emoji: "🏫" },
+    college:                  { label: "Colleges/Universities", emoji: "🎓" },
     // Legacy categories (for backwards compatibility with existing data sources)
     crime:                    { label: "Police / Crime", emoji: "🚨" },
     traffic:                  { label: "Traffic", emoji: "🚗" },
@@ -4284,7 +4292,7 @@
     markersById: new Map(),
     locks: { rss:false, nws:false, arcgis:false, virginiaCrashData:false, va511:false, openUV:false, cdc:false, air:false, crime:false },
     lastByCategory: new Map(),
-    lastFetch: { externalCameras: 0, schoolsNces: 0 },
+    lastFetch: { externalCameras: 0, schoolsNces: 0, colleges: 0 },
     gis: {
       enabled: new Set(),
       layers: new Map(),
@@ -4688,7 +4696,8 @@ function selectItem(id) {
       "hope-springs",
       "hospitals",
       "schools",
-      "clinics"
+      "clinics",
+      "colleges"
     ]);
     const cams = items.filter(i => stableSources.has(i.sourceId));
     const others = items.filter(i => !stableSources.has(i.sourceId));
@@ -5969,6 +5978,7 @@ function selectItem(id) {
   function ingestSchoolsNces(data) {
     const schools = Array.isArray(data) ? data : (data?.schools || []);
     let added = 0;
+    let skippedInvalid = 0;
 
     if (CONFIG.debug?.schools) {
       const examples = schools.slice(0, 2).map((school) => ({
@@ -5984,7 +5994,10 @@ function selectItem(id) {
     for (const school of schools) {
       const lat = Number(school.lat ?? school.latitude ?? school.LAT);
       const lon = Number(school.lon ?? school.longitude ?? school.LON);
-      if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
+      if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+        skippedInvalid += 1;
+        continue;
+      }
 
       const ncesId = school.ncesId || '';
       const key = `school_nces::${ncesId || school.name}::${lat.toFixed(5)},${lon.toFixed(5)}`;
@@ -6044,6 +6057,14 @@ function selectItem(id) {
       added++;
     }
 
+    if (CONFIG.debug?.schools) {
+      console.log("[Schools diagnostics]", {
+        loadedCount: schools.length,
+        visibleMarkersAdded: added,
+        skippedInvalidCoords: skippedInvalid
+      });
+    }
+
     return { added, total: schools.length };
   }
 
@@ -6077,6 +6098,99 @@ function selectItem(id) {
     } catch (e) {
       console.warn("[SchoolsNCES] Failed to load:", e.message);
       // Not critical - app works without this data
+    }
+  }
+
+  function ingestColleges(data) {
+    const colleges = Array.isArray(data) ? data : (data?.colleges || []);
+    let added = 0;
+
+    const defaultUrls = {
+      umw: "https://www.umw.edu/",
+      germanna_fxbg: "https://www.germanna.edu/"
+    };
+
+    for (const college of colleges) {
+      const lat = Number(college.lat ?? college.latitude ?? college.LAT);
+      const lon = Number(college.lng ?? college.lon ?? college.longitude ?? college.LON);
+      if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
+
+      const key = `college::${college.id || college.name}::${lat.toFixed(5)},${lon.toFixed(5)}`;
+      if (store.seenKeys.has(key)) continue;
+      store.seenKeys.add(key);
+
+      const summaryParts = [college.kind, college.city].filter(Boolean);
+      const summary = summaryParts.join(" | ") || "College/University";
+      const url = college.url || defaultUrls[college.id] || "https://www.umw.edu/";
+
+      let collegeDetails = `<div style="padding:12px;background:rgba(20,20,20,0.95);border-radius:8px;">
+          <h3 style="margin:0 0 12px 0;color:#FFD700;font-size:18px;font-weight:bold;text-shadow:1px 1px 2px rgba(0,0,0,0.8);">🎓 ${escapeHtml(college.name)}</h3>`;
+
+      if (college.kind) {
+        collegeDetails += `<p style="margin:0 0 8px 0;color:#7FFF00;font-size:13px;"><strong style="color:#00E5FF;">🏫 Type:</strong> ${escapeHtml(college.kind)}</p>`;
+      }
+
+      if (college.city) {
+        collegeDetails += `<p style="margin:0 0 8px 0;color:#FFFFFF;font-size:13px;"><strong style="color:#00E5FF;">📍 City:</strong> ${escapeHtml(college.city)}</p>`;
+      }
+
+      collegeDetails += `<a href="${escapeAttr(url)}" target="_blank" rel="noopener noreferrer" class="linkBtn" style="background:#FFD700;color:#000;font-weight:bold;padding:8px 16px;border-radius:6px;text-decoration:none;display:inline-block;">
+            Visit Website ↗
+          </a>
+        </div>`;
+
+      const item = {
+        id: key,
+        category: "college",
+        title: college.name,
+        summary,
+        sourceName: "Colleges/Universities",
+        sourceId: "colleges",
+        url,
+        timestamp: new Date().toISOString(),
+        lat,
+        lon,
+        emoji: "🎓",
+        tone: "good",
+        dedupeKey: key,
+        message: summary,
+        panelHtml: collegeDetails,
+        source: { id: "colleges", name: "Colleges/Universities", category: "college" },
+        meta: { isPoi: true, poiType: "college" }
+      };
+
+      store.itemsById.set(item.id, item);
+      added++;
+    }
+
+    return { added, total: colleges.length };
+  }
+
+  async function pollColleges() {
+    if (!CONFIG.colleges?.enabled) return;
+
+    const now = Date.now();
+    const ttl = CONFIG.colleges.cacheTtlMs || (6 * 60 * 60 * 1000);
+
+    if (store.lastFetch.colleges && (now - store.lastFetch.colleges) < ttl) {
+      return;
+    }
+
+    try {
+      const url = CONFIG.colleges.url;
+      console.log(`[Colleges] Fetching ${url}...`);
+
+      const response = await fetch(url);
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+
+      const data = await response.json();
+      const result = ingestColleges(data);
+      store.lastFetch.colleges = now;
+      console.log(`[Colleges] Loaded ${result.added} colleges/universities (${result.total} total in file)`);
+    } catch (e) {
+      console.warn("[Colleges] Failed to load:", e.message);
     }
   }
 
@@ -7680,6 +7794,7 @@ function selectItem(id) {
       CONFIG.air.enabled ? fetchAirQuality().catch(e => console.warn("Air quality refresh partial", e)) : Promise.resolve(),
       CONFIG.externalCameras.enabled ? pollExternalCameras().catch(e => console.warn("External cameras refresh partial", e)) : Promise.resolve(),
       CONFIG.schoolsNces?.enabled ? pollSchoolsNces().catch(e => console.warn("NCES Schools refresh partial", e)) : Promise.resolve(),
+      CONFIG.colleges?.enabled ? pollColleges().catch(e => console.warn("Colleges refresh partial", e)) : Promise.resolve(),
       CONFIG.fxbgCrimeReports.enabled ? pollFxbgCrimeReports().catch(e => console.warn("Crime Reports refresh partial", e)) : Promise.resolve()
     ]);
 
