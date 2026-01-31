@@ -3306,9 +3306,9 @@
     minZoom: 7
   }).setView([CONFIG.center.lat, CONFIG.center.lon], CONFIG.zoom);
 
-  // CARTO Dark Matter tiles (primary) - more detail + no "Map data not available" at high zoom
+  // CARTO Dark Matter tiles (primary) - modern CDN endpoint with retina support
   const cartoLayer = L.tileLayer(
-    "https://cartodb-basemaps-{s}.global.ssl.fastly.net/dark_all/{z}/{x}/{y}.png",
+    "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",
     {
       maxZoom: 20,
       subdomains: ['a', 'b', 'c', 'd'],
@@ -3338,6 +3338,15 @@
     }
   );
 
+  // OSM Standard tiles (for comparison/debugging)
+  const osmLayer = L.tileLayer(
+    "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
+    {
+      maxZoom: 20,
+      attribution: '© OpenStreetMap contributors'
+    }
+  );
+
   // Try CARTO first, fallback to ESRI on error
   cartoLayer.on('tileerror', function() {
     if (!map.hasLayer(esriBaseLayer)) {
@@ -3349,6 +3358,25 @@
   });
 
   cartoLayer.addTo(map);
+
+  // Basemap layer control for easy switching
+  const baseLayers = {
+    "Dark (CARTO)": cartoLayer,
+    "Dark (Esri)": esriBaseLayer,
+    "Standard (OSM)": osmLayer
+  };
+  L.control.layers(baseLayers, null, { position: "topright", collapsed: true }).addTo(map);
+
+  // Reference marker at downtown Fredericksburg for basemap alignment sanity check
+  const refIcon = L.divIcon({
+    className: "refMarker",
+    html: `<div style="font-size:18px;filter:drop-shadow(0 2px 4px rgba(0,0,0,.7));">🎯</div>`,
+    iconSize: [24, 24],
+    iconAnchor: [12, 12]
+  });
+  L.marker([38.3032, -77.4605], { icon: refIcon, interactive: true })
+    .addTo(map)
+    .bindPopup("Reference: Downtown Fredericksburg (sanity check)");
 
   L.control.zoom({ position: "bottomright" }).addTo(map);
 
