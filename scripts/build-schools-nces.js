@@ -9,11 +9,15 @@
  *
  * Usage: npm run build:schools
  *        node scripts/build-schools-nces.js
+ *        node scripts/build-schools-nces.js --force  # force rebuild even if recent
  */
 
 const https = require('https');
 const fs = require('fs');
 const path = require('path');
+
+// Configuration
+const CACHE_MAX_AGE_HOURS = 24; // Skip rebuild if file is newer than this
 
 // NCES EDGE ArcGIS FeatureServer for Public School Locations (2023-24 data)
 // See: https://nces.ed.gov/programs/edge/geographic/schoollocations
@@ -195,9 +199,55 @@ function transformSchool(feature) {
 }
 
 /**
+ * Check if output file is recent enough to skip rebuild
+ */
+function shouldSkipRebuild(forceFlag) {
+  if (forceFlag) {
+    console.log('[schools] --force flag set; rebuilding regardless of age');
+    return false;
+  }
+
+  if (!fs.existsSync(OUTPUT_PATH)) {
+    console.log('[schools] No existing file; will build');
+    return false;
+  }
+
+  try {
+    const stats = fs.statSync(OUTPUT_PATH);
+    const ageMs = Date.now() - stats.mtimeMs;
+    const ageHours = ageMs / (1000 * 60 * 60);
+
+    if (ageHours < CACHE_MAX_AGE_HOURS) {
+      const ageStr = ageHours < 1
+        ? `${Math.round(ageHours * 60)} minutes`
+        : `${ageHours.toFixed(1)} hours`;
+      console.log(`[schools] up-to-date (${ageStr} old, max ${CACHE_MAX_AGE_HOURS}h); skipping rebuild`);
+      console.log(`[schools] File: ${OUTPUT_PATH}`);
+      console.log(`[schools] Size: ${(stats.size / 1024).toFixed(1)} KB`);
+      console.log(`[schools] Modified: ${stats.mtime.toISOString()}`);
+      return true;
+    }
+
+    console.log(`[schools] File is ${ageHours.toFixed(1)} hours old (max ${CACHE_MAX_AGE_HOURS}h); will rebuild`);
+    return false;
+  } catch (err) {
+    console.log(`[schools] Error checking file: ${err.message}; will rebuild`);
+    return false;
+  }
+}
+
+/**
  * Main function
  */
 async function main() {
+  // Check for --force flag
+  const forceFlag = process.argv.includes('--force');
+
+  // Skip rebuild if file is recent (unless --force)
+  if (shouldSkipRebuild(forceFlag)) {
+    process.exit(0);
+  }
+
   console.log('[NCES] Starting NCES Public School Locations fetch...');
   console.log(`[NCES] Target localities: ${TARGET_LOCALITIES.join(', ')}`);
 

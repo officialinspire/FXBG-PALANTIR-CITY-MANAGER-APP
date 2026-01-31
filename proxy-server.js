@@ -415,15 +415,36 @@ try {
   console.warn("[Crime Reports] pdf-parse not installed. Run 'npm install' to enable PDF parsing.");
 }
 
-const OPENUV_API_KEY = process.env.OPENUV_API_KEY || "";
-const WAQI_TOKEN = process.env.WAQI_TOKEN || "";
+// Support environment aliases for API keys
+const OPENUV_API_KEY = process.env.OPENUV_API_KEY || process.env.OPENUV_KEY || "";
+const WAQI_TOKEN = process.env.WAQI_TOKEN || process.env.WAQI_API_KEY || process.env.AQICN_TOKEN || "";
+
+// Boot log: .env provenance (safe - no secrets)
+(function logEnvProvenance() {
+  if (fs.existsSync(ENV_PATH)) {
+    try {
+      const stats = fs.statSync(ENV_PATH);
+      const crypto = require("crypto");
+      const content = fs.readFileSync(ENV_PATH);
+      const sha256 = crypto.createHash("sha256").update(content).digest("hex").slice(0, 8);
+      console.log(`[env] .env=${ENV_PATH} mtime=${stats.mtime.toISOString()} size=${stats.size} sha256=${sha256}...`);
+    } catch (e) {
+      console.log(`[env] .env=${ENV_PATH} (could not stat: ${e.message})`);
+    }
+  } else {
+    console.log("[env] .env not found");
+  }
+  // Log key lengths only (no secrets)
+  console.log(`[env] OPENUV_API_KEY: ${OPENUV_API_KEY ? `present (${OPENUV_API_KEY.length} chars)` : "missing"}`);
+  console.log(`[env] WAQI_TOKEN: ${WAQI_TOKEN ? `present (${WAQI_TOKEN.length} chars)` : "missing"}`);
+})();
 
 // Warn about optional API keys at startup
 if (!OPENUV_API_KEY) {
-  console.warn("[config] OPENUV_API_KEY not set; OpenUV endpoints disabled.");
+  console.warn("[config] OPENUV_API_KEY (or OPENUV_KEY) not set; OpenUV endpoints disabled.");
 }
 if (!WAQI_TOKEN) {
-  console.warn("[config] WAQI_TOKEN not set; WAQI endpoints disabled.");
+  console.warn("[config] WAQI_TOKEN (or WAQI_API_KEY/AQICN_TOKEN) not set; WAQI endpoints disabled.");
 }
 
 const HOST = process.env.BIND || "0.0.0.0";
@@ -2984,7 +3005,11 @@ const server = http.createServer(async (req, res) => {
       }
 
       if (!OPENUV_API_KEY) {
-        return send(res, 503, JSON.stringify({ ok: false, disabled: true, reason: "OPENUV_API_KEY missing" }), { "Content-Type": "application/json" });
+        return send(res, 503, JSON.stringify({
+          ok: false,
+          error: "missing_env",
+          message: "Missing OPENUV_API_KEY (or OPENUV_KEY) in .env"
+        }), { "Content-Type": "application/json" });
       }
 
       const targetUrl = `https://api.openuv.io/api/v1/uv?lat=${lat}&lng=${lon}`;
@@ -3005,7 +3030,11 @@ const server = http.createServer(async (req, res) => {
       }
 
       if (!WAQI_TOKEN) {
-        return send(res, 503, JSON.stringify({ ok: false, disabled: true, reason: "WAQI_TOKEN missing" }), { "Content-Type": "application/json" });
+        return send(res, 503, JSON.stringify({
+          ok: false,
+          error: "missing_env",
+          message: "Missing WAQI_TOKEN (or WAQI_API_KEY/AQICN_TOKEN) in .env"
+        }), { "Content-Type": "application/json" });
       }
 
       const targetUrl = `https://api.waqi.info/feed/geo:${lat};${lon}/?token=${WAQI_TOKEN}`;
