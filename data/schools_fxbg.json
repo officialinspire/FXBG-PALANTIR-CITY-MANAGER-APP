@@ -1,0 +1,562 @@
+[
+  {
+    "id": "510057000063",
+    "name": "Hugh Mercer Elementary School",
+    "county": "Fredericksburg city",
+    "state": "VA",
+    "lat": 38.3014,
+    "lon": -77.4598,
+    "address": "2100 Cowan Blvd, Fredericksburg, VA 22401",
+    "grades": "PK-5"
+  },
+  {
+    "id": "510057000064",
+    "name": "Lafayette Upper Elementary School",
+    "county": "Fredericksburg city",
+    "state": "VA",
+    "lat": 38.3042,
+    "lon": -77.4796,
+    "address": "205 Bridgewater St, Fredericksburg, VA 22401",
+    "grades": "3-5"
+  },
+  {
+    "id": "510057000065",
+    "name": "Walker-Grant Middle School",
+    "county": "Fredericksburg city",
+    "state": "VA",
+    "lat": 38.2921,
+    "lon": -77.4705,
+    "address": "500 Kenmore Ave, Fredericksburg, VA 22401",
+    "grades": "6-8"
+  },
+  {
+    "id": "510057000066",
+    "name": "James Monroe High School",
+    "county": "Fredericksburg city",
+    "state": "VA",
+    "lat": 38.2885,
+    "lon": -77.4627,
+    "address": "2300 Washington Ave, Fredericksburg, VA 22401",
+    "grades": "9-12"
+  },
+  {
+    "id": "510179000101",
+    "name": "A. G. Wright Middle School",
+    "county": "Stafford County",
+    "state": "VA",
+    "lat": 38.4298,
+    "lon": -77.4108,
+    "address": "7 Sentinel Rd, Stafford, VA 22554",
+    "grades": "6-8"
+  },
+  {
+    "id": "510179000102",
+    "name": "Colonial Forge High School",
+    "county": "Stafford County",
+    "state": "VA",
+    "lat": 38.4122,
+    "lon": -77.4856,
+    "address": "550 Courthouse Rd, Stafford, VA 22554",
+    "grades": "9-12"
+  },
+  {
+    "id": "510179000103",
+    "name": "Brooke Point High School",
+    "county": "Stafford County",
+    "state": "VA",
+    "lat": 38.3688,
+    "lon": -77.4096,
+    "address": "1700 Courthouse Rd, Stafford, VA 22554",
+    "grades": "9-12"
+  },
+  {
+    "id": "510179000104",
+    "name": "Mountain View High School",
+    "county": "Stafford County",
+    "state": "VA",
+    "lat": 38.5115,
+    "lon": -77.4471,
+    "address": "69 Hornet Rd, Stafford, VA 22556",
+    "grades": "9-12"
+  },
+  {
+    "id": "510179000105",
+    "name": "North Stafford High School",
+    "county": "Stafford County",
+    "state": "VA",
+    "lat": 38.5234,
+    "lon": -77.3896,
+    "address": "839 Garrisonville Rd, Stafford, VA 22556",
+    "grades": "9-12"
+  },
+  {
+    "id": "510179000106",
+    "name": "Stafford High School",
+    "county": "Stafford County",
+    "state": "VA",
+    "lat": 38.4288,
+    "lon": -77.4512,
+    "address": "33 Stafford Indians Ln, Fredericksburg, VA 22405",
+    "grades": "9-12"
+  },
+  {
+    "id": "510179000107",
+    "name": "Dixon-Smith Middle School",
+    "county": "Stafford County",
+    "state": "VA",
+    "lat": 38.4065,
+    "lon": -77.4871,
+    "address": "1331 Courthouse Rd, Stafford, VA 22554",
+    "grades": "6-8"
+  },
+  {
+    "id": "510179000108",
+    "name": "Drew Middle School",
+    "county": "Stafford County",
+    "state": "VA",
+    "lat": 38.5147,
+    "lon": -77.4398,
+    "address": "75 Hornet Rd, Stafford, VA 22556",
+    "grades": "6-8"
+  },
+  {
+    "id": "510179000109",
+    "name": "Gayle Middle School",
+    "county": "Stafford County",
+    "state": "VA",
+    "lat": 38.5312,
+    "lon": -77.3825,
+    "address": "845 Garrisonville Rd, Stafford, VA 22556",
+    "grades": "6-8"
+  },
+  {
+    "id": "510179000110",
+    "name": "Rodney E. Thompson Middle School",
+    "county": "Stafford County",
+    "state": "VA",
+    "lat": 38.3652,
+    "lon": -77.4085,
+    "address": "1555 Courthouse Rd, Stafford, VA 22554",
+    "grades": "6-8"
+  },
+  {
+    "id": "510179000111",
+    "name": "Stafford Middle School",
+    "county": "Stafford County",
+    "state": "VA",
+    "lat": 38.4315,
+    "lon": -77.4545,
+    "address": "50 Stafford Indians Ln, Fredericksburg, VA 22405",
+    "grades": "6-8"
+  },
+  {
+    "id": "510179000112",
+    "name": "H. H. Poole Middle School",
+    "county": "Stafford County",
+    "state": "VA",
+    "lat": 38.4682,
+    "lon": -77.4512,
+    "address": "800 Parkway Blvd, Stafford, VA 22554",
+    "grades": "6-8"
+  },
+  {
+    "id": "510179000201",
+    "name": "Anthony Burns Elementary School",
+    "county": "Stafford County",
+    "state": "VA",
+    "lat": 38.4042,
+    "lon": -77.4756,
+    "address": "1220 Courthouse Rd, Stafford, VA 22554",
+    "grades": "K-5"
+  },
+  {
+    "id": "510179000202",
+    "name": "Falmouth Elementary School",
+    "county": "Stafford County",
+    "state": "VA",
+    "lat": 38.3295,
+    "lon": -77.4542,
+    "address": "1000 Forbes St, Fredericksburg, VA 22405",
+    "grades": "K-5"
+  },
+  {
+    "id": "510179000203",
+    "name": "Ferry Farm Elementary School",
+    "county": "Stafford County",
+    "state": "VA",
+    "lat": 38.3188,
+    "lon": -77.4458,
+    "address": "121 Ferry Rd, Fredericksburg, VA 22405",
+    "grades": "K-5"
+  },
+  {
+    "id": "510179000204",
+    "name": "Grafton Village Elementary School",
+    "county": "Stafford County",
+    "state": "VA",
+    "lat": 38.4125,
+    "lon": -77.4298,
+    "address": "52 Grafton Village Ct, Fredericksburg, VA 22405",
+    "grades": "K-5"
+  },
+  {
+    "id": "510179000205",
+    "name": "Hartwood Elementary School",
+    "county": "Stafford County",
+    "state": "VA",
+    "lat": 38.4685,
+    "lon": -77.5582,
+    "address": "22 Hartwood Church Rd, Fredericksburg, VA 22406",
+    "grades": "K-5"
+  },
+  {
+    "id": "510179000206",
+    "name": "Moncure Elementary School",
+    "county": "Stafford County",
+    "state": "VA",
+    "lat": 38.5042,
+    "lon": -77.4325,
+    "address": "2 Moncure Dr, Stafford, VA 22556",
+    "grades": "K-5"
+  },
+  {
+    "id": "510179000207",
+    "name": "Rockhill Elementary School",
+    "county": "Stafford County",
+    "state": "VA",
+    "lat": 38.4352,
+    "lon": -77.4215,
+    "address": "28 Rockhill Dr, Fredericksburg, VA 22405",
+    "grades": "K-5"
+  },
+  {
+    "id": "510179000208",
+    "name": "Stafford Elementary School",
+    "county": "Stafford County",
+    "state": "VA",
+    "lat": 38.4418,
+    "lon": -77.4428,
+    "address": "1 Falcon Dr, Stafford, VA 22554",
+    "grades": "K-5"
+  },
+  {
+    "id": "510179000209",
+    "name": "Park Ridge Elementary School",
+    "county": "Stafford County",
+    "state": "VA",
+    "lat": 38.5285,
+    "lon": -77.3752,
+    "address": "920 Garrisonville Rd, Stafford, VA 22556",
+    "grades": "K-5"
+  },
+  {
+    "id": "510179000210",
+    "name": "Conway Elementary School",
+    "county": "Stafford County",
+    "state": "VA",
+    "lat": 38.4912,
+    "lon": -77.4285,
+    "address": "104 Conway Dr, Stafford, VA 22556",
+    "grades": "K-5"
+  },
+  {
+    "id": "510179000211",
+    "name": "Winding Creek Elementary School",
+    "county": "Stafford County",
+    "state": "VA",
+    "lat": 38.4665,
+    "lon": -77.4698,
+    "address": "11 Winding Creek Rd, Stafford, VA 22554",
+    "grades": "K-5"
+  },
+  {
+    "id": "510179000212",
+    "name": "Rocky Run Elementary School",
+    "county": "Stafford County",
+    "state": "VA",
+    "lat": 38.5108,
+    "lon": -77.4652,
+    "address": "80 Rocky Run Rd, Stafford, VA 22556",
+    "grades": "K-5"
+  },
+  {
+    "id": "510179000213",
+    "name": "Margaret Brent Elementary School",
+    "county": "Stafford County",
+    "state": "VA",
+    "lat": 38.3658,
+    "lon": -77.4195,
+    "address": "60 Brent Point Rd, Stafford, VA 22554",
+    "grades": "K-5"
+  },
+  {
+    "id": "510179000214",
+    "name": "Garrisonville Elementary School",
+    "county": "Stafford County",
+    "state": "VA",
+    "lat": 38.5042,
+    "lon": -77.3965,
+    "address": "1190 Garrisonville Rd, Stafford, VA 22556",
+    "grades": "K-5"
+  },
+  {
+    "id": "510177000301",
+    "name": "Battlefield Elementary School",
+    "county": "Spotsylvania County",
+    "state": "VA",
+    "lat": 38.2942,
+    "lon": -77.5215,
+    "address": "5311 Plank Rd, Fredericksburg, VA 22407",
+    "grades": "K-5"
+  },
+  {
+    "id": "510177000302",
+    "name": "Brock Road Elementary School",
+    "county": "Spotsylvania County",
+    "state": "VA",
+    "lat": 38.2658,
+    "lon": -77.5865,
+    "address": "9001 Brock Rd, Spotsylvania, VA 22553",
+    "grades": "K-5"
+  },
+  {
+    "id": "510177000303",
+    "name": "Chancellor Elementary School",
+    "county": "Spotsylvania County",
+    "state": "VA",
+    "lat": 38.2912,
+    "lon": -77.5685,
+    "address": "6320 Plank Rd, Fredericksburg, VA 22407",
+    "grades": "K-5"
+  },
+  {
+    "id": "510177000304",
+    "name": "Courtland Elementary School",
+    "county": "Spotsylvania County",
+    "state": "VA",
+    "lat": 38.2315,
+    "lon": -77.5428,
+    "address": "5920 Courtland Ln, Spotsylvania, VA 22553",
+    "grades": "K-5"
+  },
+  {
+    "id": "510177000305",
+    "name": "Courthouse Road Elementary School",
+    "county": "Spotsylvania County",
+    "state": "VA",
+    "lat": 38.1965,
+    "lon": -77.5815,
+    "address": "8001 Courthouse Rd, Spotsylvania, VA 22551",
+    "grades": "K-5"
+  },
+  {
+    "id": "510177000306",
+    "name": "Harrison Road Elementary School",
+    "county": "Spotsylvania County",
+    "state": "VA",
+    "lat": 38.2485,
+    "lon": -77.4912,
+    "address": "4311 Harrison Rd, Fredericksburg, VA 22408",
+    "grades": "K-5"
+  },
+  {
+    "id": "510177000307",
+    "name": "Lee Hill Elementary School",
+    "county": "Spotsylvania County",
+    "state": "VA",
+    "lat": 38.2715,
+    "lon": -77.5125,
+    "address": "6001 Lee Hill School Dr, Spotsylvania, VA 22553",
+    "grades": "K-5"
+  },
+  {
+    "id": "510177000308",
+    "name": "Livingston Elementary School",
+    "county": "Spotsylvania County",
+    "state": "VA",
+    "lat": 38.2042,
+    "lon": -77.5685,
+    "address": "6815 Courthouse Rd, Spotsylvania, VA 22551",
+    "grades": "K-5"
+  },
+  {
+    "id": "510177000309",
+    "name": "Parkside Elementary School",
+    "county": "Spotsylvania County",
+    "state": "VA",
+    "lat": 38.2885,
+    "lon": -77.5342,
+    "address": "10920 Tidewater Trail, Fredericksburg, VA 22408",
+    "grades": "K-5"
+  },
+  {
+    "id": "510177000310",
+    "name": "Riverview Elementary School",
+    "county": "Spotsylvania County",
+    "state": "VA",
+    "lat": 38.2562,
+    "lon": -77.4685,
+    "address": "700 Riverview Dr, Fredericksburg, VA 22408",
+    "grades": "K-5"
+  },
+  {
+    "id": "510177000311",
+    "name": "Salem Elementary School",
+    "county": "Spotsylvania County",
+    "state": "VA",
+    "lat": 38.2185,
+    "lon": -77.5215,
+    "address": "5700 Plank Rd, Fredericksburg, VA 22407",
+    "grades": "K-5"
+  },
+  {
+    "id": "510177000312",
+    "name": "Wilderness Elementary School",
+    "county": "Spotsylvania County",
+    "state": "VA",
+    "lat": 38.3215,
+    "lon": -77.6215,
+    "address": "11511 Catharpin Rd, Spotsylvania, VA 22553",
+    "grades": "K-5"
+  },
+  {
+    "id": "510177000313",
+    "name": "Ni River Middle School",
+    "county": "Spotsylvania County",
+    "state": "VA",
+    "lat": 38.1942,
+    "lon": -77.5685,
+    "address": "12600 Catharpin Rd, Spotsylvania, VA 22551",
+    "grades": "6-8"
+  },
+  {
+    "id": "510177000314",
+    "name": "Post Oak Middle School",
+    "county": "Spotsylvania County",
+    "state": "VA",
+    "lat": 38.2765,
+    "lon": -77.5425,
+    "address": "5915 Courthouse Rd, Spotsylvania, VA 22553",
+    "grades": "6-8"
+  },
+  {
+    "id": "510177000315",
+    "name": "Spotsylvania Middle School",
+    "county": "Spotsylvania County",
+    "state": "VA",
+    "lat": 38.2042,
+    "lon": -77.5285,
+    "address": "8301 Courthouse Rd, Spotsylvania, VA 22551",
+    "grades": "6-8"
+  },
+  {
+    "id": "510177000316",
+    "name": "Thornburg Middle School",
+    "county": "Spotsylvania County",
+    "state": "VA",
+    "lat": 38.1285,
+    "lon": -77.5015,
+    "address": "6011 Courthouse Rd, Spotsylvania, VA 22551",
+    "grades": "6-8"
+  },
+  {
+    "id": "510177000317",
+    "name": "Chancellor High School",
+    "county": "Spotsylvania County",
+    "state": "VA",
+    "lat": 38.2915,
+    "lon": -77.5815,
+    "address": "6300 Harrison Rd, Fredericksburg, VA 22407",
+    "grades": "9-12"
+  },
+  {
+    "id": "510177000318",
+    "name": "Courtland High School",
+    "county": "Spotsylvania County",
+    "state": "VA",
+    "lat": 38.2315,
+    "lon": -77.5342,
+    "address": "6001 Courthouse Rd, Spotsylvania, VA 22553",
+    "grades": "9-12"
+  },
+  {
+    "id": "510177000319",
+    "name": "Massaponax High School",
+    "county": "Spotsylvania County",
+    "state": "VA",
+    "lat": 38.1765,
+    "lon": -77.4985,
+    "address": "8201 Jefferson Davis Hwy, Fredericksburg, VA 22407",
+    "grades": "9-12"
+  },
+  {
+    "id": "510177000320",
+    "name": "Riverbend High School",
+    "county": "Spotsylvania County",
+    "state": "VA",
+    "lat": 38.2588,
+    "lon": -77.4715,
+    "address": "12301 Spotswood Furnace Rd, Fredericksburg, VA 22408",
+    "grades": "9-12"
+  },
+  {
+    "id": "510177000321",
+    "name": "Spotsylvania High School",
+    "county": "Spotsylvania County",
+    "state": "VA",
+    "lat": 38.1985,
+    "lon": -77.5442,
+    "address": "8619 Courthouse Rd, Spotsylvania, VA 22553",
+    "grades": "9-12"
+  },
+  {
+    "id": "510177000322",
+    "name": "Smith Station Elementary School",
+    "county": "Spotsylvania County",
+    "state": "VA",
+    "lat": 38.2395,
+    "lon": -77.5685,
+    "address": "2701 Smith Station Rd, Spotsylvania, VA 22553",
+    "grades": "K-5"
+  },
+  {
+    "id": "510177000323",
+    "name": "Battlefield Middle School",
+    "county": "Spotsylvania County",
+    "state": "VA",
+    "lat": 38.2985,
+    "lon": -77.5315,
+    "address": "8200 Brock Rd, Spotsylvania, VA 22553",
+    "grades": "6-8"
+  },
+  {
+    "id": "510179000215",
+    "name": "Kate Waller Barrett Elementary School",
+    "county": "Stafford County",
+    "state": "VA",
+    "lat": 38.4818,
+    "lon": -77.4085,
+    "address": "1120 Rocky Run Rd, Stafford, VA 22556",
+    "grades": "K-5"
+  },
+  {
+    "id": "510179000216",
+    "name": "Widewater Elementary School",
+    "county": "Stafford County",
+    "state": "VA",
+    "lat": 38.4512,
+    "lon": -77.3425,
+    "address": "261 Widewater Rd, Stafford, VA 22554",
+    "grades": "K-5"
+  },
+  {
+    "id": "510057000067",
+    "name": "Hugh Mercer STEM Center",
+    "county": "Fredericksburg city",
+    "state": "VA",
+    "lat": 38.3025,
+    "lon": -77.4612,
+    "address": "2100 Cowan Blvd, Fredericksburg, VA 22401",
+    "grades": "K-5"
+  }
+]

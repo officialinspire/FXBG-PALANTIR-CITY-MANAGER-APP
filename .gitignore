@@ -1,10 +1,11 @@
 # Dependencies
 node_modules/
 
-# Runtime data (except .gitkeep)
+# Runtime data (except .gitkeep and committed data files)
 data/*
 !data/.gitkeep
 !data/colleges_fxbg.json
+!data/schools_fxbg.json
 
 # Logs
 *.log
