@@ -2930,3 +2930,6 @@ html, body{
     font-size: 10px;
   }
 }
+
+/* Reference marker for basemap alignment sanity check */
+.refMarker { background: transparent; border: none; }
