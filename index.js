@@ -118,6 +118,7 @@
     // Debug flags
     debug: {
       rss: true,  // Enable RSS feed ingestion debug logging
+      rssGeo: false, // Enable location extraction pipeline debug logging (shows candidate scoring)
       chips: true, // Enable chip update debug logging
       poiCoords: false, // Enable POI coordinate display in popups (for verification)
       schools: false // Enable schools diagnostics logging
@@ -3282,6 +3283,573 @@
 
 
   // -----------------------------
+  // Location Extraction Pipeline (Module 1 v2)
+  // Robust location candidate extraction, scoring, and geocoding
+  // -----------------------------
+
+  /**
+   * Clean text for location extraction: strip HTML, collapse whitespace, decode entities
+   */
+  function cleanTextForExtraction(text) {
+    if (!text) return '';
+    let clean = stripHtml(text);
+    // Decode common HTML entities
+    clean = clean.replace(/&amp;/g, '&')
+                 .replace(/&lt;/g, '<')
+                 .replace(/&gt;/g, '>')
+                 .replace(/&quot;/g, '"')
+                 .replace(/&#39;/g, "'")
+                 .replace(/&nbsp;/g, ' ');
+    // Collapse whitespace
+    clean = clean.replace(/\s+/g, ' ').trim();
+    return clean;
+  }
+
+  /**
+   * Normalize a phrase for deduplication (lowercase, collapse whitespace, strip punctuation at ends)
+   */
+  function normalizeLocationPhrase(phrase) {
+    if (!phrase) return '';
+    return phrase.toLowerCase()
+                 .replace(/\s+/g, ' ')
+                 .replace(/^[,.\s]+|[,.\s]+$/g, '')
+                 .trim();
+  }
+
+  /**
+   * Street type abbreviations and their full forms for pattern matching
+   */
+  const STREET_TYPES = [
+    'Street', 'St', 'Avenue', 'Ave', 'Road', 'Rd', 'Boulevard', 'Blvd',
+    'Drive', 'Dr', 'Lane', 'Ln', 'Court', 'Ct', 'Circle', 'Cir',
+    'Place', 'Pl', 'Parkway', 'Pkwy', 'Way', 'Highway', 'Hwy',
+    'Route', 'Rt', 'Trail', 'Trl', 'Terrace', 'Ter', 'Path'
+  ];
+  const STREET_TYPE_PATTERN = STREET_TYPES.join('|');
+
+  /**
+   * Place/landmark suffixes for named place extraction
+   */
+  const PLACE_SUFFIXES = [
+    'Apartments', 'Apartment', 'Complex', 'Plaza', 'Mall', 'Center', 'Centre',
+    'Park', 'Hospital', 'Medical Center', 'School', 'High School', 'Elementary',
+    'Middle School', 'Academy', 'University', 'College', 'Church', 'Library',
+    'Station', 'Bridge', 'Trail', 'Commons', 'Village', 'Square', 'Tower',
+    'Towers', 'Gardens', 'Estate', 'Estates', 'Manor', 'Crossing', 'Point',
+    'Landing', 'Inn', 'Hotel', 'Motel', 'Resort', 'Lodge'
+  ];
+  const PLACE_SUFFIX_PATTERN = PLACE_SUFFIXES.join('|');
+
+  /**
+   * Local area towns and localities for the Fredericksburg region
+   */
+  const LOCAL_TOWNS = [
+    'Fredericksburg', 'Spotsylvania', 'Stafford', 'Falmouth', 'Massaponax',
+    'Chancellor', 'Four Mile Fork', 'Thornburg', 'Lake Anna', 'Locust Grove',
+    'Orange', 'Culpeper', 'King George', 'Caroline', 'Dahlgren', 'Colonial Beach',
+    'Woodbridge', 'Dumfries', 'Quantico', 'Triangle', 'Aquia', 'Garrisonville',
+    'Hartwood', 'Brokenburg', 'Salem Church', 'Ladysmith', 'Milford', 'Bowling Green'
+  ];
+
+  /**
+   * Places gazetteer for known locations with exact coordinates
+   * Can be extended at runtime via store.placesGazetteer
+   */
+  const BUILTIN_PLACES_GAZETTEER = [
+    // Government & Civic
+    { name: 'City Hall', aliases: ['fredericksburg city hall', 'city hall'], lat: 38.3032, lon: -77.4605 },
+    { name: 'Police Headquarters', aliases: ['police station', 'police hq', 'police headquarters', 'fxbg police'], lat: 38.3032, lon: -77.4605 },
+    { name: 'Circuit Courthouse', aliases: ['courthouse', 'circuit court', 'general district court'], lat: 38.3015, lon: -77.4596 },
+    // Medical
+    { name: 'Mary Washington Hospital', aliases: ['mary washington hospital', 'mwh', 'mw hospital'], lat: 38.3195, lon: -77.4844 },
+    { name: 'Spotsylvania Regional Medical Center', aliases: ['spotsylvania regional', 'srmc', 'regional medical center'], lat: 38.2139, lon: -77.5171 },
+    { name: 'Stafford Hospital', aliases: ['stafford hospital'], lat: 38.4531, lon: -77.4242 },
+    // Education
+    { name: 'University of Mary Washington', aliases: ['university of mary washington', 'umw', 'mary washington university'], lat: 38.2995, lon: -77.4785 },
+    { name: 'Germanna Community College', aliases: ['germanna community college', 'germanna', 'gcc'], lat: 38.2583, lon: -77.5068 },
+    // Parks & Recreation
+    { name: 'Riverfront Park', aliases: ['riverfront park', 'city dock'], lat: 38.2985, lon: -77.4689 },
+    { name: 'Old Mill Park', aliases: ['old mill park'], lat: 38.2933, lon: -77.4678 },
+    { name: 'Alum Spring Park', aliases: ['alum spring park', 'alum springs'], lat: 38.2889, lon: -77.4561 },
+    { name: 'Motts Run Reservoir', aliases: ['motts run reservoir', 'motts run'], lat: 38.3156, lon: -77.5333 },
+    // Shopping & Commercial
+    { name: 'Central Park', aliases: ['central park shopping', 'central park fredericksburg'], lat: 38.2578, lon: -77.5081 },
+    { name: 'Spotsylvania Towne Centre', aliases: ['spotsylvania towne centre', 'towne centre', 'spotsylvania mall'], lat: 38.1932, lon: -77.5867 },
+    { name: 'Celebrate Virginia', aliases: ['celebrate virginia', 'celebrate va'], lat: 38.2711, lon: -77.4622 },
+    // Transit
+    { name: 'FRED Transit Center', aliases: ['fred transit', 'transit center', 'bus station'], lat: 38.3032, lon: -77.4605 },
+    { name: 'Fredericksburg VRE Station', aliases: ['vre station', 'train station', 'amtrak station'], lat: 38.2961, lon: -77.4548 },
+    // Landmarks
+    { name: 'Chatham Manor', aliases: ['chatham manor', 'chatham'], lat: 38.3027, lon: -77.4433 },
+    { name: 'Ferry Farm', aliases: ['ferry farm', 'george washington boyhood home'], lat: 38.2969, lon: -77.4356 },
+    { name: 'Fredericksburg Battlefield', aliases: ['fredericksburg battlefield', 'sunken road', 'maryes heights'], lat: 38.2978, lon: -77.4661 },
+  ];
+
+  /**
+   * Get the full places gazetteer (built-in + runtime additions)
+   */
+  function getPlacesGazetteer() {
+    const runtime = (typeof store !== 'undefined' && store.placesGazetteer) || [];
+    return [...BUILTIN_PLACES_GAZETTEER, ...runtime];
+  }
+
+  /**
+   * Collect location candidates from text
+   * @param {string} text - The text to extract locations from
+   * @param {string} jurisdictionHint - Jurisdiction context (e.g., 'Fredericksburg', 'Stafford')
+   * @returns {Array} Array of candidate objects { phrase, rawPhrase, type, confidenceBase }
+   */
+  function collectLocationCandidates(text, jurisdictionHint) {
+    const clean = cleanTextForExtraction(text);
+    if (!clean) return [];
+
+    const candidates = [];
+    const seen = new Set();
+
+    /**
+     * Add a candidate if not already seen (dedup by normalized phrase)
+     */
+    function addCandidate(phrase, rawPhrase, type, confidenceBase) {
+      if (!phrase) return;
+      const normalized = normalizeLocationPhrase(phrase);
+      if (!normalized || normalized.length < 3) return;
+      if (seen.has(normalized)) return;
+      seen.add(normalized);
+      candidates.push({ phrase: phrase.trim(), rawPhrase: (rawPhrase || phrase).trim(), type, confidenceBase });
+    }
+
+    // === (0) GAZETTEER MATCHES (highest priority - exact known places) ===
+    const gazetteer = getPlacesGazetteer();
+    const lowerClean = clean.toLowerCase();
+    for (const place of gazetteer) {
+      for (const alias of place.aliases) {
+        if (lowerClean.includes(alias)) {
+          // Found a gazetteer match - add with coordinates embedded
+          addCandidate(place.name, alias, 'gazetteer', 100);
+          // Store lat/lon reference for later (attach to candidate)
+          const lastCandidate = candidates[candidates.length - 1];
+          if (lastCandidate) {
+            lastCandidate.gazetteerLat = place.lat;
+            lastCandidate.gazetteerLon = place.lon;
+          }
+        }
+      }
+    }
+
+    // === (1) FULL STREET ADDRESS patterns (highest priority after gazetteer) ===
+    // Matches: "123 Main St", "1234 Jefferson Davis Hwy", "100 N Main Street, Apt 5"
+    const streetAddressPattern = new RegExp(
+      '\\b(\\d{1,5})\\s+' +                                    // House number
+      '(?:(N|S|E|W|North|South|East|West)\\.?\\s+)?' +         // Optional direction
+      '([A-Z][A-Za-z\\s\\.\']+?)\\s*' +                        // Street name
+      '(?:' + STREET_TYPE_PATTERN + ')' +                      // Street type
+      '(?:\\s*[,.]?\\s*(?:Apt|Suite|Unit|#|Ste)?\\.?\\s*[\\dA-Za-z-]+)?' +  // Optional unit
+      '(?:\\s*[,.]?\\s*([A-Z][A-Za-z\\s]+))?'  +               // Optional city
+      '(?:\\s*[,.]?\\s*(VA|Virginia))?'  +                     // Optional state
+      '(?:\\s*[,.]?\\s*(\\d{5}(?:-\\d{4})?))?',                // Optional ZIP
+      'gi'
+    );
+
+    let match;
+    while ((match = streetAddressPattern.exec(clean)) !== null) {
+      const fullMatch = match[0].trim();
+      // Clean up trailing commas and extra whitespace
+      const cleaned = fullMatch.replace(/[,.\s]+$/, '').trim();
+      if (cleaned.length >= 8) { // Minimum reasonable address length
+        addCandidate(cleaned, fullMatch, 'address', 90);
+      }
+    }
+
+    // === (2) INTERSECTION patterns ===
+    // Matches: "Main St and Lafayette Blvd", "Route 3 & William St", "at the intersection of X and Y"
+    const intersectionPatterns = [
+      // "intersection of X and Y"
+      new RegExp(
+        '(?:intersection\\s+of|corner\\s+of)\\s+' +
+        '([A-Z][A-Za-z\\s\\.\']+?(?:' + STREET_TYPE_PATTERN + '))\\s*' +
+        '(?:and|&|at|with|/)\\s*' +
+        '([A-Z][A-Za-z\\s\\.\']+?(?:' + STREET_TYPE_PATTERN + '))',
+        'gi'
+      ),
+      // "X St and Y Blvd" or "X St & Y Blvd"
+      new RegExp(
+        '([A-Z][A-Za-z\\s\\.\']+?(?:' + STREET_TYPE_PATTERN + '))\\s*' +
+        '(?:and|&|at|/)\\s*' +
+        '([A-Z][A-Za-z\\s\\.\']+?(?:' + STREET_TYPE_PATTERN + '))',
+        'gi'
+      ),
+      // "at X St near Y Rd"
+      new RegExp(
+        '(?:at|near|on)\\s+' +
+        '([A-Z][A-Za-z\\s\\.\']+?(?:' + STREET_TYPE_PATTERN + '))\\s+' +
+        '(?:near|by|at)\\s+' +
+        '([A-Z][A-Za-z\\s\\.\']+?(?:' + STREET_TYPE_PATTERN + '))',
+        'gi'
+      )
+    ];
+
+    for (const pattern of intersectionPatterns) {
+      while ((match = pattern.exec(clean)) !== null) {
+        const street1 = match[1]?.trim();
+        const street2 = match[2]?.trim();
+        if (street1 && street2 && street1.length >= 4 && street2.length >= 4) {
+          const intersectionPhrase = `${street1} & ${street2}`;
+          addCandidate(intersectionPhrase, match[0], 'intersection', 80);
+        }
+      }
+    }
+
+    // === (3) ROAD/HIGHWAY SEGMENTS ===
+    // Matches: "Route 1", "US-1", "I-95", "Jefferson Davis Highway", "near Exit 130"
+    const roadPatterns = [
+      // Interstate highways
+      /\b(I-?95|I-?295|I-?64|I-?66|Interstate\s+(?:95|295|64|66))\s*(?:(North|South|East|West|N|S|E|W)(?:bound)?)?/gi,
+      // US Routes
+      /\b(U\.?S\.?\s*(?:Route\s*)?\d+|US-?\d+)\s*(?:(North|South|East|West|N|S|E|W)(?:bound)?)?/gi,
+      // State routes
+      /\b((?:State\s+Route|VA|Virginia|Route|Rt\.?)\s*\d+)\s*(?:(North|South|East|West|N|S|E|W)(?:bound)?)?/gi,
+      // Named highways
+      /\b(Jefferson\s+Davis\s+(?:Highway|Hwy)|Plank\s+Road|Blue\s+(?:and|&)\s+Gray\s+(?:Parkway|Pkwy)|Carl\s+D\.?\s+Silver\s+(?:Parkway|Pkwy)|Tidewater\s+Trail|Kings\s+Highway)/gi,
+      // Exit references
+      /\b(?:near\s+)?(?:Exit|exit)\s+(\d+[A-Za-z]?)\s*(?:(?:on|off|of)\s+(I-?95|I-?295|Route\s+\d+))?/gi
+    ];
+
+    for (const pattern of roadPatterns) {
+      while ((match = pattern.exec(clean)) !== null) {
+        const roadPhrase = match[0].trim();
+        if (roadPhrase.length >= 3) {
+          addCandidate(roadPhrase, roadPhrase, 'road', 60);
+        }
+      }
+    }
+
+    // === (4) NEIGHBORHOODS / COMPLEXES / NAMED PLACES ===
+    // Matches: "Greenbrier Apartments", "Central Park", "Mary Washington Hospital"
+    // Look for preposition + ProperNounPhrase pattern
+    const placePrepositions = '(?:at|near|in|by|around|outside|inside|behind|across\\s+from|between|on)';
+
+    // Pattern for named places with suffixes
+    const namedPlacePattern = new RegExp(
+      placePrepositions + '\\s+' +
+      '((?:[A-Z][A-Za-z\']+\\s+)+(?:' + PLACE_SUFFIX_PATTERN + '))',
+      'g'
+    );
+
+    while ((match = namedPlacePattern.exec(clean)) !== null) {
+      const place = match[1]?.trim();
+      if (place && place.length >= 5) {
+        addCandidate(place, match[0], 'place', 70);
+      }
+    }
+
+    // Also look for standalone named places (capitalized sequences with known suffixes)
+    const standaloneNamedPlace = new RegExp(
+      '\\b((?:[A-Z][A-Za-z\']+\\s+){1,4}(?:' + PLACE_SUFFIX_PATTERN + '))\\b',
+      'g'
+    );
+
+    while ((match = standaloneNamedPlace.exec(clean)) !== null) {
+      const place = match[1]?.trim();
+      if (place && place.length >= 8) {
+        addCandidate(place, place, 'place', 65);
+      }
+    }
+
+    // === (5) TOWN / LOCALITY references ===
+    // Matches known local towns in the Fredericksburg region
+    for (const town of LOCAL_TOWNS) {
+      const townPattern = new RegExp('\\b' + town + '\\b', 'gi');
+      if (townPattern.test(clean)) {
+        addCandidate(town, town, 'town', 40);
+      }
+    }
+
+    // === (6) Generic street name patterns (lower confidence) ===
+    // Matches: "on Main Street", "near Lafayette Boulevard"
+    const genericStreetPattern = new RegExp(
+      '(?:on|at|near|along)\\s+' +
+      '([A-Z][A-Za-z\\s\\.\']+?(?:' + STREET_TYPE_PATTERN + '))',
+      'gi'
+    );
+
+    while ((match = genericStreetPattern.exec(clean)) !== null) {
+      const street = match[1]?.trim();
+      if (street && street.length >= 6 && !/^(the|a|an)\s/i.test(street)) {
+        addCandidate(street, match[0], 'road', 50);
+      }
+    }
+
+    // === (7) Block-level references ===
+    // Matches: "100 block of Main St", "on the 1200 block of Jefferson Davis Hwy"
+    const blockPattern = new RegExp(
+      '(\\d{1,4})\\s*block\\s+(?:of\\s+)?' +
+      '([A-Z][A-Za-z\\s\\.\']+?(?:' + STREET_TYPE_PATTERN + '))',
+      'gi'
+    );
+
+    while ((match = blockPattern.exec(clean)) !== null) {
+      const blockNum = match[1];
+      const street = match[2]?.trim();
+      if (street && blockNum) {
+        const blockPhrase = `${blockNum} block of ${street}`;
+        // Convert to approximate address for geocoding
+        const approxAddress = `${blockNum}0 ${street}`;
+        addCandidate(approxAddress, blockPhrase, 'address', 75);
+      }
+    }
+
+    return candidates;
+  }
+
+  /**
+   * Score and select the best location candidate
+   * @param {Array} candidates - Array of candidate objects from collectLocationCandidates
+   * @param {string} jurisdictionHint - Jurisdiction context
+   * @returns {Object|null} Best candidate or null if no valid candidates
+   */
+  function pickBestCandidate(candidates, jurisdictionHint) {
+    if (!candidates || candidates.length === 0) return null;
+
+    // Scoring weights by type
+    const typeScores = {
+      'gazetteer': 100,   // Exact known places (highest)
+      'address': 90,      // Full street addresses
+      'intersection': 80, // Intersections
+      'place': 70,        // Named places
+      'road': 60,         // Road/highway segments
+      'town': 40          // Town names only
+    };
+
+    // Vague term penalties
+    const vagueTerms = [
+      'downtown', 'area', 'vicinity', 'nearby', 'region', 'countywide',
+      'citywide', 'neighborhood', 'sector', 'district', 'zone'
+    ];
+
+    // Score each candidate
+    const scored = candidates.map(candidate => {
+      let score = candidate.confidenceBase || typeScores[candidate.type] || 50;
+
+      const lowerPhrase = candidate.phrase.toLowerCase();
+
+      // Bonus: Contains street number
+      if (/^\d{1,5}\s/.test(candidate.phrase)) {
+        score += 15;
+      }
+
+      // Bonus: Contains city/town name
+      const hasTown = LOCAL_TOWNS.some(town => lowerPhrase.includes(town.toLowerCase()));
+      if (hasTown) {
+        score += 10;
+      }
+
+      // Bonus: Contains state (VA/Virginia)
+      if (/\bva\b|virginia/i.test(candidate.phrase)) {
+        score += 8;
+      }
+
+      // Bonus: Contains ZIP code
+      if (/\b\d{5}(?:-\d{4})?\b/.test(candidate.phrase)) {
+        score += 5;
+      }
+
+      // Penalty: Vague terms
+      for (const vague of vagueTerms) {
+        if (lowerPhrase.includes(vague)) {
+          score -= 20;
+          break;
+        }
+      }
+
+      // Penalty: Very short phrases
+      if (candidate.phrase.length < 10) {
+        score -= 10;
+      }
+
+      // Penalty: Contains only a town name (no street/address)
+      if (candidate.type === 'town' && !hasTown) {
+        score -= 5;
+      }
+
+      // Bonus for matching jurisdiction hint
+      if (jurisdictionHint && lowerPhrase.includes(jurisdictionHint.toLowerCase())) {
+        score += 5;
+      }
+
+      return { ...candidate, score };
+    });
+
+    // Sort by score descending
+    scored.sort((a, b) => b.score - a.score);
+
+    // Debug logging for top candidates
+    if (CONFIG.debug.rssGeo && scored.length > 0) {
+      console.log(`[Location] Top ${Math.min(3, scored.length)} candidates:`);
+      scored.slice(0, 3).forEach((c, i) => {
+        console.log(`  ${i + 1}. [${c.type}] "${c.phrase}" (score: ${c.score})`);
+      });
+    }
+
+    // Return best candidate if score is positive
+    const best = scored[0];
+    if (best && best.score > 0) {
+      return best;
+    }
+
+    return null;
+  }
+
+  /**
+   * Enrich a candidate phrase with jurisdiction context for better geocoding
+   * @param {string} phrase - The location phrase
+   * @param {string} jurisdictionHint - Jurisdiction context
+   * @returns {string} Enriched phrase suitable for geocoding
+   */
+  function enrichCandidatePhrase(phrase, jurisdictionHint) {
+    if (!phrase) return phrase;
+
+    // Already has state - return as-is
+    if (/\bva\b|virginia/i.test(phrase)) {
+      return phrase;
+    }
+
+    // Already has ZIP code - return as-is
+    if (/\b\d{5}(?:-\d{4})?\b/.test(phrase)) {
+      return phrase;
+    }
+
+    // Map jurisdiction hints to geocoding-friendly context
+    const jurisdictionContext = {
+      'Fredericksburg': 'Fredericksburg, VA',
+      'Stafford': 'Stafford County, VA',
+      'Spotsylvania': 'Spotsylvania County, VA',
+      'Caroline': 'Caroline County, VA',
+      'King George': 'King George County, VA',
+      'Orange': 'Orange County, VA',
+      'Culpeper': 'Culpeper County, VA',
+      'Regional': 'Fredericksburg, VA'
+    };
+
+    const context = jurisdictionContext[jurisdictionHint] || 'Fredericksburg, VA';
+
+    // For intersections, format properly
+    if (/&|and|\//i.test(phrase)) {
+      // Clean up intersection format
+      const cleanIntersection = phrase
+        .replace(/\s+(?:and|&|\/)\s+/gi, ' & ')
+        .replace(/\s+/g, ' ')
+        .trim();
+      return `${cleanIntersection}, ${context}`;
+    }
+
+    // For regular addresses/places
+    return `${phrase.replace(/[,.\s]+$/, '')}, ${context}`;
+  }
+
+  /**
+   * Resolve the best lat/lon for an RSS item using the extraction pipeline
+   * @param {Object} item - Raw RSS item with title, summary/message
+   * @param {Object} source - RSS source configuration
+   * @returns {Promise<Object>} Object with { lat, lon, locationText, locationMethod }
+   */
+  async function resolveBestLatLonForRssItem(item, source) {
+    const result = {
+      lat: null,
+      lon: null,
+      locationText: null,
+      locationMethod: null
+    };
+
+    // Build search text from title and description
+    const textToSearch = `${item.title || ''} ${item.summary || item.message || ''}`;
+    const jurisdictionHint = source.jurisdiction || 'Regional';
+
+    // Step 1: Collect all location candidates
+    const candidates = collectLocationCandidates(textToSearch, jurisdictionHint);
+
+    if (CONFIG.debug.rssGeo) {
+      console.log(`[Location] "${item.title?.slice(0, 50)}..." - Found ${candidates.length} candidates`);
+    }
+
+    // Step 2: Check for gazetteer matches first (they have exact coordinates)
+    const gazetteerCandidates = candidates.filter(c => c.type === 'gazetteer' && c.gazetteerLat && c.gazetteerLon);
+    if (gazetteerCandidates.length > 0) {
+      const best = gazetteerCandidates[0]; // First gazetteer match wins
+      result.lat = best.gazetteerLat;
+      result.lon = best.gazetteerLon;
+      result.locationText = best.rawPhrase;
+      result.locationMethod = 'gazetteer';
+
+      if (CONFIG.debug.rssGeo) {
+        console.log(`[Location] Gazetteer match: "${best.phrase}" -> ${result.lat}, ${result.lon}`);
+      }
+      return result;
+    }
+
+    // Step 3: Try known location overrides (from external cameras config)
+    const knownLocation = findKnownLocationFromText(textToSearch);
+    if (knownLocation) {
+      result.lat = knownLocation.lat;
+      result.lon = knownLocation.lon;
+      result.locationText = 'known location';
+      result.locationMethod = 'override';
+
+      if (CONFIG.debug.rssGeo) {
+        console.log(`[Location] Known location override -> ${result.lat}, ${result.lon}`);
+      }
+      return result;
+    }
+
+    // Step 4: Pick best candidate and geocode
+    const best = pickBestCandidate(candidates, jurisdictionHint);
+
+    if (best) {
+      // Enrich with jurisdiction context
+      const enrichedPhrase = enrichCandidatePhrase(best.phrase, jurisdictionHint);
+
+      if (CONFIG.debug.rssGeo) {
+        console.log(`[Location] Best candidate: [${best.type}] "${best.phrase}" (score: ${best.score})`);
+        console.log(`[Location] Enriched for geocoding: "${enrichedPhrase}"`);
+      }
+
+      // Geocode the enriched phrase
+      const geocoded = await geocodeLocation(enrichedPhrase, jurisdictionHint);
+
+      if (geocoded) {
+        result.lat = geocoded.lat;
+        result.lon = geocoded.lon;
+        result.locationText = best.rawPhrase;
+        result.locationMethod = 'extract+geocode';
+
+        if (CONFIG.debug.rssGeo) {
+          console.log(`[Location] Geocoded "${enrichedPhrase}" -> ${result.lat}, ${result.lon}`);
+        }
+        return result;
+      } else {
+        if (CONFIG.debug.rssGeo) {
+          console.log(`[Location] Geocoding failed for "${enrichedPhrase}"`);
+        }
+      }
+    }
+
+    // Step 5: Fallback - no valid location found
+    if (CONFIG.debug.rssGeo) {
+      const reason = candidates.length === 0 ? 'no candidates found' : 'geocoding failed';
+      console.log(`[Location] Fallback: ${reason} for "${item.title?.slice(0, 50)}..."`);
+    }
+
+    // Use intelligent category/content-based default
+    const fallbackLoc = getDefaultLocationForItem(source, null, textToSearch);
+    result.lat = fallbackLoc.lat;
+    result.lon = fallbackLoc.lon;
+    result.locationText = null;
+    result.locationMethod = 'fallback';
+
+    return result;
+  }
+
+
+  // -----------------------------
   // file:// banner
   // -----------------------------
   function initProtocolBanner() {
@@ -4528,6 +5096,9 @@
       lat: loc.lat,
       lon: loc.lon,
       lng: loc.lon, // Ensure lng === lon for API compatibility
+      // Location extraction metadata (Module 1 v2)
+      locationText: raw.locationText || null,
+      locationMethod: raw.locationMethod || 'default',
       category: picked.category,
       emoji: picked.emoji,
       tone: picked.tone || source.tone || "warn",
@@ -4624,6 +5195,14 @@
          </div>`
       : "";
 
+    // Location debug info (only shown when rssGeo debug is enabled)
+    const locationDebug = CONFIG.debug.rssGeo && item.locationMethod
+      ? `<div style="font-size:10px; color:rgba(126,240,255,0.6); margin-top:8px; padding-top:6px; border-top:1px solid rgba(255,255,255,0.1);">
+           📍 ${item.locationMethod}${item.locationText ? `: "${escapeHtml(item.locationText)}"` : ''}<br>
+           <span style="font-family:monospace">${item.lat?.toFixed(4)}, ${(item.lon ?? item.lng)?.toFixed(4)}</span>
+         </div>`
+      : "";
+
     return `
       <div style="min-width:220px; max-width:280px">
         <div style="font-weight:900; font-size:13px; margin-bottom:6px">${item.emoji} ${safeTitle}</div>
@@ -4631,6 +5210,7 @@
         ${cameraPreview}
         ${safeSummary ? `<div style="font-size:12px; line-height:1.35; color:rgba(255,255,255,.82); margin-bottom:10px">${safeSummary}</div>` : ""}
         <a href="${item.url}" target="_blank" rel="noreferrer noopener" style="color:#7ef0ff; font-weight:800; text-decoration:none">Open source ↗</a>
+        ${locationDebug}
       </div>
     `;
   }
@@ -5123,34 +5703,26 @@ function selectItem(id) {
       console.log(`[RSS Parse] ${source.id}: Parsed ${out.length} valid items (with dates) from feed`);
     }
 
-    // Geocode items that don't have embedded coordinates
-    // Process geocoding for items without location data
+    // Location Extraction Pipeline (Module 1 v2)
+    // Resolve locations for items that don't have embedded coordinates
     for (const item of out) {
       // Skip if item already has location from GeoRSS
-      if (item.loc) continue;
-
-      // Try to extract location from title and summary
-      const textToSearch = `${item.title || ''} ${item.summary || ''}`;
-      const knownLocation = findKnownLocationFromText(textToSearch);
-      if (knownLocation) {
-        item.loc = knownLocation;
+      if (item.loc) {
+        // Store location method for transparency
+        item.locationMethod = 'georss';
         continue;
       }
 
-      const extractedLocation = extractLocationFromText(textToSearch);
+      // Use the new robust location extraction pipeline
+      const resolved = await resolveBestLatLonForRssItem(item, source);
 
-      if (extractedLocation) {
-        if (CONFIG.debug.rss) {
-          console.log(`[Geocode] Extracted location from "${item.title?.slice(0, 60)}...": "${extractedLocation}"`);
-        }
+      if (resolved.lat && resolved.lon) {
+        item.loc = { lat: resolved.lat, lon: resolved.lon };
+        item.locationText = resolved.locationText;
+        item.locationMethod = resolved.locationMethod;
 
-        // Geocode the extracted location
-        const geocoded = await geocodeLocation(extractedLocation, source.jurisdiction);
-        if (geocoded) {
-          item.loc = geocoded;
-          if (CONFIG.debug.rss) {
-            console.log(`[Geocode] Geocoded "${extractedLocation}" -> ${geocoded.lat}, ${geocoded.lon}`);
-          }
+        if (CONFIG.debug.rss && resolved.locationMethod !== 'fallback') {
+          console.log(`[Location] Resolved "${item.title?.slice(0, 50)}..." via ${resolved.locationMethod}: ${resolved.lat.toFixed(4)}, ${resolved.lon.toFixed(4)}${resolved.locationText ? ` ("${resolved.locationText}")` : ''}`);
         }
       }
     }
