@@ -4405,6 +4405,9 @@
       draftLocation: null,
       pickMode: false,
       pickMarker: null
+    },
+    diagnostics: {
+      rss: {}  // Keyed by source.id: { ok, httpStatus, itemsParsed, itemsIngested, error, timestamp }
     }
   };
 
@@ -5155,7 +5158,7 @@ function selectItem(id) {
     return out;
   }
 
-  async function pollRSS() {
+  async function pollRSS(forceRefresh = false) {
     if (store.locks.rss) return { skipped:true };
     store.locks.rss = true;
     const results = [];
@@ -5165,18 +5168,30 @@ function selectItem(id) {
     for (const source of CONFIG.rss) {
       await sleep((CONFIG.polling && CONFIG.polling.rssStaggerMs) || 300);
 
-      // Round 3: Check source backoff before polling
+      // Round 3: Check source backoff before polling (skip if forceRefresh)
       const backoffCheck = checkSourceBackoff(`rss-${source.id}`);
-      if (!backoffCheck.allowed) {
+      if (!forceRefresh && !backoffCheck.allowed) {
         if (CONFIG.debug.rss) {
           console.log(`[RSS Backoff] Skipping ${source.id} (backoff: ${Math.round(backoffCheck.delayMs / 1000)}s remaining)`);
         }
+        const diagEntry = {
+          ok: false,
+          skipped: true,
+          backoff: true,
+          httpStatus: null,
+          itemsParsed: 0,
+          itemsIngested: 0,
+          error: `Backoff: ${Math.round(backoffCheck.delayMs / 1000)}s remaining`,
+          timestamp: Date.now()
+        };
+        store.diagnostics.rss[source.id] = diagEntry;
         results.push({ source: source.id, ok: false, skipped: true, backoff: true });
         continue;
       }
 
       try {
         const items = await fetchRSS(source);
+        const itemsParsed = items.length;
         if (CONFIG.debug.rss) {
           console.log(`[RSS Ingest] ${source.id}: Starting ingestion of ${items.length} parsed items (maxAge: ${source.maxAgeHours ?? CONFIG.freshness.rssMaxAgeHours}h)`);
         }
@@ -5204,6 +5219,19 @@ function selectItem(id) {
         if (CONFIG.debug.rss) {
           console.log(`[RSS Ingest] ${source.id}: Added ${added} new items, skipped ${skippedFilter} (filtered), ${skippedDupe} (duplicates)`);
         }
+
+        // Store diagnostics for this source
+        store.diagnostics.rss[source.id] = {
+          ok: true,
+          skipped: false,
+          backoff: false,
+          httpStatus: 200,
+          itemsParsed: itemsParsed,
+          itemsIngested: added,
+          error: null,
+          timestamp: Date.now()
+        };
+
         results.push({ source: source.id, ok: true, added });
         anySucceeded = true;
 
@@ -5215,11 +5243,35 @@ function selectItem(id) {
         const isRateLimit = err.message && (err.message.includes('429') || err.message.includes('Too Many Requests'));
         const isEmpty = err.message && err.message.includes('Empty response');
         const isProxyError = err.message && err.message.includes('proxy');
+        const isForbidden = err.message && err.message.includes('403');
+
+        // Extract HTTP status from error message if available
+        let httpStatus = null;
+        const statusMatch = err.message && err.message.match(/(\d{3})/);
+        if (statusMatch) {
+          httpStatus = parseInt(statusMatch[1], 10);
+        } else if (isRateLimit) {
+          httpStatus = 429;
+        } else if (isForbidden) {
+          httpStatus = 403;
+        }
 
         // Round 3: Record failure and apply backoff
         const errorType = isRateLimit ? 'rate_limit' : (isEmpty ? 'empty' : (isProxyError ? 'proxy' : 'unknown'));
         recordSourceFailure(`rss-${source.id}`, errorType);
         recordFeedError(`rss-${source.id}`);
+
+        // Store diagnostics for this source
+        store.diagnostics.rss[source.id] = {
+          ok: false,
+          skipped: false,
+          backoff: false,
+          httpStatus: httpStatus,
+          itemsParsed: 0,
+          itemsIngested: 0,
+          error: err.message || String(err),
+          timestamp: Date.now()
+        };
 
         // Only log RSS errors once per session per source to avoid console spam
         const errorKey = `_rssError_${source.id}`;
@@ -5241,6 +5293,22 @@ function selectItem(id) {
       }
     }
 
+    // Log RSS diagnostics summary
+    const okCount = Object.values(store.diagnostics.rss).filter(d => d.ok).length;
+    const failCount = Object.values(store.diagnostics.rss).filter(d => !d.ok && !d.skipped).length;
+    const skipCount = Object.values(store.diagnostics.rss).filter(d => d.skipped).length;
+    console.log(`[RSS Audit] Sources: ${okCount} ok / ${failCount} failed / ${skipCount} skipped`);
+
+    // Log failed sources with reasons
+    const failedSources = Object.entries(store.diagnostics.rss).filter(([_, d]) => !d.ok && !d.skipped);
+    if (failedSources.length > 0) {
+      console.log(`[RSS Audit] Failed sources:`);
+      for (const [sourceId, diag] of failedSources) {
+        const statusStr = diag.httpStatus ? ` (HTTP ${diag.httpStatus})` : '';
+        console.log(`  - ${sourceId}${statusStr}: ${diag.error}`);
+      }
+    }
+
     if (CONFIG.debug.rss) {
       console.log(`[RSS Poll] Complete: ${totalAdded} new items from ${results.filter(r => r.ok).length}/${CONFIG.rss.length} feeds`);
     }
@@ -5248,7 +5316,7 @@ function selectItem(id) {
     setLastUpdate();
     redraw();
     store.locks.rss = false;
-    return { results };
+    return { results, diagnostics: store.diagnostics.rss };
   }
 
   // -----------------------------
@@ -8155,6 +8223,9 @@ function selectItem(id) {
   const diagnosticsRefresh = $("diagnosticsRefresh");
   const diagnosticsCopy = $("diagnosticsCopy");
   const diagnosticsTestUpstreams = $("diagnosticsTestUpstreams");
+  const diagnosticsRSSSummary = $("diagnosticsRSSSummary");
+  const diagnosticsRSSList = $("diagnosticsRSSList");
+  const diagnosticsRefreshRSS = $("diagnosticsRefreshRSS");
 
   let lastDiagnosticsPayload = null;
   let lastHealthPayload = null;
@@ -8390,6 +8461,119 @@ function selectItem(id) {
     }).join("");
   }
 
+  function renderDiagnosticsRSS() {
+    if (!diagnosticsRSSSummary || !diagnosticsRSSList) return;
+
+    const rssData = store.diagnostics?.rss || {};
+    const entries = Object.entries(rssData);
+
+    if (entries.length === 0) {
+      diagnosticsRSSSummary.innerHTML = `
+        <div class="diagnosticsRow">
+          <div>
+            <div class="diagnosticsRow__title">Status</div>
+            <div>No RSS data yet - refresh to poll feeds</div>
+          </div>
+          <div class="diagnosticsBadge diagnosticsBadge--warn">PENDING</div>
+        </div>
+      `;
+      diagnosticsRSSList.textContent = "—";
+      return;
+    }
+
+    const okCount = entries.filter(([_, d]) => d.ok).length;
+    const failCount = entries.filter(([_, d]) => !d.ok && !d.skipped).length;
+    const skipCount = entries.filter(([_, d]) => d.skipped).length;
+    const totalParsed = entries.reduce((sum, [_, d]) => sum + (d.itemsParsed || 0), 0);
+    const totalIngested = entries.reduce((sum, [_, d]) => sum + (d.itemsIngested || 0), 0);
+
+    const summaryBadgeClass = failCount === 0 ? "diagnosticsBadge--ok" : failCount < okCount ? "diagnosticsBadge--warn" : "diagnosticsBadge--error";
+    const summaryBadgeText = failCount === 0 ? "ALL OK" : `${failCount} FAILED`;
+
+    diagnosticsRSSSummary.innerHTML = `
+      <div class="diagnosticsRow">
+        <div>
+          <div class="diagnosticsRow__title">RSS Sources</div>
+          <div>${okCount} ok / ${failCount} failed${skipCount > 0 ? ` / ${skipCount} skipped` : ''}</div>
+        </div>
+        <div class="diagnosticsBadge ${summaryBadgeClass}">${summaryBadgeText}</div>
+      </div>
+      <div class="diagnosticsRow">
+        <div>
+          <div class="diagnosticsRow__title">Items</div>
+          <div>${totalParsed} parsed / ${totalIngested} ingested</div>
+        </div>
+        <div class="diagnosticsBadge diagnosticsBadge--ok">${totalIngested}</div>
+      </div>
+    `;
+
+    // Build detailed list of failed/problematic sources first, then successful ones
+    const failedSources = entries.filter(([_, d]) => !d.ok && !d.skipped);
+    const skippedSources = entries.filter(([_, d]) => d.skipped);
+    const okSources = entries.filter(([_, d]) => d.ok);
+
+    let listHtml = "";
+
+    // Failed sources (show first with details)
+    if (failedSources.length > 0) {
+      listHtml += `<div style="margin-bottom:8px;color:var(--bad);font-weight:500;">Failed Sources:</div>`;
+      for (const [sourceId, diag] of failedSources) {
+        const source = CONFIG.rss.find(s => s.id === sourceId);
+        const sourceName = source?.name || sourceId;
+        const statusStr = diag.httpStatus ? `HTTP ${diag.httpStatus}` : 'Error';
+        const errorShort = (diag.error || 'Unknown error').slice(0, 60);
+        const ago = diag.timestamp ? formatDurationShort(Date.now() - diag.timestamp) + ' ago' : '';
+        listHtml += `
+          <div class="diagnosticsRow" style="border-left:3px solid var(--bad);padding-left:8px;margin-bottom:4px;">
+            <div>
+              <div class="diagnosticsRow__title">${escapeHtml(sourceName)}</div>
+              <div style="font-size:11px;color:var(--muted2);">${escapeHtml(errorShort)}</div>
+              <div style="font-size:10px;color:var(--muted2);">${ago}</div>
+            </div>
+            <div class="diagnosticsBadge diagnosticsBadge--error">${statusStr}</div>
+          </div>
+        `;
+      }
+    }
+
+    // Skipped sources (backoff)
+    if (skippedSources.length > 0) {
+      listHtml += `<div style="margin:8px 0;color:var(--warn);font-weight:500;">Skipped (backoff):</div>`;
+      for (const [sourceId, diag] of skippedSources) {
+        const source = CONFIG.rss.find(s => s.id === sourceId);
+        const sourceName = source?.name || sourceId;
+        listHtml += `
+          <div class="diagnosticsRow" style="border-left:3px solid var(--warn);padding-left:8px;margin-bottom:4px;">
+            <div>
+              <div class="diagnosticsRow__title">${escapeHtml(sourceName)}</div>
+              <div style="font-size:11px;color:var(--muted2);">${escapeHtml(diag.error || 'Backoff active')}</div>
+            </div>
+            <div class="diagnosticsBadge diagnosticsBadge--warn">SKIP</div>
+          </div>
+        `;
+      }
+    }
+
+    // Successful sources (collapsed summary)
+    if (okSources.length > 0) {
+      listHtml += `<div style="margin:8px 0;color:var(--ok);font-weight:500;">OK Sources (${okSources.length}):</div>`;
+      for (const [sourceId, diag] of okSources) {
+        const source = CONFIG.rss.find(s => s.id === sourceId);
+        const sourceName = source?.name || sourceId;
+        listHtml += `
+          <div class="diagnosticsRow" style="border-left:3px solid var(--ok);padding-left:8px;margin-bottom:2px;">
+            <div>
+              <div class="diagnosticsRow__title" style="font-size:12px;">${escapeHtml(sourceName)}</div>
+            </div>
+            <div style="font-size:11px;color:var(--muted2);">${diag.itemsParsed}/${diag.itemsIngested}</div>
+          </div>
+        `;
+      }
+    }
+
+    diagnosticsRSSList.innerHTML = listHtml || "No RSS diagnostics data available.";
+  }
+
   // Store last known data for offline fallback
   let lastKnownDiagnostics = null;
 
@@ -8424,6 +8608,7 @@ function selectItem(id) {
       }
       renderDiagnosticsUpstreams(lastKnownDiagnostics.upstreams?.upstreams || null);
       renderDiagnosticsCache(lastKnownDiagnostics.cache || null);
+      renderDiagnosticsRSS();
       return;
     }
 
@@ -8431,6 +8616,7 @@ function selectItem(id) {
     const upstreamList = healthRes.data?.upstreams || upstreamRes.data?.upstreams || null;
     renderDiagnosticsUpstreams(upstreamList);
     renderDiagnosticsCache(cacheRes.data || null);
+    renderDiagnosticsRSS();
 
     lastDiagnosticsPayload = {
       fetchedAt: new Date().toISOString(),
@@ -8535,6 +8721,22 @@ function selectItem(id) {
       runUpstreamTests().catch(err => {
         console.warn("[Diagnostics] Upstream test failed:", err);
       });
+    });
+  }
+  if (diagnosticsRefreshRSS) {
+    diagnosticsRefreshRSS.addEventListener("click", async () => {
+      diagnosticsRefreshRSS.disabled = true;
+      diagnosticsRefreshRSS.textContent = "Refreshing…";
+      try {
+        await pollRSS(true);  // Force refresh, bypass backoff
+        renderDiagnosticsRSS();
+        redraw();
+      } catch (err) {
+        console.warn("[Diagnostics] RSS refresh failed:", err);
+      } finally {
+        diagnosticsRefreshRSS.disabled = false;
+        diagnosticsRefreshRSS.textContent = "Refresh RSS";
+      }
     });
   }
   if (diagnosticsCopy) {
