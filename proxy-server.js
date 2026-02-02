@@ -1838,9 +1838,86 @@ const crimeReportsState = {
 };
 const CRIME_REFRESH_THROTTLE_MS = 10000; // 10 second throttle
 
-// Geocode cache for crime report locations
+// Geocode cache for RSS + crime report locations
 const geocodeCache = new Map();
-const GEOCODE_CACHE_FILE = path.join(__dirname, "data", "geocode_cache.json");
+const geocodeInflight = new Map();
+const GEOCODE_CACHE_FILE = path.join(__dirname, "data", "geocode-cache.json");
+const GEOCODE_CACHE_VERSION = 1;
+const GEOCODE_SAVE_DEBOUNCE_MS = 1500;
+let geocodeSaveTimer = null;
+let lastUpstreamFetchTs = 0;
+let geocodeUpstreamQueue = Promise.resolve();
+
+const GEOCODE_AOI = {
+  minLat: 38.15,
+  maxLat: 38.40,
+  minLon: -77.70,
+  maxLon: -77.30
+};
+
+const GENERIC_LOCATION_WORDS = new Set([
+  "downtown", "vicinity", "area", "region", "nearby", "neighborhood",
+  "district", "zone", "city", "town", "county", "center"
+]);
+
+const GEO_STREET_TOKENS = [
+  "st", "street", "ave", "avenue", "rd", "road", "blvd", "boulevard",
+  "dr", "drive", "ct", "court", "ln", "lane", "pkwy", "parkway",
+  "hwy", "highway", "route", "rt", "pl", "place", "ter", "terrace",
+  "way", "cir", "circle"
+];
+
+const LOCAL_JURISDICTIONS = new Set([
+  "fredericksburg",
+  "stafford",
+  "spotsylvania",
+  "caroline",
+  "king george",
+  "orange",
+  "culpeper",
+  "regional"
+]);
+
+function normalizeKeyPart(value) {
+  return String(value || "")
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9\s&/]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function normalizeKey(query, jurisdiction) {
+  const q = normalizeKeyPart(query);
+  const j = normalizeKeyPart(jurisdiction);
+  return `${q}||${j}`;
+}
+
+function isWithinAoi(lat, lon) {
+  return lat >= GEOCODE_AOI.minLat &&
+    lat <= GEOCODE_AOI.maxLat &&
+    lon >= GEOCODE_AOI.minLon &&
+    lon <= GEOCODE_AOI.maxLon;
+}
+
+function inferLowConfidence(query) {
+  const normalized = normalizeKeyPart(query);
+  if (!normalized) return true;
+  const tokens = normalized.split(" ");
+  const hasNumber = tokens.some(token => /\d/.test(token));
+  const hasStreetToken = tokens.some(token => GEO_STREET_TOKENS.includes(token));
+  const hasNonGeneric = tokens.some(token => !GENERIC_LOCATION_WORDS.has(token));
+  return !hasNumber && !hasStreetToken && !hasNonGeneric;
+}
+
+function scheduleGeocodeSave() {
+  if (geocodeSaveTimer) clearTimeout(geocodeSaveTimer);
+  geocodeSaveTimer = setTimeout(() => {
+    saveGeocodeCache().catch((err) => {
+      console.warn("[Geocode] Failed to save cache:", err.message);
+    });
+  }, GEOCODE_SAVE_DEBOUNCE_MS);
+}
 
 // Load geocode cache on startup
 async function loadGeocodeCache() {
@@ -1848,8 +1925,16 @@ async function loadGeocodeCache() {
     const data = await fsp.readFile(GEOCODE_CACHE_FILE, "utf8");
     const parsed = safeJsonParse(data, null, "geocode cache");
     if (parsed && typeof parsed === "object") {
-      for (const [key, value] of Object.entries(parsed)) {
-        geocodeCache.set(key, value);
+      const items = parsed.items && typeof parsed.items === "object" ? parsed.items : parsed;
+      for (const [key, value] of Object.entries(items || {})) {
+        if (!value || typeof value !== "object") continue;
+        if (!Number.isFinite(value.lat) || !Number.isFinite(value.lon)) continue;
+        geocodeCache.set(key, {
+          lat: Number(value.lat),
+          lon: Number(value.lon),
+          ts: Number.isFinite(value.ts) ? value.ts : Date.now(),
+          source: value.source === "cache" ? "cache" : "nominatim"
+        });
       }
       console.log(`[Geocode] Loaded ${geocodeCache.size} cached locations`);
     }
@@ -1860,14 +1945,14 @@ async function loadGeocodeCache() {
 
 // Save geocode cache
 async function saveGeocodeCache() {
-  try {
-    const dataDir = path.dirname(GEOCODE_CACHE_FILE);
-    await fsp.mkdir(dataDir, { recursive: true });
-    const obj = Object.fromEntries(geocodeCache);
-    await fsp.writeFile(GEOCODE_CACHE_FILE, JSON.stringify(obj, null, 2), "utf8");
-  } catch (e) {
-    console.warn("[Geocode] Failed to save cache:", e.message);
-  }
+  const dataDir = path.dirname(GEOCODE_CACHE_FILE);
+  await fsp.mkdir(dataDir, { recursive: true });
+  const obj = {
+    version: GEOCODE_CACHE_VERSION,
+    updatedAt: new Date().toISOString(),
+    items: Object.fromEntries(geocodeCache)
+  };
+  await fsp.writeFile(GEOCODE_CACHE_FILE, JSON.stringify(obj, null, 2), "utf8");
 }
 
 async function runUpstreamFetch(name, url, options = {}) {
@@ -1896,6 +1981,143 @@ async function runUpstreamFetch(name, url, options = {}) {
   });
 
   return result;
+}
+
+function scoreGeocodeResult(result) {
+  const lat = Number(result.lat);
+  const lon = Number(result.lon);
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+    return { score: -Infinity, lat, lon, insideAoi: false };
+  }
+
+  const insideAoi = isWithinAoi(lat, lon);
+  const importance = Number(result.importance) || 0;
+  const classWeight = {
+    place: 3,
+    highway: 2.5,
+    amenity: 2.5,
+    boundary: 2,
+    building: 1.5,
+    tourism: 1.5,
+    leisure: 1.2,
+    shop: 1.0,
+    railway: 1.0,
+    landuse: 0.6
+  }[result.class] || 0;
+  const typeWeight = {
+    city: 2,
+    town: 2,
+    village: 1.5,
+    hamlet: 1.2,
+    road: 1.2,
+    residential: 1.0,
+    primary: 1.0,
+    secondary: 0.9,
+    tertiary: 0.8,
+    house: 0.6,
+    neighbourhood: 0.5
+  }[result.type] || 0;
+
+  const score = (insideAoi ? 5 : 0) + (importance * 2) + classWeight + typeWeight;
+  return { score, lat, lon, insideAoi };
+}
+
+async function scheduleGeocodeUpstreamFetch(fn) {
+  const run = geocodeUpstreamQueue.then(async () => {
+    const now = Date.now();
+    const waitMs = Math.max(0, lastUpstreamFetchTs + 1000 - now);
+    if (waitMs > 0) {
+      await new Promise(resolve => setTimeout(resolve, waitMs));
+    }
+    lastUpstreamFetchTs = Date.now();
+    return fn();
+  });
+  geocodeUpstreamQueue = run.catch(() => {});
+  return run;
+}
+
+async function fetchNominatimResults(query) {
+  const params = new URLSearchParams({
+    format: "json",
+    q: query,
+    limit: "5",
+    countrycodes: "us",
+    viewbox: `${GEOCODE_AOI.minLon},${GEOCODE_AOI.maxLat},${GEOCODE_AOI.maxLon},${GEOCODE_AOI.minLat}`,
+    bounded: "0"
+  });
+  const url = `https://nominatim.openstreetmap.org/search?${params.toString()}`;
+
+  return scheduleGeocodeUpstreamFetch(async () => {
+    const response = await runUpstreamFetch("Nominatim Geocode", url, {
+      accept: "application/json",
+      headers: {
+        "User-Agent": "FXBG-PALANTIR-CityManager/1.0 (server-geocode)"
+      },
+      timeoutMs: 15000,
+      expectedType: "json",
+      maxBytes: PAYLOAD_LIMITS.json
+    });
+
+    if (response.status !== 200 || !response.ok) {
+      throw new UpstreamError(response.status || 500, response.error || "nominatim_failed");
+    }
+
+    const results = Array.isArray(response.json)
+      ? response.json
+      : safeJsonParse(response.bodyText || "[]", [], "geocode response");
+    return Array.isArray(results) ? results : [];
+  });
+}
+
+function selectBestGeocodeResult(results) {
+  if (!Array.isArray(results) || results.length === 0) return null;
+
+  const scored = results.map((result) => {
+    const scoredResult = scoreGeocodeResult(result);
+    return {
+      result,
+      ...scoredResult
+    };
+  }).filter(entry => Number.isFinite(entry.score));
+
+  if (scored.length === 0) return null;
+  scored.sort((a, b) => b.score - a.score);
+  return scored[0];
+}
+
+async function geocodeWithCache(query, jurisdiction) {
+  const key = normalizeKey(query, jurisdiction);
+  const cached = geocodeCache.get(key);
+  if (cached) {
+    return { ...cached, key, source: "cache" };
+  }
+
+  if (geocodeInflight.has(key)) {
+    return geocodeInflight.get(key);
+  }
+
+  const inflightPromise = (async () => {
+    const results = await fetchNominatimResults(query);
+    const best = selectBestGeocodeResult(results);
+    if (!best) return null;
+    const entry = {
+      lat: best.lat,
+      lon: best.lon,
+      ts: Date.now(),
+      source: "nominatim"
+    };
+    geocodeCache.set(key, entry);
+    scheduleGeocodeSave();
+    return { ...entry, key, aoi: best.insideAoi ? "inside" : "outside" };
+  })();
+
+  geocodeInflight.set(key, inflightPromise);
+  try {
+    const result = await inflightPromise;
+    return result;
+  } finally {
+    geocodeInflight.delete(key);
+  }
 }
 
 // Fetch crime reports page and extract PDF links
@@ -2294,62 +2516,28 @@ function parseIncidentsFromPdfText(text, sourcePdfUrl) {
 async function geocodeLocation(locationRaw, retryCount = 0) {
   if (!locationRaw) return null;
 
-  // Check cache first
-  const cacheKey = locationRaw.toLowerCase().trim();
-  if (geocodeCache.has(cacheKey)) {
-    return geocodeCache.get(cacheKey);
-  }
-
-  // Add Fredericksburg, VA context
   const searchQuery = `${locationRaw}, Fredericksburg, Virginia, USA`;
 
   try {
-    // Rate limit: wait 1 second between requests (Nominatim policy)
-    await new Promise(r => setTimeout(r, 1000 + retryCount * 1000));
-
-    const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(searchQuery)}&limit=1`;
-    const response = await runUpstreamFetch("Nominatim Geocode", url, {
-      accept: "application/json",
-      headers: {
-        "User-Agent": "FXBG-PALANTIR-CityManager/1.0 (crime-reports-geocoding)"
-      },
-      timeoutMs: 15000,
-      expectedType: "json",
-      maxBytes: PAYLOAD_LIMITS.json
-    });
-
-    if (response.status !== 200 || !response.ok) {
-      console.warn(`[Geocode] HTTP ${response.status || 0} for: ${locationRaw}`);
-      return null;
-    }
-
-    const results = Array.isArray(response.json)
-      ? response.json
-      : safeJsonParse(response.bodyText || "[]", [], "geocode response");
-    if (results.length > 0) {
-      const result = {
-        lat: parseFloat(results[0].lat),
-        lon: parseFloat(results[0].lon),
-        displayName: results[0].display_name
+    const geocoded = await geocodeWithCache(searchQuery, "crime-reports");
+    if (geocoded && Number.isFinite(geocoded.lat) && Number.isFinite(geocoded.lon)) {
+      return {
+        lat: geocoded.lat,
+        lon: geocoded.lon,
+        displayName: locationRaw
       };
-
-      // Only cache if within reasonable bounds of Fredericksburg area
-      if (result.lat > 38.0 && result.lat < 38.6 && result.lon > -77.8 && result.lon < -77.2) {
-        geocodeCache.set(cacheKey, result);
-        return result;
-      }
     }
 
     // Fallback: use approximate Fredericksburg center with offset
-    const fallback = {
+    return {
       lat: 38.3032 + (Math.random() - 0.5) * 0.02,
       lon: -77.4605 + (Math.random() - 0.5) * 0.02,
       displayName: locationRaw + " (approximate)"
     };
-    geocodeCache.set(cacheKey, fallback);
-    return fallback;
-
   } catch (e) {
+    if (retryCount < 1) {
+      return geocodeLocation(locationRaw, retryCount + 1);
+    }
     console.warn(`[Geocode] Failed for "${locationRaw}":`, e.message);
     return null;
   }
@@ -2733,6 +2921,61 @@ const server = http.createServer(async (req, res) => {
       };
 
       return send(res, 200, JSON.stringify(health, null, 2), { "Content-Type": "application/json" });
+    }
+
+    if (urlObj.pathname === "/api/geocode/stats") {
+      const response = {
+        ok: true,
+        cacheSize: geocodeCache.size,
+        inflightCount: geocodeInflight.size,
+        lastUpstreamFetchTs: lastUpstreamFetchTs || null
+      };
+      return send(res, 200, JSON.stringify(response, null, 2), { "Content-Type": "application/json" });
+    }
+
+    if (urlObj.pathname === "/api/geocode") {
+      if (req.method !== "GET") {
+        return send(res, 405, JSON.stringify({ ok: false, error: "method_not_allowed" }), { "Content-Type": "application/json" });
+      }
+
+      const q = String(urlObj.searchParams.get("q") || "").trim();
+      const j = String(urlObj.searchParams.get("j") || "").trim();
+      const normalizedQ = normalizeKeyPart(q);
+
+      if (q.length < 3 || q.length > 140 || normalizedQ.length < 3) {
+        return send(res, 400, JSON.stringify({ ok: false, error: "invalid_query" }), { "Content-Type": "application/json" });
+      }
+
+      const lowConfidence = inferLowConfidence(q);
+
+      try {
+        const result = await geocodeWithCache(q, j);
+        if (!result) {
+          return send(res, 200, JSON.stringify({ ok: false, error: "no_results" }, null, 2), { "Content-Type": "application/json" });
+        }
+
+        const lat = Number(result.lat);
+        const lon = Number(result.lon);
+        const aoi = result.aoi || (isWithinAoi(lat, lon) ? "inside" : "outside");
+
+        return send(res, 200, JSON.stringify({
+          ok: true,
+          lat,
+          lon,
+          source: result.source === "cache" ? "cache" : "nominatim",
+          key: result.key || normalizeKey(q, j),
+          q,
+          j,
+          aoi,
+          confidence: lowConfidence ? "low" : "normal"
+        }, null, 2), { "Content-Type": "application/json" });
+      } catch (err) {
+        const status = err instanceof UpstreamError ? 502 : 500;
+        return send(res, status, JSON.stringify({
+          ok: false,
+          error: err instanceof UpstreamError ? "upstream_failed" : "geocode_failed"
+        }, null, 2), { "Content-Type": "application/json" });
+      }
     }
 
     if (urlObj.pathname === "/api/reports" && req.method === "GET") {

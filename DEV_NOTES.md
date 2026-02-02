@@ -134,7 +134,7 @@ The Crime Reports feature displays FXBG PD crime incidents as a **marker overlay
 **Backend Data:**
 - Incidents stored in: `./data/fxbg-crime-reports/incidents.json`
 - Sample data auto-generated on first request (for testing without real PDF scraping)
-- Geocode cache shared with other features: `./data/geocode_cache.json`
+- Geocode cache shared with other features: `./data/geocode-cache.json`
 
 ### File Changes Summary
 - `proxy-server.js` — Added `/api/fxbg/crime-reports/*` routes + sample data generator
