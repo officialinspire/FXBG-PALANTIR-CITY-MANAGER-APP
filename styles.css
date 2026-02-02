@@ -706,6 +706,18 @@ body{
   font-size: 14px;
 }
 
+.newsFlashPanel__count {
+  text-align: center;
+  padding: 8px 12px;
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 600;
+  border-bottom: 1px solid rgba(255, 255, 255, .08);
+  margin-bottom: 12px;
+  background: rgba(126, 240, 255, 0.05);
+  border-radius: 6px;
+}
+
 .newsItem {
   padding: 12px;
   margin-bottom: 10px;
