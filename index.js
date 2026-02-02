@@ -3003,8 +3003,16 @@
   // -----------------------------
   const geocodeCache = new Map(); // Cache geocoding results: "location_string" -> { lat, lon, timestamp }
   const GEOCODE_CACHE_TTL = 7 * 24 * 60 * 60 * 1000; // Cache for 7 days
-  const GEOCODE_RATE_LIMIT_MS = 1000; // 1 request per second for Nominatim
-  let lastGeocodeTime = 0;
+  const LOCAL_JURISDICTIONS = new Set([
+    "fredericksburg",
+    "stafford",
+    "spotsylvania",
+    "caroline",
+    "king george",
+    "orange",
+    "culpeper",
+    "regional"
+  ]);
 
   const KNOWN_LOCATION_OVERRIDES = (() => {
     const cams = CONFIG.externalCameras?.cameras || [];
@@ -3194,87 +3202,45 @@
     const cacheKey = `${locationString}|${jurisdiction}`.toLowerCase();
     const cached = geocodeCache.get(cacheKey);
     if (cached && (Date.now() - cached.timestamp) < GEOCODE_CACHE_TTL) {
-      if (CONFIG.debug.rss) {
+      if (CONFIG.debug.rssGeo) {
         console.log(`[Geocode] Cache hit for "${locationString}" in ${jurisdiction}: ${cached.lat}, ${cached.lon}`);
       }
       return { lat: cached.lat, lon: cached.lon };
     }
 
-    // Rate limiting for Nominatim
-    const now = Date.now();
-    const timeSinceLastRequest = now - lastGeocodeTime;
-    if (timeSinceLastRequest < GEOCODE_RATE_LIMIT_MS) {
-      await sleep(GEOCODE_RATE_LIMIT_MS - timeSinceLastRequest);
-    }
-    lastGeocodeTime = Date.now();
-
     try {
-      // Build query with jurisdiction context for better accuracy
-      const jurisdictionMap = {
-        'Fredericksburg': 'Fredericksburg, Virginia',
-        'Stafford': 'Stafford County, Virginia',
-        'Spotsylvania': 'Spotsylvania County, Virginia',
-        'Regional': 'Fredericksburg, Virginia'
-      };
-      const areaContext = jurisdictionMap[jurisdiction] || 'Fredericksburg, Virginia';
-      const query = `${locationString}, ${areaContext}`;
-
-      if (CONFIG.debug.rss) {
-        console.log(`[Geocode] Querying Nominatim for: "${query}"`);
+      const response = await fetch(`/api/geocode?q=${encodeURIComponent(locationString)}&j=${encodeURIComponent(jurisdiction || "")}`);
+      if (!response.ok) {
+        if (CONFIG.debug.rssGeo) {
+          console.warn(`[Geocode] Server responded with ${response.status} for "${locationString}"`);
+        }
+        return null;
       }
 
-      // Use Nominatim API via our proxy
-      const nominatimUrl = `https://nominatim.openstreetmap.org/search?` + new URLSearchParams({
-        q: query,
-        format: 'json',
-        limit: '1',
-        countrycodes: 'us',
-        // Bounded search within Virginia region
-        viewbox: '-77.85,38.10,-77.20,38.52', // bbox around FXBG metro
-        bounded: '0' // Don't require results within viewbox, but prefer them
-      }).toString();
-
-      const response = await fetchWithProxies(nominatimUrl, {
-        expect: 'json',
-        headers: {
-          'Accept': 'application/json',
-          'User-Agent': 'FXBG-Palantir-City-Manager/1.0'
+      const payload = await response.json();
+      if (!payload.ok) {
+        if (CONFIG.debug.rssGeo) {
+          console.warn(`[Geocode] Server error for "${locationString}": ${payload.error}`);
         }
-      });
+        return null;
+      }
 
-      if (response && response.length > 0) {
-        const result = response[0];
-        const lat = parseFloat(result.lat);
-        const lon = parseFloat(result.lon);
+      const lat = Number(payload.lat);
+      const lon = Number(payload.lon);
+      if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+        return null;
+      }
 
-        if (isFinite(lat) && isFinite(lon)) {
-          // Validate that the result is within our region bbox
-          if (lat >= CONFIG.bbox.minLat && lat <= CONFIG.bbox.maxLat &&
-              lon >= CONFIG.bbox.minLon && lon <= CONFIG.bbox.maxLon) {
-
-            // Cache the result
-            geocodeCache.set(cacheKey, { lat, lon, timestamp: Date.now() });
-
-            if (CONFIG.debug.rss) {
-              console.log(`[Geocode] Success for "${locationString}": ${lat}, ${lon} (${result.display_name})`);
-            }
-
-            return { lat, lon };
-          } else {
-            if (CONFIG.debug.rss) {
-              console.log(`[Geocode] Result for "${locationString}" outside region bbox: ${lat}, ${lon}`);
-            }
-          }
+      if (payload.aoi === "outside" && LOCAL_JURISDICTIONS.has(String(jurisdiction || "").toLowerCase())) {
+        if (CONFIG.debug.rssGeo) {
+          console.warn(`[Geocode] AOI outside for "${locationString}" (${jurisdiction}) -> ${lat}, ${lon}`);
         }
       }
 
-      if (CONFIG.debug.rss) {
-        console.log(`[Geocode] No valid results for "${locationString}"`);
-      }
-      return null;
-
+      geocodeCache.set(cacheKey, { lat, lon, timestamp: Date.now() });
+      return { lat, lon };
     } catch (error) {
-      if (CONFIG.debug.rss) {
+      if (CONFIG.debug.rssGeo) {
         console.warn(`[Geocode] Error geocoding "${locationString}":`, error.message);
       }
       return null;
