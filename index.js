@@ -3013,6 +3013,36 @@
     "culpeper",
     "regional"
   ]);
+  const LOCATION_CONFIDENCE = {
+    override: 100,
+    gazetteer: 95,
+    address: 90,
+    intersection: 80,
+    place: 70,
+    road: 55,
+    town: 40,
+    fallback: 10
+  };
+
+  const JURISDICTION_CENTROIDS = {
+    Fredericksburg: { lat: 38.3032, lon: -77.4605 },
+    Stafford: { lat: 38.4220, lon: -77.4083 },
+    Spotsylvania: { lat: 38.1859, lon: -77.6526 },
+    Caroline: { lat: 38.0501, lon: -77.3500 },
+    "King George": { lat: 38.2671, lon: -77.1844 },
+    Orange: { lat: 38.2450, lon: -78.1100 },
+    Culpeper: { lat: 38.4730, lon: -77.9967 },
+    Regional: { lat: 38.2750, lon: -77.5000 }
+  };
+
+  const CATEGORY_CENTROID_OFFSETS = {
+    police_crime: { lat: 0.004, lon: -0.004 },
+    legal_courts: { lat: 0.003, lon: 0.003 },
+    government: { lat: 0.002, lon: -0.002 },
+    fire_ems: { lat: 0.003, lon: -0.003 },
+    traffic_transit: { lat: -0.003, lon: 0.003 },
+    events: { lat: -0.004, lon: -0.002 }
+  };
 
   const KNOWN_LOCATION_OVERRIDES = (() => {
     const cams = CONFIG.externalCameras?.cameras || [];
@@ -3023,7 +3053,7 @@
         const lon = Number(cam.lon);
         if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
         const tokens = [cam.name, cam.address].filter(Boolean).map((value) => value.toLowerCase());
-        return { lat, lon, tokens };
+        return { lat, lon, tokens, label: cam.name || cam.address || "known location" };
       })
       .filter(Boolean);
   })();
@@ -3034,7 +3064,7 @@
     for (const entry of KNOWN_LOCATION_OVERRIDES) {
       for (const token of entry.tokens) {
         if (token && lower.includes(token)) {
-          return { lat: entry.lat, lon: entry.lon };
+          return { lat: entry.lat, lon: entry.lon, label: entry.label };
         }
       }
     }
@@ -3123,72 +3153,34 @@
     return null;
   }
 
+  function getLocationConfidenceForCandidate(type) {
+    if (!type) return 50;
+    return LOCATION_CONFIDENCE[type] ?? 50;
+  }
+
+  function applyDeterministicJitter(base, seed) {
+    const seedText = seed || "rss-fallback";
+    const hash = parseInt(fnv1a(seedText), 16);
+    const angleHash = parseInt(fnv1a(`${seedText}-angle`), 16);
+    const distanceMeters = 50 + (hash % 151); // 50–200m
+    const angleRad = ((angleHash % 360) * Math.PI) / 180;
+    const metersLat = distanceMeters * Math.cos(angleRad);
+    const metersLon = distanceMeters * Math.sin(angleRad);
+    const lat = base.lat + (metersLat / 111320);
+    const lon = base.lon + (metersLon / (111320 * Math.cos((base.lat * Math.PI) / 180)));
+    return { lat, lon };
+  }
+
   /**
-   * Get intelligent default location based on source, category, and content
-   * Returns { lat, lon } with best-guess location for ungeocodeable items
+   * Get fallback location based on jurisdiction centroid + category offset + deterministic jitter.
+   * Returns { lat, lon } with best-guess location for ungeocodeable items.
    */
-  function getDefaultLocationForItem(source, category, text) {
+  function getFallbackLocationForItem({ source, category, seed }) {
     const jurisdiction = source.jurisdiction || "Regional";
-
-    // Category and keyword-based defaults
-    const categoryDefaults = {
-      'police_crime': { lat: 38.3032, lon: -77.4605 },     // Police HQ / City Hall
-      'legal_courts': { lat: 38.3015, lon: -77.4596 },     // Courthouse
-      'government': { lat: 38.3032, lon: -77.4605 },       // City Hall
-      'fire_ems': { lat: 38.3032, lon: -77.4605 },         // Fire Station area
-      'traffic_transit': { lat: 38.3032, lon: -77.4605 },  // Transit hub
-      'events': { lat: 38.2985, lon: -77.4689 },           // Riverfront / Downtown events area
-    };
-
-    // Check for specific keywords in text to refine location
-    if (text) {
-      const lowerText = text.toLowerCase();
-
-      // Courthouse/court-related
-      if (lowerText.match(/\b(court|judge|trial|hearing|lawsuit)\b/i)) {
-        return { lat: 38.3015, lon: -77.4596 };  // Courthouse
-      }
-
-      // Police/crime specific locations
-      if (lowerText.match(/\b(police\s+(?:station|hq|headquarters)|city\s+hall)\b/i)) {
-        return { lat: 38.3032, lon: -77.4605 };  // Police HQ
-      }
-
-      // Riverfront events
-      if (lowerText.match(/\b(riverfront|canal\s+path|city\s+dock|downtown)\b/i)) {
-        return { lat: 38.2985, lon: -77.4689 };  // Riverfront
-      }
-
-      // Hospital/medical
-      if (lowerText.match(/\b(hospital|medical|emergency\s+room|er\b|ems)\b/i)) {
-        return { lat: 38.3195, lon: -77.4844 };  // Mary Washington Hospital
-      }
-
-      // University events
-      if (lowerText.match(/\b(university|umw|mary\s+washington|college)\b/i)) {
-        return { lat: 38.2995, lon: -77.4785 };  // UMW campus
-      }
-
-      // Transit/bus
-      if (lowerText.match(/\b(fred\s+transit|bus|transit\s+center)\b/i)) {
-        return { lat: 38.3032, lon: -77.4605 };  // Transit hub
-      }
-    }
-
-    // Try category-based default
-    if (category && categoryDefaults[category]) {
-      return categoryDefaults[category];
-    }
-
-    // Fall back to jurisdiction default or source default
-    const jurisdictionDefaults = {
-      'Fredericksburg': { lat: 38.3032, lon: -77.4605 },
-      'Stafford': { lat: 38.4220, lon: -77.4083 },
-      'Spotsylvania': { lat: 38.1859, lon: -77.6526 },
-      'Regional': { lat: 38.2750, lon: -77.5000 }
-    };
-
-    return source.defaultLoc || jurisdictionDefaults[jurisdiction] || CONFIG.center;
+    const base = JURISDICTION_CENTROIDS[jurisdiction] || source.defaultLoc || CONFIG.center;
+    const offset = CATEGORY_CENTROID_OFFSETS[category] || { lat: 0, lon: 0 };
+    const centroid = { lat: base.lat + offset.lat, lon: base.lon + offset.lon };
+    return applyDeterministicJitter(centroid, seed);
   }
 
   /**
@@ -3205,7 +3197,7 @@
       if (CONFIG.debug.rssGeo) {
         console.log(`[Geocode] Cache hit for "${locationString}" in ${jurisdiction}: ${cached.lat}, ${cached.lon}`);
       }
-      return { lat: cached.lat, lon: cached.lon };
+      return { lat: cached.lat, lon: cached.lon, aoi: cached.aoi || null };
     }
 
     try {
@@ -3237,8 +3229,8 @@
         }
       }
 
-      geocodeCache.set(cacheKey, { lat, lon, timestamp: Date.now() });
-      return { lat, lon };
+      geocodeCache.set(cacheKey, { lat, lon, aoi: payload.aoi || null, timestamp: Date.now() });
+      return { lat, lon, aoi: payload.aoi || null };
     } catch (error) {
       if (CONFIG.debug.rssGeo) {
         console.warn(`[Geocode] Error geocoding "${locationString}":`, error.message);
@@ -3723,7 +3715,10 @@
       lat: null,
       lon: null,
       locationText: null,
-      locationMethod: null
+      locationMethod: null,
+      locationConfidence: null,
+      chosenCandidate: null,
+      flag: null
     };
 
     // Build search text from title and description
@@ -3743,8 +3738,10 @@
       const best = gazetteerCandidates[0]; // First gazetteer match wins
       result.lat = best.gazetteerLat;
       result.lon = best.gazetteerLon;
-      result.locationText = best.rawPhrase;
+      result.locationText = best.phrase;
       result.locationMethod = 'gazetteer';
+      result.locationConfidence = LOCATION_CONFIDENCE.gazetteer;
+      result.chosenCandidate = { phrase: best.phrase, type: best.type };
 
       if (CONFIG.debug.rssGeo) {
         console.log(`[Location] Gazetteer match: "${best.phrase}" -> ${result.lat}, ${result.lon}`);
@@ -3757,8 +3754,9 @@
     if (knownLocation) {
       result.lat = knownLocation.lat;
       result.lon = knownLocation.lon;
-      result.locationText = 'known location';
+      result.locationText = knownLocation.label || 'known location';
       result.locationMethod = 'override';
+      result.locationConfidence = LOCATION_CONFIDENCE.override;
 
       if (CONFIG.debug.rssGeo) {
         console.log(`[Location] Known location override -> ${result.lat}, ${result.lon}`);
@@ -3772,6 +3770,8 @@
     if (best) {
       // Enrich with jurisdiction context
       const enrichedPhrase = enrichCandidatePhrase(best.phrase, jurisdictionHint);
+      const baseConfidence = getLocationConfidenceForCandidate(best.type);
+      result.chosenCandidate = { phrase: best.rawPhrase, type: best.type };
 
       if (CONFIG.debug.rssGeo) {
         console.log(`[Location] Best candidate: [${best.type}] "${best.phrase}" (score: ${best.score})`);
@@ -3786,6 +3786,12 @@
         result.lon = geocoded.lon;
         result.locationText = best.rawPhrase;
         result.locationMethod = 'extract+geocode';
+        result.locationConfidence = baseConfidence;
+
+        if (geocoded.aoi === "outside" && LOCAL_JURISDICTIONS.has(String(jurisdictionHint || "").toLowerCase()) && baseConfidence >= 80) {
+          result.locationConfidence = Math.max(0, baseConfidence - 20);
+          result.flag = "outside_aoi";
+        }
 
         if (CONFIG.debug.rssGeo) {
           console.log(`[Location] Geocoded "${enrichedPhrase}" -> ${result.lat}, ${result.lon}`);
@@ -3805,11 +3811,13 @@
     }
 
     // Use intelligent category/content-based default
-    const fallbackLoc = getDefaultLocationForItem(source, null, textToSearch);
+    const fallbackSeed = `${source.id}|${item.guid || item.url || item.title || ""}|${item.published || ""}`;
+    const fallbackLoc = getFallbackLocationForItem({ source, category: source.category, seed: fallbackSeed });
     result.lat = fallbackLoc.lat;
     result.lon = fallbackLoc.lon;
     result.locationText = null;
     result.locationMethod = 'fallback';
+    result.locationConfidence = LOCATION_CONFIDENCE.fallback;
 
     return result;
   }
@@ -5026,13 +5034,23 @@
     const textForHeuristics = `${raw.title || ""} ${raw.summary || ""}`.trim();
     const picked = pickEmojiCategory(textForHeuristics, source.emoji, source.category, source.tone);
 
-    // CRITICAL: Never drop items due to missing geodata - always use intelligent default fallback
-    // This ensures all RSS items appear on the map even if they have no embedded coordinates
-    // Use intelligent defaults based on category and content keywords
-    const loc = raw.loc || getDefaultLocationForItem(source, picked.category, textForHeuristics);
-
     const publishedDate = toDate(raw.published);
     const maxAge = source.maxAgeHours ?? CONFIG.freshness.rssMaxAgeHours;
+    const fallbackSeed = `${source.id}|${raw.guid || raw.url || raw.title || ""}|${publishedDate ? publishedDate.toISOString() : ""}`;
+    const fallbackLoc = getFallbackLocationForItem({ source, category: picked.category, seed: fallbackSeed });
+
+    // CRITICAL: Never drop items due to missing geodata - always use deterministic fallback
+    let loc = raw.loc || fallbackLoc;
+    let locationMethod = raw.locationMethod || (raw.loc ? "override" : "fallback");
+    let locationConfidence = Number.isFinite(raw.locationConfidence) ? raw.locationConfidence : null;
+    if (locationMethod === "fallback") {
+      loc = fallbackLoc;
+      locationConfidence = LOCATION_CONFIDENCE.fallback;
+    } else if (!Number.isFinite(locationConfidence) && locationMethod in LOCATION_CONFIDENCE) {
+      locationConfidence = LOCATION_CONFIDENCE[locationMethod];
+    }
+
+    const locationText = raw.locationText || null;
 
     // Debug logging for filtering decisions (only when debug is enabled)
     if (!publishedDate) {
@@ -5063,8 +5081,11 @@
       lon: loc.lon,
       lng: loc.lon, // Ensure lng === lon for API compatibility
       // Location extraction metadata (Module 1 v2)
-      locationText: raw.locationText || null,
-      locationMethod: raw.locationMethod || 'default',
+      locationText,
+      locationMethod,
+      locationConfidence,
+      chosenCandidate: raw.chosenCandidate || null,
+      flag: raw.flag || null,
       category: picked.category,
       emoji: picked.emoji,
       tone: picked.tone || source.tone || "warn",
@@ -5161,10 +5182,18 @@
          </div>`
       : "";
 
+    const locationInfo = item.sourceType === "rss"
+      ? `<div style="font-size:11px; color:rgba(255,255,255,0.78); margin-top:8px; padding-top:6px; border-top:1px solid rgba(255,255,255,0.08);">
+           <div>📍 ${item.locationText ? escapeHtml(item.locationText) : "Unknown location"}</div>
+           <div style="margin-top:2px;">Method: ${escapeHtml(item.locationMethod || "unknown")}${Number.isFinite(item.locationConfidence) ? ` (${Math.round(item.locationConfidence)}%)` : ""}</div>
+         </div>`
+      : "";
+
     // Location debug info (only shown when rssGeo debug is enabled)
     const locationDebug = CONFIG.debug.rssGeo && item.locationMethod
-      ? `<div style="font-size:10px; color:rgba(126,240,255,0.6); margin-top:8px; padding-top:6px; border-top:1px solid rgba(255,255,255,0.1);">
-           📍 ${item.locationMethod}${item.locationText ? `: "${escapeHtml(item.locationText)}"` : ''}<br>
+      ? `<div style="font-size:10px; color:rgba(126,240,255,0.6); margin-top:6px; padding-top:6px; border-top:1px solid rgba(255,255,255,0.08);">
+           📍 ${escapeHtml(item.locationMethod)}${item.locationText ? `: "${escapeHtml(item.locationText)}"` : ""}<br>
+           ${item.chosenCandidate ? `Candidate: "${escapeHtml(item.chosenCandidate.phrase)}" [${escapeHtml(item.chosenCandidate.type)}]<br>` : ""}
            <span style="font-family:monospace">${item.lat?.toFixed(4)}, ${(item.lon ?? item.lng)?.toFixed(4)}</span>
          </div>`
       : "";
@@ -5175,6 +5204,7 @@
         <div style="color:rgba(255,255,255,.70); font-size:12px; margin-bottom:8px">${cat} • ${fmtTime(item.timestamp)}</div>
         ${cameraPreview}
         ${safeSummary ? `<div style="font-size:12px; line-height:1.35; color:rgba(255,255,255,.82); margin-bottom:10px">${safeSummary}</div>` : ""}
+        ${locationInfo}
         <a href="${item.url}" target="_blank" rel="noreferrer noopener" style="color:#7ef0ff; font-weight:800; text-decoration:none">Open source ↗</a>
         ${locationDebug}
       </div>
@@ -5675,7 +5705,9 @@ function selectItem(id) {
       // Skip if item already has location from GeoRSS
       if (item.loc) {
         // Store location method for transparency
-        item.locationMethod = 'georss';
+        item.locationMethod = 'override';
+        item.locationText = 'GeoRSS';
+        item.locationConfidence = LOCATION_CONFIDENCE.override;
         continue;
       }
 
@@ -5686,6 +5718,9 @@ function selectItem(id) {
         item.loc = { lat: resolved.lat, lon: resolved.lon };
         item.locationText = resolved.locationText;
         item.locationMethod = resolved.locationMethod;
+        item.locationConfidence = resolved.locationConfidence;
+        item.chosenCandidate = resolved.chosenCandidate || null;
+        item.flag = resolved.flag || null;
 
         if (CONFIG.debug.rss && resolved.locationMethod !== 'fallback') {
           console.log(`[Location] Resolved "${item.title?.slice(0, 50)}..." via ${resolved.locationMethod}: ${resolved.lat.toFixed(4)}, ${resolved.lon.toFixed(4)}${resolved.locationText ? ` ("${resolved.locationText}")` : ''}`);
@@ -5852,9 +5887,20 @@ function selectItem(id) {
     }
 
     setLastUpdate();
+    renderDiagnosticsRSSGeoSummary();
     redraw();
     store.locks.rss = false;
     return { results, diagnostics: store.diagnostics.rss };
+  }
+
+  function purgeRssItemsFromStore() {
+    const rssItems = Array.from(store.itemsById.values()).filter(item => item.sourceType === "rss");
+    for (const item of rssItems) {
+      if (item?.dedupeKey) {
+        store.seenKeys.delete(item.dedupeKey);
+      }
+      store.itemsById.delete(item.id);
+    }
   }
 
   // -----------------------------
@@ -8764,6 +8810,9 @@ function selectItem(id) {
   const diagnosticsRSSSummary = $("diagnosticsRSSSummary");
   const diagnosticsRSSList = $("diagnosticsRSSList");
   const diagnosticsRefreshRSS = $("diagnosticsRefreshRSS");
+  const diagnosticsRegeocodeRSS = $("diagnosticsRegeocodeRSS");
+  const diagnosticsRSSGeoSummary = $("diagnosticsRSSGeoSummary");
+  const diagnosticsRSSGeoList = $("diagnosticsRSSGeoList");
 
   let lastDiagnosticsPayload = null;
   let lastHealthPayload = null;
@@ -9112,6 +9161,91 @@ function selectItem(id) {
     diagnosticsRSSList.innerHTML = listHtml || "No RSS diagnostics data available.";
   }
 
+  function renderDiagnosticsRSSGeoSummary() {
+    const rssItems = Array.from(store.itemsById.values()).filter(item => item.sourceType === "rss");
+    const total = rssItems.length;
+    const methodCounts = { override: 0, gazetteer: 0, "extract+geocode": 0, fallback: 0, unknown: 0 };
+    const confidenceBands = { high: 0, mid: 0, low: 0, veryLow: 0 };
+    const unresolved = [];
+
+    for (const item of rssItems) {
+      const method = item.locationMethod || "unknown";
+      if (method in methodCounts) {
+        methodCounts[method]++;
+      } else {
+        methodCounts.unknown++;
+      }
+
+      const confidence = Number.isFinite(item.locationConfidence) ? item.locationConfidence : 0;
+      if (confidence >= 80) {
+        confidenceBands.high++;
+      } else if (confidence >= 60) {
+        confidenceBands.mid++;
+      } else if (confidence >= 40) {
+        confidenceBands.low++;
+      } else {
+        confidenceBands.veryLow++;
+      }
+
+      if (method === "fallback") {
+        unresolved.push(item);
+      }
+    }
+
+    unresolved.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+    const topUnresolved = unresolved.slice(0, 10);
+
+    const summaryHtml = `
+      <div class="diagnosticsRow">
+        <div>
+          <div class="diagnosticsRow__title">Total RSS items</div>
+          <div>${total}</div>
+        </div>
+        <div class="diagnosticsBadge diagnosticsBadge--ok">${total}</div>
+      </div>
+      <div class="diagnosticsRow">
+        <div>
+          <div class="diagnosticsRow__title">Methods</div>
+          <div>override ${methodCounts.override} • gazetteer ${methodCounts.gazetteer} • extract ${methodCounts["extract+geocode"]} • fallback ${methodCounts.fallback}</div>
+        </div>
+        <div class="diagnosticsBadge ${methodCounts.fallback > 0 ? "diagnosticsBadge--warn" : "diagnosticsBadge--ok"}">${methodCounts.fallback}</div>
+      </div>
+      <div class="diagnosticsRow">
+        <div>
+          <div class="diagnosticsRow__title">Confidence</div>
+          <div>≥80: ${confidenceBands.high} • 60-79: ${confidenceBands.mid} • 40-59: ${confidenceBands.low} • &lt;40: ${confidenceBands.veryLow}</div>
+        </div>
+        <div class="diagnosticsBadge diagnosticsBadge--ok">${confidenceBands.high}</div>
+      </div>
+    `;
+
+    const listHtml = topUnresolved.length
+      ? `<div style="margin-bottom:6px;color:var(--warn);font-weight:500;">Top unresolved (fallback)</div>` +
+        topUnresolved.map((item, index) => `
+          <div class="diagnosticsRow" style="border-left:3px solid var(--warn);padding-left:8px;margin-bottom:4px;">
+            <div>
+              <div class="diagnosticsRow__title" style="font-size:12px;">${index + 1}. ${escapeHtml(item.title || "(untitled)")}</div>
+              <div style="font-size:10px;color:var(--muted2);">${escapeHtml(item.sourceName || item.sourceId || "")}</div>
+            </div>
+            <div class="diagnosticsBadge diagnosticsBadge--warn">FALLBACK</div>
+          </div>
+        `).join("")
+      : `<div style="color:var(--ok);font-weight:500;">No fallback items detected.</div>`;
+
+    if (!diagnosticsRSSGeoSummary || !diagnosticsRSSGeoList) {
+      console.log("[RSS Geo Summary]", {
+        total,
+        methodCounts,
+        confidenceBands,
+        unresolved: topUnresolved.map(item => item.title)
+      });
+      return;
+    }
+
+    diagnosticsRSSGeoSummary.innerHTML = summaryHtml;
+    diagnosticsRSSGeoList.innerHTML = listHtml;
+  }
+
   // Store last known data for offline fallback
   let lastKnownDiagnostics = null;
 
@@ -9121,6 +9255,8 @@ function selectItem(id) {
     if (diagnosticsUpstreams) diagnosticsUpstreams.textContent = "Loading…";
     if (diagnosticsUpstreamTests) diagnosticsUpstreamTests.textContent = "Run “Test Upstreams” to see results.";
     if (diagnosticsCache) diagnosticsCache.textContent = "Loading…";
+    if (diagnosticsRSSGeoSummary) diagnosticsRSSGeoSummary.textContent = "Loading…";
+    if (diagnosticsRSSGeoList) diagnosticsRSSGeoList.textContent = "Loading…";
 
     // Fetch from new endpoints (with fallback to legacy)
     const [healthRes, upstreamRes, cacheRes, crimeStatusRes] = await Promise.all([
@@ -9147,6 +9283,7 @@ function selectItem(id) {
       renderDiagnosticsUpstreams(lastKnownDiagnostics.upstreams?.upstreams || null);
       renderDiagnosticsCache(lastKnownDiagnostics.cache || null);
       renderDiagnosticsRSS();
+      renderDiagnosticsRSSGeoSummary();
       return;
     }
 
@@ -9155,6 +9292,7 @@ function selectItem(id) {
     renderDiagnosticsUpstreams(upstreamList);
     renderDiagnosticsCache(cacheRes.data || null);
     renderDiagnosticsRSS();
+    renderDiagnosticsRSSGeoSummary();
 
     lastDiagnosticsPayload = {
       fetchedAt: new Date().toISOString(),
@@ -9268,12 +9406,31 @@ function selectItem(id) {
       try {
         await pollRSS(true);  // Force refresh, bypass backoff
         renderDiagnosticsRSS();
+        renderDiagnosticsRSSGeoSummary();
         redraw();
       } catch (err) {
         console.warn("[Diagnostics] RSS refresh failed:", err);
       } finally {
         diagnosticsRefreshRSS.disabled = false;
         diagnosticsRefreshRSS.textContent = "Refresh RSS";
+      }
+    });
+  }
+  if (diagnosticsRegeocodeRSS) {
+    diagnosticsRegeocodeRSS.addEventListener("click", async () => {
+      diagnosticsRegeocodeRSS.disabled = true;
+      diagnosticsRegeocodeRSS.textContent = "Re-geocoding…";
+      try {
+        purgeRssItemsFromStore();
+        await pollRSS(true);
+        renderDiagnosticsRSS();
+        renderDiagnosticsRSSGeoSummary();
+        redraw();
+      } catch (err) {
+        console.warn("[Diagnostics] RSS re-geocode failed:", err);
+      } finally {
+        diagnosticsRegeocodeRSS.disabled = false;
+        diagnosticsRegeocodeRSS.textContent = "Re-geocode RSS";
       }
     });
   }
