@@ -4509,7 +4509,8 @@
       tone: picked.tone || source.tone || "warn",
       sourceName: source.name,
       sourceId: source.id,
-      jurisdiction: source.jurisdiction || "Unknown",
+      sourceType: source.type || "unknown",
+      jurisdiction: source.jurisdiction || "Regional",
       url: raw.url || source.url,
       summary: raw.summary || "",
       message: raw.message || raw.summary || "",
@@ -7986,19 +7987,26 @@ function selectItem(id) {
     // Get all items from the store
     const allItems = Array.from(store.itemsById.values());
 
-    // Filter items based on category and jurisdiction
-    let filtered = allItems.filter(item => {
-      // Apply category filter
+    // Base set: all RSS-sourced items (not hardcoded category allowlist)
+    const rssItems = allItems.filter(item => item.sourceType === "rss");
+    const totalRssCount = rssItems.length;
+
+    // Apply category filter if not "all"
+    let filtered = rssItems.filter(item => {
       if (newsFlashFilter !== "all" && item.category !== newsFlashFilter) return false;
+      return true;
+    });
 
-      // Apply jurisdiction filter
-      if (newsFlashJurisdiction !== "all" && item.jurisdiction !== newsFlashJurisdiction) return false;
-
-      // Only show RSS/news items (not traffic incidents, crashes, etc.)
-      return item.category === "news" || item.category === "alerts" ||
-             item.category === "events" || item.category === "fire_ems" ||
-             item.category === "traffic_transit" || item.category === "police_crime" ||
-             item.category === "government";
+    // Apply jurisdiction filter if not "all"
+    // Use normalization: treat "Regional" as a fallback that also matches items with missing/unknown jurisdiction
+    filtered = filtered.filter(item => {
+      if (newsFlashJurisdiction === "all") return true;
+      const itemJurisdiction = item.jurisdiction || "Regional";
+      if (newsFlashJurisdiction === "Regional") {
+        // Regional matches exact "Regional" or fallback cases
+        return itemJurisdiction === "Regional" || itemJurisdiction === "Unknown";
+      }
+      return itemJurisdiction === newsFlashJurisdiction;
     });
 
     // Sort by published date (newest first)
@@ -8009,15 +8017,16 @@ function selectItem(id) {
     });
 
     // Take top 50 items
+    const displayCount = Math.min(filtered.length, 50);
     filtered = filtered.slice(0, 50);
 
     // Render items
     if (filtered.length === 0) {
-      body.innerHTML = '<div class="newsFlashPanel__loading">No news items match the selected filters.</div>';
+      body.innerHTML = `<div class="newsFlashPanel__count">Showing 0 of ${totalRssCount} RSS items</div><div class="newsFlashPanel__loading">No news items match the selected filters.</div>`;
       return;
     }
 
-    body.innerHTML = filtered.map(item => {
+    body.innerHTML = `<div class="newsFlashPanel__count">Showing ${displayCount} of ${totalRssCount} RSS items</div>` + filtered.map(item => {
       const emoji = item.emoji || "📰";
       const title = escapeHtml(item.title || "Untitled");
       const summary = escapeHtml((item.summary || item.message || "No description").slice(0, 200));
