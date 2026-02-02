@@ -2212,6 +2212,26 @@
     return lat >= bbox.minLat && lat <= bbox.maxLat && lon >= bbox.minLon && lon <= bbox.maxLon;
   }
 
+  /**
+   * Standardize coordinate keys on an item object.
+   * Ensures every item has: lat (number), lon (number), lng (number) where lng === lon
+   * @param {Object} item - The item to normalize (mutated in place)
+   * @returns {Object} The same item with standardized coordinates
+   */
+  function ensureLatLon(item) {
+    if (!item) return item;
+    // Normalize lat
+    const lat = Number(item.lat ?? item.latitude ?? item.LAT ?? item.y);
+    // Normalize lon (prefer lon, then lng, then other variants)
+    const lon = Number(item.lon ?? item.lng ?? item.longitude ?? item.LON ?? item.x);
+    if (Number.isFinite(lat)) item.lat = lat;
+    if (Number.isFinite(lon)) {
+      item.lon = lon;
+      item.lng = lon; // Ensure lng === lon for API compatibility
+    }
+    return item;
+  }
+
   // Returns the appropriate bbox for an item: poiBbox for POIs, otherwise the default bbox
   function getBboxForItem(item) {
     if (item?.meta?.isPoi) {
@@ -4504,6 +4524,7 @@
       published: publishedDate.toISOString(),
       lat: loc.lat,
       lon: loc.lon,
+      lng: loc.lon, // Ensure lng === lon for API compatibility
       category: picked.category,
       emoji: picked.emoji,
       tone: picked.tone || source.tone || "warn",
@@ -4612,7 +4633,9 @@
   }
 
   function attachMarker(item) {
-    const m = L.marker([item.lat, item.lon], { icon: makeEmojiIcon(item.emoji, item.tone, item.sourceId) });
+    // Use fallback pattern: prefer lon, fall back to lng for API compatibility
+    const lng = item.lon ?? item.lng;
+    const m = L.marker([item.lat, lng], { icon: makeEmojiIcon(item.emoji, item.tone, item.sourceId) });
     m.on("click", () => selectItem(item.id));
     m.bindPopup(renderPopup(item), { closeButton: false });
     clusters.addLayer(m);
@@ -5742,6 +5765,7 @@ function selectItem(id) {
         timestamp: new Date().toISOString(),
         lat,
         lon,
+        lng: lon, // Ensure lng === lon for API compatibility
         emoji: getCameraEmoji({ sourceId: "va511-cameras", sourceName: "511 Virginia", url: finalPageUrl }),
         tone: "good",
         media,
@@ -6006,6 +6030,7 @@ function selectItem(id) {
         timestamp: new Date().toISOString(),
         lat,
         lon,
+        lng: lon, // Ensure lng === lon for API compatibility
         emoji: getCameraEmoji({ sourceId, sourceName: cam.name, url: cam.url, type: cam.type }),
         tone: "good",
         media,
@@ -6088,10 +6113,10 @@ function selectItem(id) {
     let skippedInvalid = 0;
     let skippedOutOfBounds = 0;
 
-    // Debug: log first 5 schools with raw fields and computed coordinates
+    // Debug: log first 10 schools with raw fields and computed coordinates
     if (DEBUG_SCHOOLS) {
-      console.log("[Schools] DEBUG_SCHOOLS enabled - logging first 5 schools:");
-      schools.slice(0, 5).forEach((s, i) => {
+      console.log("[Schools] DEBUG_SCHOOLS enabled - logging first 10 schools:");
+      schools.slice(0, 10).forEach((s, i) => {
         const ll = getSchoolLatLng(s);
         console.log(`[Schools] ${i + 1}. "${s.name}"`, {
           raw: { lat: s.lat, lon: s.lon, latitude: s.latitude, longitude: s.longitude, lng: s.lng, x: s.x, y: s.y },
@@ -6111,6 +6136,13 @@ function selectItem(id) {
           skippedInvalid++;
         } else {
           skippedOutOfBounds++;
+          // Log warning with raw record for schools outside CONFIG.poiBbox
+          console.warn(`[Schools] Skipped out-of-bounds school:`, {
+            id: school.ncesId || school.id || 'unknown',
+            name: school.name,
+            lat: rawLat,
+            lon: rawLon
+          });
         }
         continue;
       }
@@ -6141,10 +6173,17 @@ function selectItem(id) {
         schoolDetails += `<p style="margin:0 0 8px 0;color:#FFFFFF;font-size:13px;"><strong style="color:#00E5FF;">📞 Phone:</strong> ${escapeHtml(school.phone)}</p>`;
       }
 
-      // Debug mode: show coordinates for verification
-      if (CONFIG.debug.poiCoords) {
-        schoolDetails += `<p style="margin:8px 0;color:#888;font-size:11px;font-family:monospace;"><strong>📍 Coords:</strong> ${lat.toFixed(6)}, ${lon.toFixed(6)}</p>`;
+      // Debug mode: show name, lat/lon, address for verification (enabled via DEBUG_SCHOOLS or poiCoords)
+      if (DEBUG_SCHOOLS || CONFIG.debug.poiCoords) {
+        schoolDetails += `<div style="margin-top:10px;padding:8px;background:rgba(255,215,0,0.1);border:1px dashed #FFD700;border-radius:4px;">`;
+        schoolDetails += `<p style="margin:0 0 4px 0;color:#FFD700;font-size:11px;font-weight:bold;">🔧 DEBUG INFO</p>`;
+        schoolDetails += `<p style="margin:0 0 4px 0;color:#888;font-size:11px;font-family:monospace;"><strong>Name:</strong> ${escapeHtml(school.name)}</p>`;
+        schoolDetails += `<p style="margin:0 0 4px 0;color:#888;font-size:11px;font-family:monospace;"><strong>Lat/Lon:</strong> ${lat.toFixed(6)}, ${lon.toFixed(6)}</p>`;
+        if (school.address) {
+          schoolDetails += `<p style="margin:0 0 4px 0;color:#888;font-size:11px;font-family:monospace;"><strong>Address:</strong> ${escapeHtml(school.address)}</p>`;
+        }
         schoolDetails += `<button onclick="navigator.clipboard.writeText('${lat.toFixed(6)}, ${lon.toFixed(6)}')" style="font-size:10px;padding:4px 8px;background:#444;color:#fff;border:none;border-radius:4px;cursor:pointer;">Copy coords</button>`;
+        schoolDetails += `</div>`;
       }
 
       schoolDetails += `</div>`;
@@ -6161,6 +6200,7 @@ function selectItem(id) {
         timestamp: new Date().toISOString(),
         lat,
         lon,
+        lng: lon, // Ensure lng === lon for API compatibility
         emoji: "🏫",
         tone: "good",
         dedupeKey: key,
@@ -6286,6 +6326,7 @@ function selectItem(id) {
         timestamp: new Date().toISOString(),
         lat,
         lon,
+        lng: lon, // Ensure lng === lon for API compatibility
         emoji: "🎓",
         tone: "good",
         dedupeKey: key,
