@@ -9966,7 +9966,13 @@ function selectItem(id) {
 
   // Attach header event listeners (chips and buttons)
   // Must be called AFTER initDesktopHeader() and dedupeHeaderIdsForDesktop()
+  let __headerListenersAttached = false;
+
   function attachHeaderEventListeners() {
+    // Guard against duplicate listener attachment
+    if (__headerListenersAttached) return;
+    __headerListenersAttached = true;
+
     // Refresh button
     const btnRefresh = $("btnRefresh");
     if (btnRefresh) {
@@ -10030,7 +10036,9 @@ function selectItem(id) {
     }
 
     // Report button
-    const btnReport = $("btnReport");
+    const btnReport = IS_MOBILE_UI
+      ? (document.getElementById("btnReportMobile") || document.getElementById("btnReport"))
+      : document.getElementById("btnReport");
     if (btnReport) {
       btnReport.addEventListener("click", () => {
         const panel = $("reportPanel");
@@ -10049,7 +10057,9 @@ function selectItem(id) {
     }
 
     // News Flash button
-    const btnNewsFlash = $("btnNewsFlash");
+    const btnNewsFlash = IS_MOBILE_UI
+      ? (document.getElementById("btnNewsFlashMobile") || document.getElementById("btnNewsFlash"))
+      : document.getElementById("btnNewsFlash");
     if (btnNewsFlash) {
       btnNewsFlash.addEventListener("click", () => {
         const panel = $("newsFlashPanel");
@@ -10070,7 +10080,9 @@ function selectItem(id) {
     }
 
     // Radio Scanner button
-    const btnRadioScanner = $("btnRadioScanner");
+    const btnRadioScanner = IS_MOBILE_UI
+      ? (document.getElementById("btnRadioScannerMobile") || document.getElementById("btnRadioScanner"))
+      : document.getElementById("btnRadioScanner");
     if (btnRadioScanner) {
       btnRadioScanner.addEventListener("click", () => {
         const panel = $("radioPanel");
@@ -10135,6 +10147,7 @@ function selectItem(id) {
       if (desktopHeader) desktopHeader.innerHTML = "";
       // Mobile mode: attach event listeners to mobile header elements (only once or when switching from desktop)
       if (!__mobileListenersAttached || changed) {
+        __headerListenersAttached = false; // Reset guard to allow re-attachment
         attachHeaderEventListeners();
         __mobileListenersAttached = true;
       }
@@ -10146,6 +10159,7 @@ function selectItem(id) {
     __mobileListenersAttached = false; // Reset flag when leaving mobile mode
     dedupeHeaderIdsForDesktop();
     initDesktopHeader();
+    __headerListenersAttached = false; // Reset guard since initDesktopHeader() recreated HTML
     attachHeaderEventListeners();
   }
 
