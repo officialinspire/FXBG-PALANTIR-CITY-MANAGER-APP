@@ -4245,10 +4245,12 @@
     }
   }
 
-  function applyUserLocation({ lat, lng, accuracy, zoom, persist = true, animate = true } = {}) {
+  function applyUserLocation({ lat, lng, accuracy, zoom, persist = true, animate = true, center = true } = {}) {
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
     const nextZoom = Number.isFinite(zoom) ? zoom : 15;
-    map.setView([lat, lng], nextZoom, { animate });
+    if (center) {
+      map.setView([lat, lng], nextZoom, { animate });
+    }
     updateUserLocationMarker(lat, lng, accuracy);
     currentUserLocation = { lat, lng, accuracy, ts: Date.now() };
     if (persist) {
@@ -4308,7 +4310,8 @@
           lng: coords.longitude,
           accuracy: coords.accuracy,
           zoom: map.getZoom() || 15,
-          animate: false
+          animate: false,
+          center: false
         });
       },
       (err) => {
@@ -4332,7 +4335,7 @@
     if (locationEnabled) {
       const storedLocation = readStoredLocation();
       if (storedLocation) {
-        applyUserLocation({ ...storedLocation, persist: false, animate: false, zoom: storedLocation.zoom });
+        applyUserLocation({ ...storedLocation, persist: false, animate: false, center: false, zoom: storedLocation.zoom });
       }
       locateUser({ animate: true });
       startLocationWatch();
