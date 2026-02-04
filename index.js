@@ -4851,12 +4851,44 @@
     window.matchMedia?.("(max-width: 980px)")?.matches &&
     window.matchMedia?.("(orientation: landscape)")?.matches;
 
+  // Keep CSS chrome heights in sync with actual header size (mobile wrap/safe-area/collapse).
+  function getSafeAreaTopInsetPx() {
+    const root = document.documentElement;
+    const body = document.body;
+    if (!root || !body) return 0;
+    const probe = document.createElement("div");
+    probe.style.cssText = "position:fixed;top:0;left:0;height:0;padding-top:env(safe-area-inset-top);visibility:hidden;";
+    body.appendChild(probe);
+    const paddingTop = parseFloat(getComputedStyle(probe).paddingTop) || 0;
+    probe.remove();
+    return paddingTop;
+  }
+
+  function computeVisibleHeaderHeight() {
+    if (IS_MOBILE_UI) {
+      const mobileHeader = document.getElementById("mobileHeader");
+      if (!mobileHeader || mobileHeader.classList.contains("mobileHeader--collapsed")) return 0;
+      return mobileHeader.offsetHeight || 0;
+    }
+    const desktopHeader = document.getElementById("desktopHeader");
+    return desktopHeader?.offsetHeight || 0;
+  }
+
+  function updateChromeHeights() {
+    const root = document.documentElement;
+    if (!root) return;
+    const safeAreaTop = getSafeAreaTopInsetPx();
+    const top = computeVisibleHeaderHeight() + safeAreaTop;
+    root.style.setProperty("--topH", `${Math.max(0, Math.round(top))}px`);
+  }
+
   // Mobile header collapse helper (for NewsFlash/Radio panels)
   function setMobileHeaderCollapsed(collapsed) {
     if (!IS_MOBILE_UI) return;
     const el = document.getElementById("mobileHeader");
     if (!el) return;
     el.classList.toggle("mobileHeader--collapsed", !!collapsed);
+    updateChromeHeights();
   }
 
   // Helper to restore header if no blocking panels are open
@@ -11930,6 +11962,7 @@
   // -----------------------------
   let __uiSyncTimer = null;
   let __mobileListenersAttached = false;
+  let __chromeHeightTimer = null;
 
   function syncUiMode() {
     const next = computeIsMobileUI();
@@ -11952,6 +11985,7 @@
         attachHeaderEventListeners();
         __mobileListenersAttached = true;
       }
+      updateChromeHeights();
       return;
     }
 
@@ -11962,6 +11996,7 @@
     initDesktopHeader();
     __headerListenersAttached = false; // Reset guard since initDesktopHeader() recreated HTML
     attachHeaderEventListeners();
+    updateChromeHeights();
   }
 
   function scheduleSyncUiMode() {
@@ -11969,8 +12004,19 @@
     __uiSyncTimer = setTimeout(syncUiMode, 150);
   }
 
-  window.addEventListener("resize", scheduleSyncUiMode);
-  window.addEventListener("orientationchange", () => setTimeout(syncUiMode, 250));
+  function scheduleChromeHeightUpdate() {
+    clearTimeout(__chromeHeightTimer);
+    __chromeHeightTimer = setTimeout(updateChromeHeights, 150);
+  }
+
+  window.addEventListener("resize", () => {
+    scheduleSyncUiMode();
+    scheduleChromeHeightUpdate();
+  });
+  window.addEventListener("orientationchange", () => {
+    scheduleSyncUiMode();
+    scheduleChromeHeightUpdate();
+  });
 
   // -----------------------------
   // Boot + timers
@@ -11999,6 +12045,7 @@
   fetchReports({ sinceDays: 90 });
 
   syncUiMode();
+  updateChromeHeights();
   updateCrimeButtonActiveState();
   ensureOverlayLegendControl();
 
