@@ -11798,6 +11798,11 @@
           <span class="dot" id="airDot"></span>
           <span id="airText">AQI: …</span>
         </div>
+
+        <div class="chip" id="chipCameras" title="VA 511 Traffic Camera Status">
+          <span class="dot" id="camerasDot"></span>
+          <span id="camerasText">Cameras: …</span>
+        </div>
       </div>
 
       <div class="topbar__right">
@@ -11842,6 +11847,8 @@
     const btnRefresh = $("btnRefresh");
     if (btnRefresh) {
       btnRefresh.addEventListener("click", refreshAll);
+    } else if (CONFIG.debug?.uiSanity) {
+      console.warn('[UI] Missing element: #btnRefresh');
     }
 
     // Crime Reports button
@@ -11898,6 +11905,8 @@
           pressTimer = null;
         }
       });
+    } else if (CONFIG.debug?.uiSanity) {
+      console.warn('[UI] Missing element: #btnCrime');
     }
 
     // Report button
@@ -11919,6 +11928,8 @@
           restoreHeaderIfNoBlockingPanels();
         }
       });
+    } else if (CONFIG.debug?.uiSanity) {
+      console.warn('[UI] Missing element: #btnReport');
     }
 
     // News Flash button
@@ -11942,6 +11953,8 @@
           restoreHeaderIfNoBlockingPanels(); // Restore header if no other panels are open
         }
       });
+    } else if (CONFIG.debug?.uiSanity) {
+      console.warn('[UI] Missing element: #btnNewsFlash');
     }
 
     // Radio Scanner button
@@ -11964,6 +11977,8 @@
           restoreHeaderIfNoBlockingPanels(); // Restore header if no other panels are open
         }
       });
+    } else if (CONFIG.debug?.uiSanity) {
+      console.warn('[UI] Missing element: #btnRadioScanner');
     }
 
     // Header chips to dock tabs
@@ -11972,6 +11987,8 @@
       chipLive.addEventListener("click", () => {
         openDock("system");
       });
+    } else if (CONFIG.debug?.uiSanity) {
+      console.warn('[UI] Missing element: #chipLive');
     }
 
     const chipWeather = $("chipWeather");
@@ -11979,6 +11996,8 @@
       chipWeather.addEventListener("click", () => {
         openDock("overview");
       });
+    } else if (CONFIG.debug?.uiSanity) {
+      console.warn('[UI] Missing element: #chipWeather');
     }
 
     const chipTraffic = $("chipTraffic");
@@ -11986,6 +12005,8 @@
       chipTraffic.addEventListener("click", () => {
         openDock("sources");
       });
+    } else if (CONFIG.debug?.uiSanity) {
+      console.warn('[UI] Missing element: #chipTraffic');
     }
   }
 
