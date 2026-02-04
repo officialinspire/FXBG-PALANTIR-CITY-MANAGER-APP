@@ -2051,35 +2051,46 @@
   }
 
   // Sound effects system using Web Audio API
-  const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+  // AudioContext is created lazily on first user interaction to avoid browser warnings
+  let audioContext = null;
+  function getAudioContext() {
+    if (!audioContext) {
+      audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    }
+    if (audioContext.state === 'suspended') {
+      audioContext.resume();
+    }
+    return audioContext;
+  }
 
   function playClickSound(type = 'default') {
     try {
-      const oscillator = audioContext.createOscillator();
-      const gainNode = audioContext.createGain();
+      const ctx = getAudioContext();
+      const oscillator = ctx.createOscillator();
+      const gainNode = ctx.createGain();
 
       oscillator.connect(gainNode);
-      gainNode.connect(audioContext.destination);
+      gainNode.connect(ctx.destination);
 
       // Different sounds for different button types
       if (type === 'close') {
         oscillator.frequency.value = 400;
-        gainNode.gain.setValueAtTime(0.08, audioContext.currentTime);
-        gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.15);
+        gainNode.gain.setValueAtTime(0.08, ctx.currentTime);
+        gainNode.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.15);
       } else if (type === 'open') {
         oscillator.frequency.value = 600;
-        gainNode.gain.setValueAtTime(0.08, audioContext.currentTime);
-        gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.15);
+        gainNode.gain.setValueAtTime(0.08, ctx.currentTime);
+        gainNode.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.15);
       } else {
         // Default click
         oscillator.frequency.value = 500;
-        gainNode.gain.setValueAtTime(0.06, audioContext.currentTime);
-        gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.1);
+        gainNode.gain.setValueAtTime(0.06, ctx.currentTime);
+        gainNode.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.1);
       }
 
       oscillator.type = 'sine';
-      oscillator.start(audioContext.currentTime);
-      oscillator.stop(audioContext.currentTime + 0.15);
+      oscillator.start(ctx.currentTime);
+      oscillator.stop(ctx.currentTime + 0.15);
     } catch (e) {
       // Silently fail if audio context is not available
       console.debug('Audio playback not available:', e);
@@ -10660,14 +10671,24 @@
   }
 
   function updateAlertsPanel() {
-    if (dockState.isOpen && dockState.tab === "alerts") {
-      renderDock();
+    // Guard against access before dockState initialization (TDZ)
+    try {
+      if (dockState && dockState.isOpen && dockState.tab === "alerts") {
+        renderDock();
+      }
+    } catch (e) {
+      // dockState not yet initialized, skip update
     }
   }
 
   function updateWatchboardPanel() {
-    if (dockState.isOpen && dockState.tab === "watchboard") {
-      renderDock();
+    // Guard against access before dockState initialization (TDZ)
+    try {
+      if (dockState && dockState.isOpen && dockState.tab === "watchboard") {
+        renderDock();
+      }
+    } catch (e) {
+      // dockState not yet initialized, skip update
     }
   }
 
