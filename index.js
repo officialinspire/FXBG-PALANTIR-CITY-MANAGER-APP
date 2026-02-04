@@ -4085,6 +4085,7 @@
   map.addLayer(clusters);
 
   const reportsLayer = L.layerGroup().addTo(map);
+  let storeReady = false;
 
   // -----------------------------
   // Location Awareness
@@ -4175,8 +4176,10 @@
     if (persist) {
       saveStoredLocation({ lat, lng, accuracy, zoom: nextZoom });
     }
-    updateNearestPanel();
-    evaluateAlertRules();
+    if (storeReady) {
+      updateNearestPanel();
+      evaluateAlertRules();
+    }
   }
 
   function locateUser({ animate = true } = {}) {
@@ -4212,7 +4215,9 @@
       userLocationCircle = null;
     }
     currentUserLocation = null;
-    updateNearestPanel();
+    if (storeReady) {
+      updateNearestPanel();
+    }
   }
 
   function startLocationWatch() {
@@ -5255,6 +5260,11 @@
 
   loadCameraPins();
   loadAlertPrefs();
+  storeReady = true;
+  if (currentUserLocation) {
+    updateNearestPanel();
+    evaluateAlertRules();
+  }
 
   const CAMERA_REFRESH_MIN_MS = CONFIG.cameras.refreshMinMs;
   const CAMERA_PIN_MAX = 9;
