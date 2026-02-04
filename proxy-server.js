@@ -1405,9 +1405,11 @@ async function proxyFetch(targetUrl, reqHeaders) {
 
       // VA511 camera snapshot fix: Override Referer/Origin for VA511 hosts to prevent 403
       // VA511 enforces anti-hotlinking and rejects requests with localhost referer
+      // Include iteriscdn.com which hosts VA511 GeoJSON data (incidents, cameras, etc.)
       const targetHost = new URL(targetUrl).hostname;
       const isVa511Host = targetHost.includes("511virginia.org") ||
-                          targetHost.includes("511.vdot.virginia.gov");
+                          targetHost.includes("511.vdot.virginia.gov") ||
+                          targetHost.includes("iteriscdn.com");
 
       if (isVa511Host) {
         // Force approved VA511 referrer/origin (overrides client's localhost referer)
