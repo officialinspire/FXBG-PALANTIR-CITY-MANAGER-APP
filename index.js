@@ -78,6 +78,19 @@
       cdc: 24 * 60 * 60 * 1000     // CDC data updates daily
     },
 
+    location: {
+      enabledByDefault: false,
+      watchOptions: {
+        enableHighAccuracy: true,
+        timeout: 8000,
+        maximumAge: 60000
+      }
+    },
+
+    cameras: {
+      refreshMinMs: 15000
+    },
+
     // Round 3: Load shedding + adaptive polling (reliability improvements)
     reliability: {
       // Per-refresh cycle budgets (prevent request storms)
@@ -110,6 +123,22 @@
         targetSource: null,          // e.g., 'rss', 'va511', 'arcgisCrash', etc.
         failureType: '429'           // '429', 'timeout', '500', etc.
       }
+    },
+
+    alertRules: {
+      enabled: true,
+      pollingMs: 60 * 1000,
+      rules: [
+        {
+          id: "nearby-severe",
+          label: "Nearby severe incidents",
+          withinMiles: 5,
+          minSeverity: 2,
+          types: ["crash", "traffic", "closure", "road_closure", "fire_ems", "police_crime", "alerts"],
+          sound: true,
+          vibrate: true
+        }
+      ]
     },
 
     // CORS proxy rotation (browser-only)
@@ -858,6 +887,81 @@
           url: "https://www.weatherbug.com/traffic-cam/?zip=20745",
           thumb: "https://cam.weatherbug.com/images/cams/KNHMD_thumb.jpg",
           type: "weatherbug"
+        },
+        // Police Departments
+        {
+          id: "police_fxbg",
+          name: "Fredericksburg Police Department",
+          lat: 38.3032,
+          lon: -77.4605,
+          url: "https://www.fredericksburgva.gov/322/Police-Department",
+          type: "police",
+          address: "Fredericksburg, VA"
+        },
+        {
+          id: "police_spotsy",
+          name: "Spotsylvania Sheriff's Office",
+          lat: 38.2047,
+          lon: -77.6078,
+          url: "https://www.spotsylvania.va.us/162/Sheriffs-Office",
+          type: "police",
+          address: "Spotsylvania, VA"
+        },
+        {
+          id: "police_stafford",
+          name: "Stafford Sheriff's Office",
+          lat: 38.4226,
+          lon: -77.4083,
+          url: "https://www.staffordcountyva.gov/162/Sheriffs-Office",
+          type: "police",
+          address: "Stafford, VA"
+        },
+        // Fire & Rescue
+        {
+          id: "fire_fxbg",
+          name: "Fredericksburg Fire Department",
+          lat: 38.3016,
+          lon: -77.4601,
+          url: "https://www.fredericksburgva.gov/150/Fire-Department",
+          type: "fire",
+          address: "Fredericksburg, VA"
+        },
+        {
+          id: "fire_spotsy",
+          name: "Spotsylvania Fire & Rescue",
+          lat: 38.2043,
+          lon: -77.6074,
+          url: "https://www.spotsylvania.va.us/163/Fire-Rescue",
+          type: "fire",
+          address: "Spotsylvania, VA"
+        },
+        {
+          id: "fire_stafford",
+          name: "Stafford Fire & Rescue",
+          lat: 38.4228,
+          lon: -77.4080,
+          url: "https://www.staffordcountyva.gov/503/Fire-Rescue",
+          type: "fire",
+          address: "Stafford, VA"
+        },
+        // Shelters
+        {
+          id: "shelter_fxbg_salvation",
+          name: "Salvation Army - Fredericksburg Corps",
+          lat: 38.3036,
+          lon: -77.4624,
+          url: "https://fredericksburg.salvationarmy.org/",
+          type: "shelter",
+          address: "Fredericksburg, VA"
+        },
+        {
+          id: "shelter_thurman_br",
+          name: "Thurman Brisben Center",
+          lat: 38.3002,
+          lon: -77.4677,
+          url: "https://thurmanbrisbencenter.org/",
+          type: "shelter",
+          address: "Fredericksburg, VA"
         },
         // HOSPITALS - Major hospitals in the region
         {
@@ -1784,6 +1888,7 @@
     uv_index:                 { label: "UV Index", emoji: "☀️" },
     hospital:                 { label: "Hospitals", emoji: "🏥" },
     clinic:                   { label: "Clinics", emoji: "⚕️" },
+    shelter:                  { label: "Shelters", emoji: "🛟" },
     school:                   { label: "Schools", emoji: "🏫" },
     college:                  { label: "Colleges/Universities", emoji: "🎓" },
     // Legacy categories (for backwards compatibility with existing data sources)
@@ -2276,6 +2381,9 @@
     if (type === "hospital") return "🏥";
     if (type === "clinic") return "⚕️";
     if (type === "school") return "🏫";
+    if (type === "police") return "🚓";
+    if (type === "fire") return "🔥";
+    if (type === "shelter") return "🛟";
 
     // preserve existing traffic cameras
     const src = item?.source?.id || item?.sourceId || "";
@@ -3982,8 +4090,27 @@
   // -----------------------------
   const LOCATION_STORAGE_KEY = "fxbg.lastLocation";
   const LOCATION_STALE_MS = 6 * 60 * 60 * 1000;
+  const LOCATION_ENABLED_KEY = "fxbg.locationEnabled";
   let userLocationMarker = null;
   let userLocationCircle = null;
+  let locationWatchId = null;
+  let currentUserLocation = null;
+
+  function readLocationEnabled() {
+    try {
+      const stored = localStorage.getItem(LOCATION_ENABLED_KEY);
+      if (stored === null) return CONFIG.location.enabledByDefault;
+      return stored === "true";
+    } catch {
+      return CONFIG.location.enabledByDefault;
+    }
+  }
+
+  function persistLocationEnabled(enabled) {
+    try {
+      localStorage.setItem(LOCATION_ENABLED_KEY, String(enabled));
+    } catch {}
+  }
 
   function readStoredLocation() {
     try {
@@ -4043,9 +4170,12 @@
     const nextZoom = Number.isFinite(zoom) ? zoom : 15;
     map.setView([lat, lng], nextZoom, { animate });
     updateUserLocationMarker(lat, lng, accuracy);
+    currentUserLocation = { lat, lng, accuracy, ts: Date.now() };
     if (persist) {
       saveStoredLocation({ lat, lng, accuracy, zoom: nextZoom });
     }
+    updateNearestPanel();
+    evaluateAlertRules();
   }
 
   function locateUser({ animate = true } = {}) {
@@ -4067,19 +4197,76 @@
       (err) => {
         console.warn("[Location] Geolocation failed:", err?.message || err);
       },
-      {
-        enableHighAccuracy: true,
-        timeout: 8000,
-        maximumAge: 60000
-      }
+      CONFIG.location.watchOptions
     );
   }
 
+  function clearUserLocation() {
+    if (userLocationMarker) {
+      try { map.removeLayer(userLocationMarker); } catch {}
+      userLocationMarker = null;
+    }
+    if (userLocationCircle) {
+      try { map.removeLayer(userLocationCircle); } catch {}
+      userLocationCircle = null;
+    }
+    currentUserLocation = null;
+    updateNearestPanel();
+  }
+
+  function startLocationWatch() {
+    if (!navigator.geolocation || locationWatchId !== null) return;
+    locationWatchId = navigator.geolocation.watchPosition(
+      (pos) => {
+        const coords = pos.coords || {};
+        applyUserLocation({
+          lat: coords.latitude,
+          lng: coords.longitude,
+          accuracy: coords.accuracy,
+          zoom: map.getZoom() || 15,
+          animate: false
+        });
+      },
+      (err) => {
+        console.warn("[Location] Watch failed:", err?.message || err);
+      },
+      CONFIG.location.watchOptions
+    );
+  }
+
+  function stopLocationWatch() {
+    if (locationWatchId !== null && navigator.geolocation?.clearWatch) {
+      navigator.geolocation.clearWatch(locationWatchId);
+    }
+    locationWatchId = null;
+  }
+
+  let locationEnabled = readLocationEnabled();
+  function setLocationEnabled(enabled) {
+    locationEnabled = Boolean(enabled);
+    persistLocationEnabled(locationEnabled);
+    if (locationEnabled) {
+      const storedLocation = readStoredLocation();
+      if (storedLocation) {
+        applyUserLocation({ ...storedLocation, persist: false, animate: false, zoom: storedLocation.zoom });
+      }
+      locateUser({ animate: true });
+      startLocationWatch();
+    } else {
+      stopLocationWatch();
+      clearUserLocation();
+    }
+    updateLocationToggleUI();
+  }
+
   const storedLocation = readStoredLocation();
-  if (storedLocation) {
+  if (storedLocation && locationEnabled) {
     applyUserLocation({ ...storedLocation, persist: false, animate: false, zoom: storedLocation.zoom });
   }
-  locateUser({ animate: true });
+  if (locationEnabled) {
+    locateUser({ animate: true });
+    startLocationWatch();
+  }
 
   const LocateControl = L.Control.extend({
     onAdd() {
@@ -4092,6 +4279,9 @@
       L.DomEvent.disableClickPropagation(container);
       button.addEventListener("click", (e) => {
         e.preventDefault();
+        if (!locationEnabled) {
+          setLocationEnabled(true);
+        }
         locateUser({ animate: true });
       });
       return container;
@@ -4927,6 +5117,14 @@
     locks: { rss:false, nws:false, arcgis:false, virginiaCrashData:false, va511:false, openUV:false, cdc:false, air:false, crime:false },
     lastByCategory: new Map(),
     lastFetch: { externalCameras: 0, schoolsNces: 0, colleges: 0 },
+    cameraPins: new Set(),
+    cameraRefresh: new Map(),
+    alerts: {
+      active: new Map(),
+      lastCheck: 0,
+      soundEnabled: true,
+      vibrationEnabled: false
+    },
     gis: {
       enabled: new Set(),
       layers: new Map(),
@@ -4953,6 +5151,114 @@
     }
   };
 
+  const CAMERA_PINS_KEY = "fxbg.cameraPins";
+  const ALERT_PREFS_KEY = "fxbg.alertPrefs";
+
+  function loadCameraPins() {
+    try {
+      const raw = localStorage.getItem(CAMERA_PINS_KEY);
+      if (!raw) return;
+      const parsed = safeJsonParse(raw, [], "camera pins");
+      if (Array.isArray(parsed)) {
+        parsed.forEach(id => store.cameraPins.add(id));
+      }
+    } catch {}
+  }
+
+  function saveCameraPins() {
+    try {
+      localStorage.setItem(CAMERA_PINS_KEY, JSON.stringify(Array.from(store.cameraPins)));
+    } catch {}
+  }
+
+  function loadAlertPrefs() {
+    try {
+      const raw = localStorage.getItem(ALERT_PREFS_KEY);
+      if (!raw) return;
+      const parsed = safeJsonParse(raw, null, "alert prefs");
+      if (parsed && typeof parsed === "object") {
+        store.alerts.soundEnabled = Boolean(parsed.soundEnabled);
+        store.alerts.vibrationEnabled = Boolean(parsed.vibrationEnabled);
+      }
+    } catch {}
+  }
+
+  function saveAlertPrefs() {
+    try {
+      localStorage.setItem(ALERT_PREFS_KEY, JSON.stringify({
+        soundEnabled: store.alerts.soundEnabled,
+        vibrationEnabled: store.alerts.vibrationEnabled
+      }));
+    } catch {}
+  }
+
+  function ensureEventSchema(item) {
+    const event = { ...item };
+    event.source = event.source || event.sourceId || event.sourceName || event.feedId || "unknown";
+    event.type = event.type || event.category || "other";
+    event.title = event.title || event.name || "Untitled";
+    event.desc = event.desc || event.message || event.summary || "";
+    event.timeStart = event.timeStart || event.timestamp || event.published || event.updated || null;
+    event.timeEnd = event.timeEnd || null;
+    event.lat = Number.isFinite(event.lat) ? event.lat : null;
+    event.lon = Number.isFinite(event.lon) ? event.lon : (Number.isFinite(event.lng) ? event.lng : null);
+    event.confidence = Number.isFinite(event.confidence)
+      ? event.confidence
+      : (Number.isFinite(event.locationConfidence) ? event.locationConfidence : null);
+    if (!Number.isFinite(event.severity)) {
+      event.severity = event.tone === "bad" ? 3 : event.tone === "warn" ? 2 : 1;
+    }
+    if (!Array.isArray(event.links)) {
+      event.links = event.url ? [{ label: "Source", url: event.url }] : [];
+    }
+    return event;
+  }
+
+  function registerEvent(item) {
+    const event = ensureEventSchema(item);
+    store.itemsById.set(event.id, event);
+    return event;
+  }
+
+  loadCameraPins();
+  loadAlertPrefs();
+
+  const CAMERA_REFRESH_MIN_MS = CONFIG.cameras.refreshMinMs;
+  const CAMERA_PIN_MAX = 9;
+
+  function isCameraPinned(id) {
+    return store.cameraPins.has(id);
+  }
+
+  function toggleCameraPin(id) {
+    if (!id) return;
+    if (store.cameraPins.has(id)) {
+      store.cameraPins.delete(id);
+    } else {
+      if (store.cameraPins.size >= CAMERA_PIN_MAX) {
+        console.warn(`[Watchboard] Max pinned cameras reached (${CAMERA_PIN_MAX}). Unpin one to add another.`);
+        return;
+      }
+      store.cameraPins.add(id);
+    }
+    saveCameraPins();
+    updateWatchboardPanel();
+  }
+
+  function canRefreshCamera(id) {
+    const last = store.cameraRefresh.get(id) || 0;
+    const now = Date.now();
+    const delta = now - last;
+    if (delta >= CAMERA_REFRESH_MIN_MS) {
+      return { allowed: true, waitMs: 0 };
+    }
+    return { allowed: false, waitMs: CAMERA_REFRESH_MIN_MS - delta };
+  }
+
+  function markCameraRefresh(id) {
+    store.cameraRefresh.set(id, Date.now());
+  }
+
   /**
    * Round 3: Near-duplicate detection for crash items (511 + ArcGIS)
    * Suppresses items that are likely duplicates based on:
@@ -4967,7 +5273,7 @@
     const distanceThreshold = CONFIG.reliability.dedupeDistanceThresholdM;
 
     // Only apply to crash/incident categories
-    const crashCategories = ['crash', 'road_closure', 'traffic'];
+    const crashCategories = ['crash', 'road_closure', 'closure', 'traffic'];
     if (!crashCategories.includes(newItem.category)) {
       return false; // Not a crash item, skip near-duplicate check
     }
@@ -5020,6 +5326,26 @@
               Math.sin(dLon / 2) * Math.sin(dLon / 2);
     const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
     return R * c;
+  }
+
+  function formatDistanceMiles(meters) {
+    if (!Number.isFinite(meters)) return "—";
+    const miles = meters / 1609.34;
+    if (miles < 0.1) return "<0.1 mi";
+    return `${miles.toFixed(1)} mi`;
+  }
+
+  function findNearest(items, userLoc) {
+    if (!userLoc || !items || items.length === 0) return null;
+    let best = null;
+    items.forEach(item => {
+      if (!Number.isFinite(item.lat) || !Number.isFinite(item.lon)) return;
+      const distance = haversineDistance(userLoc.lat, userLoc.lng, item.lat, item.lon);
+      if (!best || distance < best.distance) {
+        best = { item, distance };
+      }
+    });
+    return best;
   }
 
   function normalize({ source, raw }) {
@@ -5221,6 +5547,52 @@
     store.markersById.set(item.id, m);
   }
 
+  function formatProxyError(response) {
+    if (!response) return "unknown error";
+    const proxyError = response.headers?.get?.("X-Proxy-Error");
+    const upstreamStatus = response.headers?.get?.("X-Proxy-Upstream-Status");
+    const upstreamHost = response.headers?.get?.("X-Proxy-Upstream-Host");
+    let message = proxyError ? `proxy ${proxyError}` : `http ${response.status}`;
+    if (upstreamStatus) message += ` (upstream ${upstreamStatus})`;
+    if (upstreamHost) message += ` @ ${upstreamHost}`;
+    return message;
+  }
+
+  async function loadCameraSnapshot({ imgEl, statusEl, item, force = false }) {
+    if (!imgEl || !item?.media?.src) return;
+    const check = canRefreshCamera(item.id);
+    if (!check.allowed && !force) {
+      if (statusEl) {
+        statusEl.textContent = `Rate limit: wait ${Math.ceil(check.waitMs / 1000)}s`;
+      }
+      return;
+    }
+    markCameraRefresh(item.id);
+    if (statusEl) statusEl.textContent = "Loading snapshot…";
+    try {
+      const response = await fetch(item.media.src, { cache: "no-store" });
+      if (!response.ok) {
+        throw new Error(formatProxyError(response));
+      }
+      const blob = await response.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      if (imgEl.dataset.objectUrl) {
+        try { URL.revokeObjectURL(imgEl.dataset.objectUrl); } catch {}
+      }
+      imgEl.dataset.objectUrl = objectUrl;
+      imgEl.src = objectUrl;
+      imgEl.style.display = "block";
+      if (statusEl) {
+        statusEl.textContent = `Updated ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
+      }
+    } catch (err) {
+      imgEl.style.display = "none";
+      if (statusEl) {
+        statusEl.textContent = `Snapshot unavailable • ${err.message || "error"}`;
+      }
+    }
+  }
+
   
   let selectedId = null;
   function clearSelection() {
@@ -5269,7 +5641,7 @@
     }
   }
 
-function selectItem(id) {
+  function selectItem(id) {
     setSelected(id);
     const item = store.itemsById.get(id);
     if (!item) return;
@@ -5283,44 +5655,42 @@ function selectItem(id) {
     const mediaEl = $("panelMedia");
     if (item.media && item.media.type === "image" && item.media.src) {
       mediaEl.style.display = "block";
-      // Remove loading="lazy" to ensure immediate loading when panel opens
-      // Add error handling and loading state for better UX
       const imgAlt = escapeAttr(item.media.alt || item.title || "Traffic camera snapshot");
       const imgSrc = escapeAttr(item.media.src);
       const isCamera = item.category === "camera";
 
-      // Log camera image URL for debugging
-      console.log(`Loading camera image: ${item.media.originalSrc || item.media.src}`);
-
-      // Add cache-busting timestamp to force fresh snapshot
-      const cacheBustingSrc = imgSrc + (imgSrc.includes('?') ? '&' : '?') + '_t=' + Date.now();
-
-      mediaEl.innerHTML = `
-        <div class="panelMedia__wrapper" style="position: relative; min-height: 200px; background: #1a1a1a; border-radius: 8px; overflow: hidden;">
-          <div class="panelMedia__loading" style="position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: rgba(255,255,255,0.6); font-size: 14px;">
-            <span>📷 Loading camera snapshot...</span>
+      if (isCamera) {
+        mediaEl.innerHTML = `
+          <div class="panelMedia__wrapper" style="position: relative; min-height: 220px; background: #1a1a1a; border-radius: 8px; overflow: hidden;">
+            <div class="panelMedia__status" style="position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: rgba(255,255,255,0.7); font-size: 13px; text-align:center; padding: 12px;">
+              Loading snapshot…
+            </div>
+            <img class="panelMedia__img"
+                 alt="${imgAlt}"
+                 style="display: none; width: 100%; height: auto; position: relative; z-index: 1;" />
           </div>
-          <img class="panelMedia__img"
-               src="${cacheBustingSrc}"
-               alt="${imgAlt}"
-               style="display: none; width: 100%; height: auto; position: relative; z-index: 1;"
-               onload="this.style.display='block'; this.parentElement.querySelector('.panelMedia__loading').style.display='none';"
-               onerror="this.style.display='none'; const loading = this.parentElement.querySelector('.panelMedia__loading'); loading.innerHTML = '<div style=\\'text-align: center; padding: 20px;\\'><div style=\\'font-size: 32px; margin-bottom: 8px;\\'>📷</div><div style=\\'color: rgba(255,255,255,0.7);\\'>Camera snapshot unavailable</div><div style=\\'font-size: 12px; color: rgba(255,255,255,0.5); margin-top: 4px;\\'>The camera feed may be offline or temporarily unavailable</div></div>'; loading.style.display='flex';" />
-          ${isCamera ? `<button class="panelMedia__refresh" onclick="(function() {
-              const img = this.parentElement.querySelector('.panelMedia__img');
-              const loading = this.parentElement.querySelector('.panelMedia__loading');
-              const baseSrc = '${imgSrc}';
-              img.style.display = 'none';
-              loading.style.display = 'flex';
-              loading.innerHTML = '<span>📷 Refreshing snapshot...</span>';
-              img.src = baseSrc + (baseSrc.includes('?') ? '&' : '?') + '_t=' + Date.now();
-            }).call(this)"
-            style="position: absolute; top: 8px; right: 8px; background: rgba(0,0,0,0.8); color: white; border: 1px solid rgba(255,255,255,0.3); padding: 6px 12px; border-radius: 4px; font-size: 12px; font-weight: 600; cursor: pointer; z-index: 10; display: flex; align-items: center; gap: 4px;"
-            title="Refresh to get latest snapshot from live camera feed">
-            🔄 Refresh
-          </button>` : ''}
-        </div>
-      `;
+          <div style="display:flex; gap:8px; margin-top: 10px;">
+            <button class="panelMedia__refreshBtn watchboardBtn" type="button">Refresh</button>
+            <button class="panelMedia__pinBtn watchboardBtn" type="button">Pin</button>
+          </div>
+        `;
+        setupCameraPanelMedia(item);
+      } else {
+        const cacheBustingSrc = imgSrc + (imgSrc.includes('?') ? '&' : '?') + '_t=' + Date.now();
+        mediaEl.innerHTML = `
+          <div class="panelMedia__wrapper" style="position: relative; min-height: 200px; background: #1a1a1a; border-radius: 8px; overflow: hidden;">
+            <div class="panelMedia__loading" style="position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: rgba(255,255,255,0.6); font-size: 14px;">
+              <span>🖼️ Loading image...</span>
+            </div>
+            <img class="panelMedia__img"
+                 src="${cacheBustingSrc}"
+                 alt="${imgAlt}"
+                 style="display: none; width: 100%; height: auto; position: relative; z-index: 1;"
+                 onload="this.style.display='block'; this.parentElement.querySelector('.panelMedia__loading').style.display='none';"
+                 onerror="this.style.display='none'; const loading = this.parentElement.querySelector('.panelMedia__loading'); loading.innerHTML = '<div style=\\'text-align: center; padding: 20px;\\'><div style=\\'font-size: 32px; margin-bottom: 8px;\\'>🖼️</div><div style=\\'color: rgba(255,255,255,0.7);\\'>Image unavailable</div></div>'; loading.style.display='flex';" />
+          </div>
+        `;
+      }
     } else if (item.media && item.media.type === "iframe" && item.media.src) {
       mediaEl.style.display = "block";
       const iframeSrc = escapeAttr(item.media.src);
@@ -5358,6 +5728,36 @@ function selectItem(id) {
     }
   }
 
+  function updatePinButtonState(button, itemId) {
+    if (!button || !itemId) return;
+    button.textContent = isCameraPinned(itemId) ? "Unpin" : "Pin";
+  }
+
+  function setupCameraPanelMedia(item) {
+    const mediaEl = $("panelMedia");
+    const imgEl = mediaEl.querySelector(".panelMedia__img");
+    const statusEl = mediaEl.querySelector(".panelMedia__status");
+    const refreshBtn = mediaEl.querySelector(".panelMedia__refreshBtn");
+    const pinBtn = mediaEl.querySelector(".panelMedia__pinBtn");
+
+    updatePinButtonState(pinBtn, item.id);
+
+    if (refreshBtn) {
+      refreshBtn.addEventListener("click", () => {
+        loadCameraSnapshot({ imgEl, statusEl, item, force: true });
+      });
+    }
+
+    if (pinBtn) {
+      pinBtn.addEventListener("click", () => {
+        toggleCameraPin(item.id);
+        updatePinButtonState(pinBtn, item.id);
+      });
+    }
+
+    loadCameraSnapshot({ imgEl, statusEl, item, force: true });
+  }
+
   function enforceCaps() {
     // Keep newest CONFIG.perf.maxTotalItems items (excluding cameras, which are stable and light)
     const items = Array.from(store.itemsById.values());
@@ -5370,6 +5770,9 @@ function selectItem(id) {
       "oxblue",
       "hope-springs",
       "hospitals",
+      "police",
+      "fire",
+      "shelters",
       "schools",
       "clinics",
       "colleges"
@@ -5387,7 +5790,7 @@ function selectItem(id) {
     store.itemsById.clear();
     store.markersById.clear();
 
-    for (const it of [...cams, ...trimmed]) store.itemsById.set(it.id, it);
+    for (const it of [...cams, ...trimmed]) registerEvent(it);
 
     // Round 3: Clean up seenKeys for removed items (prevent unbounded growth)
     // Note: seenKeys uses dedupeKey, not id, so we can't clean it precisely here
@@ -5784,7 +6187,7 @@ function selectItem(id) {
             continue;
           }
           store.seenKeys.add(norm.dedupeKey);
-          store.itemsById.set(norm.id, norm);
+          registerEvent(norm);
           added++;
           totalAdded++;
         }
@@ -6038,7 +6441,7 @@ function selectItem(id) {
       if (!norm) continue;
       if (store.seenKeys.has(norm.dedupeKey)) continue;
       store.seenKeys.add(norm.dedupeKey);
-      store.itemsById.set(norm.id, norm);
+      registerEvent(norm);
     }
     redraw();
   }
@@ -6426,7 +6829,7 @@ function selectItem(id) {
         panelHtml: ""
       };
 
-      store.itemsById.set(item.id, item);
+      registerEvent(item);
       added++;
     }
 
@@ -6544,6 +6947,20 @@ function selectItem(id) {
           </div>`;
 
         panelHtml = clinicDetails;
+      } else if (cam.type === "police" || cam.type === "fire" || cam.type === "shelter") {
+        category = cam.type === "police" ? "police_crime" : cam.type === "fire" ? "fire_ems" : "shelter";
+        summary = cam.address || cam.info || cam.name;
+        message = cam.address || cam.info || cam.name;
+        panelHtml = `
+          <div style="padding:12px;background:rgba(20,20,20,0.95);border-radius:8px;">
+            <h3 style="margin:0 0 12px 0;color:#FFD700;font-size:18px;font-weight:bold;text-shadow:1px 1px 2px rgba(0,0,0,0.8);">
+              ${cam.type === "police" ? "🚓" : cam.type === "fire" ? "🔥" : "🛟"} ${escapeHtml(cam.name)}
+            </h3>
+            ${cam.address ? `<p style="margin:0 0 10px 0;color:#FFFFFF;font-size:13px;"><strong style="color:#00E5FF;">📍 Address:</strong> ${escapeHtml(cam.address)}</p>` : ""}
+            <a href="${escapeAttr(cam.url)}" target="_blank" rel="noopener noreferrer" class="linkBtn" style="background:#FFD700;color:#000;font-weight:bold;padding:8px 16px;border-radius:6px;text-decoration:none;display:inline-block;">
+              Visit Website ↗
+            </a>
+          </div>`;
       } else if (cam.type === "school") {
         // Skip manual schools if NCES schools are preferred (default)
         if (!CONFIG.externalCameras.includeManualSchools) {
@@ -6648,6 +7065,15 @@ function selectItem(id) {
       } else if (cam.type === "clinic") {
         sourceName = "Clinics";
         sourceId = "clinics";
+      } else if (cam.type === "police") {
+        sourceName = "Police";
+        sourceId = "police";
+      } else if (cam.type === "fire") {
+        sourceName = "Fire & Rescue";
+        sourceId = "fire";
+      } else if (cam.type === "shelter") {
+        sourceName = "Shelters";
+        sourceId = "shelters";
       } else if (cam.type === "school") {
         sourceName = "Schools";
         sourceId = "schools";
@@ -6669,7 +7095,7 @@ function selectItem(id) {
       }
 
       // Determine if this is a POI (school, hospital, clinic)
-      const isPoi = cam.type === "hospital" || cam.type === "clinic" || cam.type === "school";
+      const isPoi = cam.type === "hospital" || cam.type === "clinic" || cam.type === "school" || cam.type === "police" || cam.type === "fire" || cam.type === "shelter";
 
       const item = {
         id: key,
@@ -6693,7 +7119,7 @@ function selectItem(id) {
         meta: isPoi ? { isPoi: true, poiType: cam.type } : undefined
       };
 
-      store.itemsById.set(item.id, item);
+      registerEvent(item);
       added++;
     }
 
@@ -6862,7 +7288,7 @@ function selectItem(id) {
         meta: { isPoi: true, poiType: "school", nces: true }
       };
 
-      store.itemsById.set(item.id, item);
+      registerEvent(item);
       added++;
     }
 
@@ -6988,7 +7414,7 @@ function selectItem(id) {
         meta: { isPoi: true, poiType: "college" }
       };
 
-      store.itemsById.set(item.id, item);
+      registerEvent(item);
       added++;
     }
 
@@ -7099,7 +7525,7 @@ function selectItem(id) {
       }
 
       store.seenKeys.add(norm.dedupeKey);
-      store.itemsById.set(norm.id, norm);
+      registerEvent(norm);
       pushed++;
     }
     return i95Count;
@@ -7150,7 +7576,7 @@ function selectItem(id) {
       if (!norm) continue;
       if (store.seenKeys.has(norm.dedupeKey)) continue;
       store.seenKeys.add(norm.dedupeKey);
-      store.itemsById.set(norm.id, norm);
+      registerEvent(norm);
       pushed++;
     }
   }
@@ -7337,7 +7763,7 @@ function selectItem(id) {
       }
 
       store.seenKeys.add(norm.dedupeKey);
-      store.itemsById.set(norm.id, norm);
+      registerEvent(norm);
       added++;
       pushed++;
     }
@@ -7484,7 +7910,7 @@ function selectItem(id) {
             }
 
             store.seenKeys.add(norm.dedupeKey);
-            store.itemsById.set(norm.id, norm);
+            registerEvent(norm);
             added++;
             totalAdded++;
           }
@@ -7628,7 +8054,7 @@ function selectItem(id) {
       const normalized = normalize({ source, raw });
       if (normalized && !store.seenKeys.has(normalized.dedupeKey)) {
         store.seenKeys.add(normalized.dedupeKey);
-        store.itemsById.set(normalized.id, normalized);
+        registerEvent(normalized);
         console.log(`[OpenUV] UV Index: ${uvValue.toFixed(1)} (${uvLevel})`);
       }
 
@@ -7740,7 +8166,7 @@ function selectItem(id) {
         const normalized = normalize({ source, raw });
         if (normalized && !store.seenKeys.has(normalized.dedupeKey)) {
           store.seenKeys.add(normalized.dedupeKey);
-          store.itemsById.set(normalized.id, normalized);
+          registerEvent(normalized);
           added++;
         }
       }
@@ -7845,7 +8271,7 @@ function selectItem(id) {
         panelHtml: `<p style="color:#ffaa00;font-size:12px;">⚠️ Live feed unavailable. Camera location shown for reference only.</p>`
       };
 
-      store.itemsById.set(item.id, item);
+      registerEvent(item);
       added++;
     }
 
@@ -8054,7 +8480,7 @@ function selectItem(id) {
         };
 
         // Upsert to store (always store item so it's available when user expands window)
-        store.itemsById.set(id, item);
+        registerEvent(item);
         store.crime.ids.add(id);
 
         // At boot, only attach markers for items within the 30-day boot window
@@ -8650,6 +9076,9 @@ function selectItem(id) {
 
     if (liveTextEl) liveTextEl.textContent = "Live";
     setLastUpdate();
+    updateNearestPanel();
+    evaluateAlertRules();
+    updateWatchboardPanel();
 
     // Round 3: Skip expensive operations in degraded mode
     if (cycleStats.degradedMode && CONFIG.reliability.degradedModeSkipClustering) {
@@ -9951,6 +10380,7 @@ function selectItem(id) {
 
   // Helper: get all items as array
   function getAllItemsArray() {
+    // Event objects are the canonical data model for map + panels.
     return Array.from(store.itemsById.values());
   }
 
@@ -9967,6 +10397,193 @@ function selectItem(id) {
     if (mins < 60) return `${mins}m ago`;
     if (hours < 24) return `${hours}h ago`;
     return `${days}d ago`;
+  }
+
+  function getUserLocation() {
+    return currentUserLocation;
+  }
+
+  function getCameraItems() {
+    return getAllItemsArray().filter(item => item.category === "camera");
+  }
+
+  function getPoiItemsByType(type) {
+    return getAllItemsArray().filter(item => item.meta?.poiType === type);
+  }
+
+  function renderNearestRow(targetEl, nearest, fallbackText) {
+    if (!targetEl) return;
+    if (!nearest) {
+      targetEl.innerHTML = `<div class="dockMetaText">${fallbackText}</div>`;
+      return;
+    }
+    const title = escapeHtml(nearest.item.title || nearest.item.name || "Unknown");
+    const distance = formatDistanceMiles(nearest.distance);
+    targetEl.innerHTML = `
+      <div class="nearestItemTitle">${title}</div>
+      <div class="nearestItemMeta">${distance} • ${escapeHtml(nearest.item.sourceName || nearest.item.source || "Unknown source")}</div>
+    `;
+  }
+
+  function updateNearestPanel() {
+    const panel = document.getElementById("dockPanelBody");
+    if (!panel) return;
+    const toggleEl = panel.querySelector("#locationToggle");
+    if (toggleEl) {
+      toggleEl.classList.toggle("isOn", locationEnabled);
+    }
+    const statusEl = panel.querySelector("#locationStatus");
+    if (!locationEnabled) {
+      if (statusEl) statusEl.textContent = "Location disabled.";
+      ["#nearestCamera", "#nearestHospital", "#nearestPolice", "#nearestFire", "#nearestShelter", "#nearestRoute"].forEach(selector => {
+        const el = panel.querySelector(selector);
+        if (el) el.innerHTML = `<div class="dockMetaText">Enable location to calculate distance.</div>`;
+      });
+      return;
+    }
+    const userLoc = getUserLocation();
+    if (!userLoc) {
+      if (statusEl) statusEl.textContent = "Awaiting location fix…";
+      ["#nearestCamera", "#nearestHospital", "#nearestPolice", "#nearestFire", "#nearestShelter", "#nearestRoute"].forEach(selector => {
+        const el = panel.querySelector(selector);
+        if (el) el.innerHTML = `<div class="dockMetaText">Awaiting GPS lock…</div>`;
+      });
+      return;
+    }
+    if (statusEl) {
+      statusEl.textContent = `Lat ${userLoc.lat.toFixed(4)}, Lon ${userLoc.lng.toFixed(4)} • ±${Math.round(userLoc.accuracy || 0)}m`;
+    }
+
+    const nearestCamera = findNearest(getCameraItems(), userLoc);
+    renderNearestRow(panel.querySelector("#nearestCamera"), nearestCamera, "No camera locations available.");
+
+    const nearestHospital = findNearest(getPoiItemsByType("hospital"), userLoc);
+    renderNearestRow(panel.querySelector("#nearestHospital"), nearestHospital, "No hospital POIs loaded.");
+
+    const nearestPolice = findNearest(getPoiItemsByType("police"), userLoc);
+    renderNearestRow(panel.querySelector("#nearestPolice"), nearestPolice, "No police POIs loaded.");
+
+    const nearestFire = findNearest(getPoiItemsByType("fire"), userLoc);
+    renderNearestRow(panel.querySelector("#nearestFire"), nearestFire, "No fire/EMS POIs loaded.");
+
+    const nearestShelter = findNearest(getPoiItemsByType("shelter"), userLoc);
+    renderNearestRow(panel.querySelector("#nearestShelter"), nearestShelter, "No shelter POIs loaded.");
+
+    const roadClosures = getAllItemsArray().filter(item => item.category === "road_closure" || item.category === "closure");
+    const trafficItems = getAllItemsArray().filter(item => item.category === "traffic" || item.category === "crash");
+    const nearestClosure = findNearest(roadClosures, userLoc);
+    const nearestOpen = findNearest(trafficItems, userLoc);
+    const routeEl = panel.querySelector("#nearestRoute");
+    if (routeEl) {
+      if (nearestOpen && (!nearestClosure || nearestOpen.distance <= nearestClosure.distance)) {
+        routeEl.innerHTML = `
+          <div class="nearestItemTitle">${escapeHtml(nearestOpen.item.title || "Open route")}</div>
+          <div class="nearestItemMeta">${formatDistanceMiles(nearestOpen.distance)} • No closure flagged</div>
+        `;
+      } else if (nearestClosure) {
+        routeEl.innerHTML = `
+          <div class="nearestItemTitle">${escapeHtml(nearestClosure.item.title || "Road closure")}</div>
+          <div class="nearestItemMeta">${formatDistanceMiles(nearestClosure.distance)} • Closure reported</div>
+        `;
+      } else {
+        routeEl.innerHTML = `<div class="dockMetaText">No route status items available.</div>`;
+      }
+    }
+  }
+
+  function updateLocationToggleUI() {
+    const toggleEl = document.getElementById("locationToggle");
+    if (!toggleEl) return;
+    toggleEl.classList.toggle("isOn", locationEnabled);
+  }
+
+  function getEventSeverity(event) {
+    if (Number.isFinite(event.severity)) return event.severity;
+    if (event.tone === "bad") return 3;
+    if (event.tone === "warn") return 2;
+    return 1;
+  }
+
+  function eventMatchesRule(event, rule, userLoc) {
+    if (!event) return false;
+    const eventType = event.type || event.category;
+    if (rule.types && rule.types.length && !rule.types.includes(eventType)) {
+      return false;
+    }
+    if (Number.isFinite(rule.minSeverity) && getEventSeverity(event) < rule.minSeverity) {
+      return false;
+    }
+    if (Number.isFinite(rule.withinMiles)) {
+      if (!userLoc || !Number.isFinite(event.lat) || !Number.isFinite(event.lon)) {
+        return false;
+      }
+      const distance = haversineDistance(userLoc.lat, userLoc.lng, event.lat, event.lon);
+      if ((distance / 1609.34) > rule.withinMiles) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  function playAlertSound() {
+    try {
+      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.value = 880;
+      gain.gain.value = 0.08;
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start();
+      setTimeout(() => {
+        osc.stop();
+        ctx.close();
+      }, 200);
+    } catch {}
+  }
+
+  function evaluateAlertRules() {
+    if (!CONFIG.alertRules?.enabled) return;
+    const userLoc = getUserLocation();
+    const matches = new Map();
+    CONFIG.alertRules.rules.forEach(rule => {
+      getAllItemsArray().forEach(event => {
+        if (eventMatchesRule(event, rule, userLoc)) {
+          const entry = matches.get(event.id) || { event, rules: [] };
+          entry.rules.push(rule);
+          matches.set(event.id, entry);
+        }
+      });
+    });
+
+    const previousIds = new Set(store.alerts.active.keys());
+    store.alerts.active.clear();
+    matches.forEach((entry, id) => store.alerts.active.set(id, entry));
+
+    const newIds = Array.from(matches.keys()).filter(id => !previousIds.has(id));
+    if (newIds.length > 0) {
+      const shouldSound = store.alerts.soundEnabled && matches.get(newIds[0])?.rules?.some(r => r.sound);
+      const shouldVibrate = store.alerts.vibrationEnabled && matches.get(newIds[0])?.rules?.some(r => r.vibrate);
+      if (shouldSound) playAlertSound();
+      if (shouldVibrate && navigator.vibrate) {
+        navigator.vibrate([120, 60, 120]);
+      }
+    }
+    store.alerts.lastCheck = Date.now();
+    updateAlertsPanel();
+  }
+
+  function updateAlertsPanel() {
+    if (dockState.isOpen && dockState.tab === "alerts") {
+      renderDock();
+    }
+  }
+
+  function updateWatchboardPanel() {
+    if (dockState.isOpen && dockState.tab === "watchboard") {
+      renderDock();
+    }
   }
 
   // Summarize by category
@@ -10099,6 +10716,184 @@ function selectItem(id) {
     html += `<button class="dockBtnSmall" id="dockResetFilters">Reset Filters</button>`;
 
     return html;
+  }
+
+  function renderNearestHTML() {
+    return `
+      <div class="dockCard">
+        <div class="dockToggleRow">
+          <div class="dockToggleLabel">Use my location</div>
+          <button class="toggleSwitch" id="locationToggle" type="button" aria-pressed="false"></button>
+        </div>
+        <div class="dockMetaText" id="locationStatus">Location disabled.</div>
+      </div>
+
+      <div class="dockSectionTitle">Nearest Camera</div>
+      <div class="nearestItem" id="nearestCamera"></div>
+
+      <div class="dockSectionTitle">Nearest Hospitals / Police / Fire / Shelters</div>
+      <div class="nearestList">
+        <div class="nearestItem" id="nearestHospital"></div>
+        <div class="nearestItem" id="nearestPolice"></div>
+        <div class="nearestItem" id="nearestFire"></div>
+        <div class="nearestItem" id="nearestShelter"></div>
+      </div>
+
+      <div class="dockSectionTitle">Nearest Open Route</div>
+      <div class="nearestItem" id="nearestRoute"></div>
+    `;
+  }
+
+  function renderWatchboardHTML() {
+    const pinned = Array.from(store.cameraPins)
+      .map(id => store.itemsById.get(id))
+      .filter(item => item && item.category === "camera");
+
+    let html = `
+      <div class="dockCard">
+        <div class="dockRowLeft">
+          <div class="dockRowTitle">Pinned Cameras</div>
+          <div class="dockRowMeta">Pin cameras from the details panel to populate the watchboard.</div>
+        </div>
+        <div class="dockBadge">${pinned.length}</div>
+      </div>
+    `;
+
+    if (pinned.length === 0) {
+      html += `<div class="dockMetaText">No pinned cameras yet.</div>`;
+      return html;
+    }
+
+    html += `<div class="watchboardGrid">`;
+    pinned.forEach(cam => {
+      html += `
+        <div class="watchboardCard" data-camera-id="${escapeAttr(cam.id)}">
+          <div class="watchboardHeader">${escapeHtml(cam.title || "Camera")}</div>
+          <div class="watchboardMedia">
+            <div class="watchboardStatus">Loading snapshot…</div>
+            <img alt="${escapeAttr(cam.title || "Camera snapshot")}" style="display:none;" />
+          </div>
+          <div class="watchboardActions">
+            <button class="watchboardBtn" data-action="refresh" type="button">Refresh</button>
+            <button class="watchboardBtn" data-action="unpin" type="button">Unpin</button>
+          </div>
+        </div>
+      `;
+    });
+    html += `</div>`;
+    return html;
+  }
+
+  function renderAlertsHTML() {
+    let html = `
+      <div class="alertRuleCard">
+        <div class="alertRuleTitle">Alert Rules</div>
+        <div class="dockMetaText">Rules evaluate Event objects and trigger when conditions match.</div>
+        <div class="dockToggleRow">
+          <div class="dockToggleLabel">Sound</div>
+          <button class="toggleSwitch" id="alertSoundToggle" type="button"></button>
+        </div>
+        <div class="dockToggleRow">
+          <div class="dockToggleLabel">Vibration</div>
+          <button class="toggleSwitch" id="alertVibrationToggle" type="button"></button>
+        </div>
+      </div>
+    `;
+
+    CONFIG.alertRules.rules.forEach(rule => {
+      html += `
+        <div class="alertRuleCard">
+          <div class="alertRuleTitle">${escapeHtml(rule.label)}</div>
+          <div class="dockMetaText">Within ${rule.withinMiles} mi • Severity ≥ ${rule.minSeverity}</div>
+          <div class="dockMetaText">Types: ${rule.types.join(", ")}</div>
+        </div>
+      `;
+    });
+
+    const entries = Array.from(store.alerts.active.values());
+    html += `<div class="dockSectionTitle">Hot Alerts (${entries.length})</div>`;
+    if (entries.length === 0) {
+      html += `<div class="dockMetaText">No alerts matched current rules.</div>`;
+      return html;
+    }
+
+    html += `<div class="alertList">`;
+    entries.slice(0, 20).forEach(({ event, rules }) => {
+      html += `
+        <div class="alertItem" data-item-id="${escapeAttr(event.id)}">
+          <div class="alertItemTitle">${escapeHtml(event.title || "Alert")}</div>
+          <div class="alertItemMeta">${escapeHtml((rules || []).map(r => r.label).join(" • "))}</div>
+          <div class="alertItemMeta">${formatRelativeTime(toTs(event.timeStart || event.timestamp))}</div>
+        </div>
+      `;
+    });
+    html += `</div>`;
+    return html;
+  }
+
+  function initializeWatchboardPanel() {
+    const panel = dockPanelBody;
+    if (!panel) return;
+    panel.querySelectorAll(".watchboardCard").forEach(card => {
+      const cameraId = card.dataset.cameraId;
+      const item = store.itemsById.get(cameraId);
+      if (!item) return;
+      const imgEl = card.querySelector("img");
+      const statusEl = card.querySelector(".watchboardStatus");
+      const refreshBtn = card.querySelector('[data-action="refresh"]');
+      const unpinBtn = card.querySelector('[data-action="unpin"]');
+
+      if (refreshBtn) {
+        refreshBtn.addEventListener("click", () => {
+          loadCameraSnapshot({ imgEl, statusEl, item, force: true });
+        });
+      }
+
+      if (unpinBtn) {
+        unpinBtn.addEventListener("click", () => {
+          toggleCameraPin(cameraId);
+        });
+      }
+
+      if (!item.media?.src) {
+        if (statusEl) statusEl.textContent = "No snapshot available.";
+        return;
+      }
+      loadCameraSnapshot({ imgEl, statusEl, item, force: false });
+    });
+  }
+
+  function initializeAlertsPanel() {
+    const panel = dockPanelBody;
+    if (!panel) return;
+    const soundToggle = panel.querySelector("#alertSoundToggle");
+    const vibrationToggle = panel.querySelector("#alertVibrationToggle");
+    if (soundToggle) {
+      soundToggle.classList.toggle("isOn", store.alerts.soundEnabled);
+      soundToggle.addEventListener("click", () => {
+        store.alerts.soundEnabled = !store.alerts.soundEnabled;
+        saveAlertPrefs();
+        soundToggle.classList.toggle("isOn", store.alerts.soundEnabled);
+      });
+    }
+    if (vibrationToggle) {
+      vibrationToggle.classList.toggle("isOn", store.alerts.vibrationEnabled);
+      vibrationToggle.addEventListener("click", () => {
+        store.alerts.vibrationEnabled = !store.alerts.vibrationEnabled;
+        saveAlertPrefs();
+        vibrationToggle.classList.toggle("isOn", store.alerts.vibrationEnabled);
+      });
+    }
+
+    panel.querySelectorAll(".alertItem").forEach(row => {
+      row.addEventListener("click", () => {
+        const id = row.dataset.itemId;
+        if (id) {
+          closeDock();
+          selectItem(id);
+        }
+      });
+    });
   }
 
   // Render Categories tab
@@ -10321,6 +11116,9 @@ function selectItem(id) {
       case "overview": return renderOverviewHTML();
       case "categories": return renderCategoriesHTML();
       case "sources": return renderSourcesHTML();
+      case "nearest": return renderNearestHTML();
+      case "watchboard": return renderWatchboardHTML();
+      case "alerts": return renderAlertsHTML();
       case "system": return renderSystemHTML();
       default: return "<p>Unknown tab</p>";
     }
@@ -10332,6 +11130,9 @@ function selectItem(id) {
       overview: "Overview",
       categories: "Categories",
       sources: "Sources",
+      nearest: "Nearest",
+      watchboard: "Watchboard",
+      alerts: "Hot Alerts",
       system: "System"
     };
     return titles[tab] || "Dock";
@@ -10436,6 +11237,26 @@ function selectItem(id) {
           }
         });
       });
+    }
+
+    if (dockState.tab === "nearest") {
+      const toggle = document.getElementById("locationToggle");
+      if (toggle) {
+        toggle.addEventListener("click", () => {
+          setLocationEnabled(!locationEnabled);
+          toggle.classList.toggle("isOn", locationEnabled);
+          updateNearestPanel();
+        });
+      }
+      updateNearestPanel();
+    }
+
+    if (dockState.tab === "watchboard") {
+      initializeWatchboardPanel();
+    }
+
+    if (dockState.tab === "alerts") {
+      initializeAlertsPanel();
     }
   }
 
@@ -11143,6 +11964,9 @@ function selectItem(id) {
   setTimeout(ensureChipsHaveState, 10000); // 10 seconds after boot
 
   refreshAll();
+  if (CONFIG.alertRules?.enabled) {
+    setInterval(evaluateAlertRules, CONFIG.alertRules.pollingMs);
+  }
   setInterval(pollRSS, CONFIG.polling.rss);
   setInterval(fetchNWS, CONFIG.polling.nws);
   setInterval(pollArcgisCrashes, CONFIG.polling.arcgisCrash);
