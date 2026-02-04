@@ -428,14 +428,21 @@ body{
     left: 12px;
     right: 12px;
     width: auto;
-    top: auto;
-    bottom: 12px;
-    max-height: calc(100% - 24px);
+    top: calc(var(--topH) + 12px + var(--safeTop));
+    bottom: calc(12px + var(--safeBottom));
+    max-height: calc(100vh - var(--topH) - var(--botH) - 24px - var(--safeTop) - var(--safeBottom));
   }
   .panel--collapsed{
     transform: translateY(110%);
     opacity: 0;
     pointer-events: none;
+  }
+}
+
+@media (max-width: 400px){
+  .panel{
+    top: calc(var(--topH) + 16px + var(--safeTop));
+    max-height: calc(100vh - var(--topH) - var(--botH) - 32px - var(--safeTop) - var(--safeBottom));
   }
 }
 
