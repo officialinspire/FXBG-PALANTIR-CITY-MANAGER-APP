@@ -12000,7 +12000,7 @@
 
       const escapeId = (id) => {
         if (window.CSS && typeof CSS.escape === "function") return CSS.escape(id);
-        return id.replace(/([ #;?%&,.+*~\\':"!^$\\[\\]()<=>|/@])/g, "\\$1");
+        return id.replace(/([ #;?%&,.+*~\\':"!^$\\[\\]()<=>|@])/g, "\\$1");
       };
 
       const idsToCheck = new Set([
