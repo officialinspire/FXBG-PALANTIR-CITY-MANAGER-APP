@@ -1414,6 +1414,194 @@ body{
   margin-top: 0;
 }
 
+.dockToggleRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 4px;
+  border-top: 1px solid rgba(255,255,255,0.08);
+}
+
+.dockToggleRow:first-child {
+  border-top: none;
+}
+
+.dockToggleLabel {
+  font-weight: 700;
+  font-size: 13px;
+}
+
+.toggleSwitch {
+  position: relative;
+  width: 44px;
+  height: 24px;
+  background: rgba(255,255,255,0.12);
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,0.2);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.toggleSwitch::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 18px;
+  height: 18px;
+  background: #fff;
+  border-radius: 50%;
+  transition: transform 0.2s ease;
+}
+
+.toggleSwitch.isOn {
+  background: rgba(79, 209, 255, 0.35);
+  border-color: rgba(79, 209, 255, 0.45);
+}
+
+.toggleSwitch.isOn::after {
+  transform: translateX(20px);
+}
+
+.dockMetaText {
+  font-size: 12px;
+  color: rgba(255,255,255,0.7);
+}
+
+.nearestList {
+  display: grid;
+  gap: 8px;
+}
+
+.nearestItem {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(255,255,255,0.12);
+  background: rgba(0,0,0,0.2);
+}
+
+.nearestItemTitle {
+  font-weight: 800;
+  font-size: 13px;
+}
+
+.nearestItemMeta {
+  font-size: 12px;
+  color: rgba(255,255,255,0.72);
+}
+
+.watchboardGrid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+}
+
+.watchboardCard {
+  border: 1px solid rgba(255,255,255,0.12);
+  background: rgba(0,0,0,0.22);
+  border-radius: 12px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  min-height: 160px;
+}
+
+.watchboardHeader {
+  padding: 8px 10px;
+  background: rgba(0,0,0,0.35);
+  font-weight: 700;
+  font-size: 12px;
+}
+
+.watchboardMedia {
+  position: relative;
+  flex: 1;
+  background: #111;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.watchboardMedia img {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+.watchboardStatus {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: rgba(255,255,255,0.7);
+  font-size: 12px;
+  text-align: center;
+  padding: 8px;
+}
+
+.watchboardActions {
+  display: flex;
+  gap: 6px;
+  padding: 8px 10px;
+}
+
+.watchboardBtn {
+  flex: 1;
+  border: 1px solid rgba(255,255,255,0.2);
+  background: rgba(255,255,255,0.08);
+  color: #fff;
+  border-radius: 8px;
+  padding: 6px 8px;
+  font-weight: 700;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.watchboardBtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.alertRuleCard {
+  border: 1px solid rgba(255,255,255,0.12);
+  background: rgba(0,0,0,0.22);
+  border-radius: 12px;
+  padding: 10px;
+  margin-bottom: 10px;
+}
+
+.alertRuleTitle {
+  font-weight: 800;
+  margin-bottom: 4px;
+}
+
+.alertList {
+  display: grid;
+  gap: 8px;
+}
+
+.alertItem {
+  border: 1px solid rgba(255,255,255,0.12);
+  background: rgba(255,107,138,0.08);
+  border-radius: 10px;
+  padding: 8px 10px;
+}
+
+.alertItemTitle {
+  font-weight: 800;
+  font-size: 13px;
+}
+
+.alertItemMeta {
+  font-size: 12px;
+  color: rgba(255,255,255,0.72);
+}
+
 @media (max-width: 620px) {
   .dockPanel {
     bottom: calc(var(--botH) + 20px);
