@@ -5558,6 +5558,28 @@
     return message;
   }
 
+  function buildProxyUrl(url) {
+    try {
+      const u = new URL(url, location.href);
+      if (!/^https?:$/.test(u.protocol)) return null;
+
+      let baseOrigin = location.origin;
+      const PROXY_ORIGIN_OVERRIDE_KEY = "CM_PROXY_ORIGIN";
+      try {
+        const override = localStorage.getItem(PROXY_ORIGIN_OVERRIDE_KEY);
+        if (override && /^https?:\/\//i.test(override)) {
+          baseOrigin = override.replace(/\/+$/, '');
+        } else if (location.origin === "null" || location.protocol === "file:") {
+          baseOrigin = "http://localhost:8000";
+        }
+      } catch {}
+
+      return `${baseOrigin}/proxy?url=${encodeURIComponent(u.toString())}`;
+    } catch {
+      return null;
+    }
+  }
+
   async function loadCameraSnapshot({ imgEl, statusEl, item, force = false }) {
     if (!imgEl || !item?.media?.src) return;
     const check = canRefreshCamera(item.id);
@@ -5570,10 +5592,30 @@
     markCameraRefresh(item.id);
     if (statusEl) statusEl.textContent = "Loading snapshot…";
     try {
-      const response = await fetch(item.media.src, { cache: "no-store" });
-      if (!response.ok) {
-        throw new Error(formatProxyError(response));
+      const cacheBustedUrl = item.media.src + (item.media.src.includes("?") ? "&" : "?") + "_t=" + Date.now();
+      const proxiedUrl = buildProxyUrl(cacheBustedUrl);
+      const candidates = proxiedUrl ? [proxiedUrl, cacheBustedUrl] : [cacheBustedUrl];
+      let response = null;
+      let lastErr = null;
+
+      for (const url of candidates) {
+        try {
+          response = await fetch(url, { cache: "no-store" });
+          if (!response.ok) {
+            throw new Error(formatProxyError(response));
+          }
+          lastErr = null;
+          break;
+        } catch (err) {
+          lastErr = err;
+          response = null;
+        }
       }
+
+      if (!response) {
+        throw lastErr || new Error("network error");
+      }
+
       const blob = await response.blob();
       const objectUrl = URL.createObjectURL(blob);
       if (imgEl.dataset.objectUrl) {
