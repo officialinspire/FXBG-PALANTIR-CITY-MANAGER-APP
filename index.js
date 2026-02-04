@@ -34,6 +34,15 @@
   let IS_MOBILE_UI = computeIsMobileUI();
 
   // -----------------------------
+  // Storage Keys for localStorage persistence
+  // -----------------------------
+  const STORAGE_KEYS = {
+    PORTRAIT_DISMISSED: 'fxbg-palantir-portrait-dismissed',
+    CRIME_UI: 'fxbg-crime-ui',
+    REPORTS: 'fxbg-reports'
+  };
+
+  // -----------------------------
   // Config
   // -----------------------------
   const CONFIG = {
@@ -148,10 +157,12 @@
     debug: {
       rss: true,  // Enable RSS feed ingestion debug logging
       rssGeo: false, // Enable location extraction pipeline debug logging (shows candidate scoring)
+      geocoding: false, // Enable geocoding debug logs (AOI warnings, bbox checks)
       chips: true, // Enable chip update debug logging
       poiCoords: false, // Enable POI coordinate display in popups (for verification)
       schools: false, // Enable schools diagnostics logging
-      uiSanity: false // Enable UI sanity checks for critical elements (dev only)
+      uiSanity: false, // Enable UI sanity checks for critical elements (dev only)
+      performance: false // Enable performance timing logs
     },
 
     // FXBG PD Crime Reports configuration
@@ -3344,8 +3355,9 @@
       }
 
       if (payload.aoi === "outside" && LOCAL_JURISDICTIONS.has(String(jurisdiction || "").toLowerCase())) {
-        if (CONFIG.debug.rssGeo) {
-          console.warn(`[Geocode] AOI outside for "${locationString}" (${jurisdiction}) -> ${lat}, ${lon}`);
+        // Downgraded to debug-only log to reduce console verbosity
+        if (CONFIG.debug.geocoding || CONFIG.debug.rssGeo) {
+          console.log(`[Geocode] AOI outside for "${locationString}" (${jurisdiction}) -> ${lat}, ${lon}`);
         }
       }
 
@@ -11492,6 +11504,12 @@
   // Mobile Landscape Orientation Handling
   // -----------------------------
   const mqlPortrait = window.matchMedia?.("(orientation: portrait)");
+
+  // Check localStorage for portrait dismissal preference on load
+  if (localStorage.getItem(STORAGE_KEYS.PORTRAIT_DISMISSED) === 'true') {
+    window.__CM_ALLOW_PORTRAIT = true;
+  }
+
   function updateOrientationUI(){
     const isPortrait = mqlPortrait ? mqlPortrait.matches : (window.innerHeight > window.innerWidth);
     const isMobileish = window.matchMedia?.("(max-width: 980px)")?.matches ?? (window.innerWidth <= 980);
@@ -11526,14 +11544,26 @@
     });
   }
 
-  // Continue Anyway button
+  // Continue Anyway button - saves preference to localStorage for persistence across sessions
   const btnContinuePortrait = document.getElementById("btnContinuePortrait");
   if (btnContinuePortrait) {
     btnContinuePortrait.addEventListener("click", () => {
+      // Save dismissal preference to localStorage
+      localStorage.setItem(STORAGE_KEYS.PORTRAIT_DISMISSED, 'true');
       window.__CM_ALLOW_PORTRAIT = true;
       updateOrientationUI();
     });
   }
+
+  // Helper function to reset portrait dismissal preference (can be called from diagnostics)
+  function resetPortraitDismissal() {
+    localStorage.removeItem(STORAGE_KEYS.PORTRAIT_DISMISSED);
+    window.__CM_ALLOW_PORTRAIT = false;
+    console.log('[Settings] Portrait mode warning will show again');
+    updateOrientationUI();
+  }
+  // Expose to window for diagnostics access
+  window.__resetPortraitDismissal = resetPortraitDismissal;
 
   // -----------------------------
   // Mobile Landscape UX Helpers
@@ -11843,18 +11873,23 @@
     if (__headerListenersAttached) return;
     __headerListenersAttached = true;
 
-    // Refresh button
-    const btnRefresh = $("btnRefresh");
+    // Refresh button - use parent-aware selectors to avoid ID conflicts during mobile/desktop transitions
+    const btnRefresh = IS_MOBILE_UI
+      ? document.querySelector('.mobile-only #btnRefresh') || $("btnRefresh")
+      : document.querySelector('.desktop-only #btnRefresh') || $("btnRefresh");
     if (btnRefresh) {
       btnRefresh.addEventListener("click", refreshAll);
     } else if (CONFIG.debug?.uiSanity) {
       console.warn('[UI] Missing element: #btnRefresh');
     }
 
-    // Crime Reports button
+    // Crime Reports button - use parent-aware selectors to avoid ID conflicts during mobile/desktop transitions
     const btnCrime = IS_MOBILE_UI
-      ? (document.getElementById("btnCrimeMobile") || document.getElementById("btnCrime"))
-      : document.getElementById("btnCrime");
+      ? (document.querySelector('.mobile-only #btnCrimeMobile') ||
+         document.querySelector('.mobile-only #btnCrime') ||
+         document.getElementById("btnCrime"))
+      : (document.querySelector('.desktop-only #btnCrime') ||
+         document.getElementById("btnCrime"));
     if (btnCrime) {
       let pressTimer = null;
       let suppressNextClick = false;
@@ -11909,10 +11944,13 @@
       console.warn('[UI] Missing element: #btnCrime');
     }
 
-    // Report button
+    // Report button - use parent-aware selectors to avoid ID conflicts during mobile/desktop transitions
     const btnReport = IS_MOBILE_UI
-      ? (document.getElementById("btnReportMobile") || document.getElementById("btnReport"))
-      : document.getElementById("btnReport");
+      ? (document.querySelector('.mobile-only #btnReportMobile') ||
+         document.querySelector('.mobile-only #btnReport') ||
+         document.getElementById("btnReport"))
+      : (document.querySelector('.desktop-only #btnReport') ||
+         document.getElementById("btnReport"));
     if (btnReport) {
       btnReport.addEventListener("click", () => {
         const panel = $("reportPanel");
@@ -11932,10 +11970,13 @@
       console.warn('[UI] Missing element: #btnReport');
     }
 
-    // News Flash button
+    // News Flash button - use parent-aware selectors to avoid ID conflicts during mobile/desktop transitions
     const btnNewsFlash = IS_MOBILE_UI
-      ? (document.getElementById("btnNewsFlashMobile") || document.getElementById("btnNewsFlash"))
-      : document.getElementById("btnNewsFlash");
+      ? (document.querySelector('.mobile-only #btnNewsFlashMobile') ||
+         document.querySelector('.mobile-only #btnNewsFlash') ||
+         document.getElementById("btnNewsFlash"))
+      : (document.querySelector('.desktop-only #btnNewsFlash') ||
+         document.getElementById("btnNewsFlash"));
     if (btnNewsFlash) {
       btnNewsFlash.addEventListener("click", () => {
         const panel = $("newsFlashPanel");
@@ -11957,10 +11998,13 @@
       console.warn('[UI] Missing element: #btnNewsFlash');
     }
 
-    // Radio Scanner button
+    // Radio Scanner button - use parent-aware selectors to avoid ID conflicts during mobile/desktop transitions
     const btnRadioScanner = IS_MOBILE_UI
-      ? (document.getElementById("btnRadioScannerMobile") || document.getElementById("btnRadioScanner"))
-      : document.getElementById("btnRadioScanner");
+      ? (document.querySelector('.mobile-only #btnRadioScannerMobile') ||
+         document.querySelector('.mobile-only #btnRadioScanner') ||
+         document.getElementById("btnRadioScanner"))
+      : (document.querySelector('.desktop-only #btnRadioScanner') ||
+         document.getElementById("btnRadioScanner"));
     if (btnRadioScanner) {
       btnRadioScanner.addEventListener("click", () => {
         const panel = $("radioPanel");
@@ -11981,8 +12025,10 @@
       console.warn('[UI] Missing element: #btnRadioScanner');
     }
 
-    // Header chips to dock tabs
-    const chipLive = $("chipLive");
+    // Header chips to dock tabs - use parent-aware selectors to avoid ID conflicts during mobile/desktop transitions
+    const chipLive = IS_MOBILE_UI
+      ? document.querySelector('.mobile-only #chipLive') || $("chipLive")
+      : document.querySelector('.desktop-only #chipLive') || $("chipLive");
     if (chipLive) {
       chipLive.addEventListener("click", () => {
         openDock("system");
@@ -11991,7 +12037,9 @@
       console.warn('[UI] Missing element: #chipLive');
     }
 
-    const chipWeather = $("chipWeather");
+    const chipWeather = IS_MOBILE_UI
+      ? document.querySelector('.mobile-only #chipWeather') || $("chipWeather")
+      : document.querySelector('.desktop-only #chipWeather') || $("chipWeather");
     if (chipWeather) {
       chipWeather.addEventListener("click", () => {
         openDock("overview");
@@ -12000,7 +12048,9 @@
       console.warn('[UI] Missing element: #chipWeather');
     }
 
-    const chipTraffic = $("chipTraffic");
+    const chipTraffic = IS_MOBILE_UI
+      ? document.querySelector('.mobile-only #chipTraffic') || $("chipTraffic")
+      : document.querySelector('.desktop-only #chipTraffic') || $("chipTraffic");
     if (chipTraffic) {
       chipTraffic.addEventListener("click", () => {
         openDock("sources");
