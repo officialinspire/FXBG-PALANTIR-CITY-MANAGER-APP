@@ -150,7 +150,8 @@
       rssGeo: false, // Enable location extraction pipeline debug logging (shows candidate scoring)
       chips: true, // Enable chip update debug logging
       poiCoords: false, // Enable POI coordinate display in popups (for verification)
-      schools: false // Enable schools diagnostics logging
+      schools: false, // Enable schools diagnostics logging
+      uiSanity: false // Enable UI sanity checks for critical elements (dev only)
     },
 
     // FXBG PD Crime Reports configuration
@@ -11964,6 +11965,72 @@
   let __mobileListenersAttached = false;
   let __chromeHeightTimer = null;
 
+  function runUiSanityCheck(context = "check") {
+    if (!CONFIG?.debug?.uiSanity) return;
+
+    try {
+      const missing = [];
+      const baseRequired = ["map", "panel", "panelHandle"];
+      const panelRequired = ["crimePanel", "reportPanel", "newsFlashPanel", "radioPanel", "diagnosticsDrawer"];
+      const buttonPairs = [
+        { base: "btnCrime", mobile: "btnCrimeMobile" },
+        { base: "btnReport", mobile: "btnReportMobile" },
+        { base: "btnNewsFlash", mobile: "btnNewsFlashMobile" },
+        { base: "btnRadioScanner", mobile: "btnRadioScannerMobile" },
+        { base: "btnRefresh", mobile: "btnRefreshMobile" }
+      ];
+
+      for (const id of baseRequired) {
+        if (!document.getElementById(id)) missing.push(`#${id}`);
+      }
+
+      for (const id of panelRequired) {
+        if (!document.getElementById(id)) missing.push(`#${id}`);
+      }
+
+      for (const pair of buttonPairs) {
+        if (IS_MOBILE_UI) {
+          if (!document.getElementById(pair.mobile) && !document.getElementById(pair.base)) {
+            missing.push(`#${pair.mobile} or #${pair.base}`);
+          }
+        } else if (!document.getElementById(pair.base)) {
+          missing.push(`#${pair.base}`);
+        }
+      }
+
+      const escapeId = (id) => {
+        if (window.CSS && typeof CSS.escape === "function") return CSS.escape(id);
+        return id.replace(/([ #;?%&,.+*~\\':"!^$[\\]()=>|/@])/g, "\\$1");
+      };
+
+      const idsToCheck = new Set([
+        ...baseRequired,
+        ...panelRequired,
+        ...buttonPairs.flatMap((pair) => [pair.base, pair.mobile])
+      ]);
+
+      const duplicates = [];
+      for (const id of idsToCheck) {
+        const count = document.querySelectorAll(`#${escapeId(id)}`).length;
+        if (count > 1) duplicates.push(`${id}(${count})`);
+      }
+
+      const warnings = [];
+      if (missing.length) {
+        warnings.push(`Missing elements (${IS_MOBILE_UI ? "mobile" : "desktop"}): ${missing.join(", ")}`);
+      }
+      if (duplicates.length) {
+        warnings.push(`Duplicate IDs detected: ${duplicates.join(", ")}`);
+      }
+
+      if (warnings.length) {
+        console.warn(`[UI Sanity] ${context}: ${warnings.join(" | ")}`);
+      }
+    } catch (error) {
+      console.warn(`[UI Sanity] ${context}: ${error?.message || error}`);
+    }
+  }
+
   function syncUiMode() {
     const next = computeIsMobileUI();
     const changed = next !== IS_MOBILE_UI;
@@ -11986,6 +12053,7 @@
         __mobileListenersAttached = true;
       }
       updateChromeHeights();
+      runUiSanityCheck("syncUiMode");
       return;
     }
 
@@ -11997,6 +12065,7 @@
     __headerListenersAttached = false; // Reset guard since initDesktopHeader() recreated HTML
     attachHeaderEventListeners();
     updateChromeHeights();
+    runUiSanityCheck("syncUiMode");
   }
 
   function scheduleSyncUiMode() {
@@ -12048,6 +12117,7 @@
   updateChromeHeights();
   updateCrimeButtonActiveState();
   ensureOverlayLegendControl();
+  runUiSanityCheck("boot");
 
   // Set a short timeout to ensure chips update even if refreshAll hangs
   setTimeout(ensureChipsHaveState, 10000); // 10 seconds after boot
