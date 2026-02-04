@@ -4228,20 +4228,20 @@
       userLocationMarker.setLatLng([lat, lng]);
     }
 
-    if (Number.isFinite(accuracy) && accuracy > 0) {
-      if (!userLocationCircle) {
-        userLocationCircle = L.circle([lat, lng], {
-          radius: accuracy,
-          color: "#4fd1ff",
-          weight: 1,
-          opacity: 0.5,
-          fillColor: "#4fd1ff",
-          fillOpacity: 0.08
-        }).addTo(map);
-      } else {
-        userLocationCircle.setLatLng([lat, lng]);
-        userLocationCircle.setRadius(accuracy);
-      }
+    // Use a default radius of 50 meters if accuracy is unavailable
+    const circleRadius = Number.isFinite(accuracy) && accuracy > 0 ? accuracy : 50;
+    if (!userLocationCircle) {
+      userLocationCircle = L.circle([lat, lng], {
+        radius: circleRadius,
+        color: "#4fd1ff",
+        weight: 2,
+        opacity: 0.6,
+        fillColor: "#4fd1ff",
+        fillOpacity: 0.15
+      }).addTo(map);
+    } else {
+      userLocationCircle.setLatLng([lat, lng]);
+      userLocationCircle.setRadius(circleRadius);
     }
   }
 
