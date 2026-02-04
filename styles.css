@@ -2297,6 +2297,18 @@ html, body{
   .mobile-only  { display: block; }
 }
 
+@media (max-width: 899px) and (pointer: coarse) {
+  .ui-mobile #mobileHeader .chip__text,
+  .ui-mobile #mobileHeader .weatherWidget .weatherText,
+  .ui-mobile #mobileHeader .weatherChip .weatherText,
+  .ui-mobile #mobileHeader .weatherWidget .text {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}
+
 /* JS-authoritative UI mode classes (fixes mobile ghost desktop header overlay) */
 .ui-mobile .desktop-only { display: none !important; }
 .ui-mobile .mobile-only  { display: block !important; }
