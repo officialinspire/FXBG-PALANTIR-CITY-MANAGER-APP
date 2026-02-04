@@ -162,7 +162,8 @@
       poiCoords: false, // Enable POI coordinate display in popups (for verification)
       schools: false, // Enable schools diagnostics logging
       uiSanity: false, // Enable UI sanity checks for critical elements (dev only)
-      performance: false // Enable performance timing logs
+      performance: false, // Enable performance timing logs
+      verboseErrors: false // Set true to see all upstream errors (otherwise only first + milestone failures logged)
     },
 
     // FXBG PD Crime Reports configuration
@@ -1882,6 +1883,47 @@
   };
 
   // -----------------------------
+  // Data source health tracking (reduces console spam)
+  // -----------------------------
+  const SOURCE_HEALTH = {};
+
+  function recordSourceHealth(category, sourceName, success, errorType = null) {
+    if (!SOURCE_HEALTH[category]) SOURCE_HEALTH[category] = {};
+    if (!SOURCE_HEALTH[category][sourceName]) {
+      SOURCE_HEALTH[category][sourceName] = {
+        lastSuccess: null,
+        consecutiveFailures: 0,
+        totalAttempts: 0,
+        lastError: null
+      };
+    }
+
+    const h = SOURCE_HEALTH[category][sourceName];
+    h.totalAttempts++;
+
+    if (success) {
+      h.lastSuccess = Date.now();
+      h.consecutiveFailures = 0;
+      h.lastError = null;
+    } else {
+      h.consecutiveFailures++;
+      h.lastError = errorType;
+    }
+  }
+
+  function getUnhealthySources() {
+    const unhealthy = [];
+    for (const [cat, sources] of Object.entries(SOURCE_HEALTH)) {
+      for (const [name, h] of Object.entries(sources)) {
+        if (h.consecutiveFailures >= 3) {
+          unhealthy.push({ category: cat, name, failures: h.consecutiveFailures, lastError: h.lastError });
+        }
+      }
+    }
+    return unhealthy;
+  }
+
+  // -----------------------------
   // Categories
   // -----------------------------
   const CATEGORIES = {
@@ -3018,7 +3060,20 @@
         };
 
         if (!res.ok) {
-          const err = new Error(`HTTP ${res.status}`);
+          // Provide better error messages for common HTTP errors
+          let errMsg;
+          if (res.status === 403) {
+            errMsg = `HTTP 403 Forbidden - Bot detection or access denied`;
+          } else if (res.status === 502) {
+            errMsg = `HTTP 502 - Upstream server unavailable`;
+          } else if (res.status >= 500) {
+            errMsg = `HTTP ${res.status} - Server error`;
+          } else if (res.status === 429) {
+            errMsg = `HTTP 429 - Rate limited`;
+          } else {
+            errMsg = `HTTP ${res.status}`;
+          }
+          const err = new Error(errMsg);
           errors.push({ type: candidate.type, status: res.status, error: err.message });
           throw err;
         }
@@ -6321,6 +6376,7 @@
 
         // Round 3: Record success to clear backoff
         recordSourceSuccess(`rss-${source.id}`);
+        recordSourceHealth('rss', source.id, true);
 
       } catch (err) {
         // Check if this is a rate limit error (429)
@@ -6357,21 +6413,20 @@
           timestamp: Date.now()
         };
 
-        // Only log RSS errors once per session per source to avoid console spam
-        const errorKey = `_rssError_${source.id}`;
-        if (!store[errorKey]) {
+        // Track source health and log errors with smart suppression
+        recordSourceHealth('rss', source.id, false, err.message || String(err));
+        const h = SOURCE_HEALTH.rss[source.id];
+
+        // Only log first failure + milestone failures (3rd, 5th) unless verbose mode
+        if (CONFIG.debug.verboseErrors || h.consecutiveFailures === 1) {
           if (isRateLimit) {
-            console.warn(`RSS feed ${source.id} rate limited (HTTP 429). Using cached data or will retry later.`);
-          } else if (isEmpty || isProxyError) {
-            console.error(`RSS feed ${source.id} failed. Error: ${err.message || err}`);
-            if (isProxyError || isEmpty) {
-              console.error(`  → Check that proxy server is running: node proxy-server.js`);
-              console.error(`  → Feed URL: ${source.url}`);
-            }
+            console.warn(`⚠️ RSS ${source.id} rate limited (HTTP 429)`);
           } else {
-            console.warn(`RSS feed ${source.id} failed. Error:`, err.message || err);
+            console.error(`⚠️ RSS ${source.id} failed: ${err.message || err}`);
+            console.warn(`  → Check proxy: node proxy-server.js | URL: ${source.url}`);
           }
-          store[errorKey] = true;
+        } else if (h.consecutiveFailures === 3 || h.consecutiveFailures === 5) {
+          console.warn(`⚠️ RSS ${source.id}: ${h.consecutiveFailures} consecutive failures`);
         }
         results.push({ source: source.id, ok: false, error: String(err), isRateLimit });
       }
@@ -6747,6 +6802,7 @@
 
           // Round 3: Record success to clear backoff
           recordSourceSuccess('va511-incidents');
+          recordSourceHealth('va511', 'incidents', true);
         } else {
           throw new Error("Invalid GeoJSON response (missing features)");
         }
@@ -6759,12 +6815,15 @@
             recordSourceFailure('va511-incidents', 'fetch_error');
             recordFeedError('va511-incidents');
 
-            if (!store._511IncidentsErrorLogged) {
-              console.error("All 511 incidents endpoints failed. Error:", e.message || e);
-              console.error("The 511 incidents service may be down or blocking requests.");
-              console.error("  → Ensure proxy server is running: node proxy-server.js");
-              console.error("  → Tried endpoints:", incidentsEndpoints.map(ep => ep.url).join(', '));
-              store._511IncidentsErrorLogged = true;
+            recordSourceHealth('va511', 'incidents', false, e.message || String(e));
+            const h = SOURCE_HEALTH.va511.incidents;
+
+            // Only log first failure + milestone failures (5th) unless verbose mode
+            if (CONFIG.debug.verboseErrors || h.consecutiveFailures === 1) {
+              console.error(`⚠️ 511 Virginia unavailable: ${e.message || e}`);
+              console.warn(`  → Check proxy: node proxy-server.js`);
+            } else if (h.consecutiveFailures === 5) {
+              console.warn(`⚠️ 511 Virginia: ${h.consecutiveFailures} consecutive failures - extended outage`);
             }
           }
         }
@@ -9394,6 +9453,22 @@
 
   function renderDiagnosticsSummary(healthData, crimeStatus) {
     if (!diagnosticsSummary) return;
+
+    // Build source health summary
+    const unhealthy = getUnhealthySources();
+    let healthHtml = '';
+
+    if (unhealthy.length > 0) {
+      healthHtml = `<div class="diagnosticsHealthWarning"><strong>⚠️ ${unhealthy.length} source(s) failing:</strong><ul>`;
+      for (const s of unhealthy) {
+        const errorStr = s.lastError ? s.lastError.substring(0, 60) : '';
+        healthHtml += `<li><strong>${s.name}</strong>: ${s.failures} failures<br><small>${errorStr}</small></li>`;
+      }
+      healthHtml += `</ul><small>Auto-retrying with backoff. Upstream services may be down.</small></div>`;
+    } else {
+      healthHtml = `<div class="diagnosticsHealthOk">✅ All sources healthy</div>`;
+    }
+
     const localHealth = healthTracker.computeHealth();
     const serverStatus = healthData?.status || "unknown";
     const uptimeSec = healthData?.uptimeSec ?? (healthData?.uptimeMs ? Math.floor(healthData.uptimeMs / 1000) : null);
@@ -9427,7 +9502,7 @@
     if (optKeys.WAQI_TOKEN === false) optKeysWarning.push("AQI");
     const optKeysStr = optKeysWarning.length > 0 ? `Missing: ${optKeysWarning.join(", ")}` : "All configured";
 
-    diagnosticsSummary.innerHTML = `
+    diagnosticsSummary.innerHTML = healthHtml + `
       <div class="diagnosticsRow">
         <div>
           <div class="diagnosticsRow__title">Client Health</div>
