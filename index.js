@@ -2432,7 +2432,7 @@
     ];
 
     for (const id of idsToRename) {
-      const el = mobileHeader.querySelector("#" + CSS.escape(id));
+      const el = mobileHeader.querySelector(`[id="${id}"]`);
       if (el) {
         el.id = id + "Mobile";
         if (CONFIG.debug.chips) console.log(`[Chip Dedupe] Renamed ${id} to ${id}Mobile in mobile header`);
