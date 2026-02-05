@@ -5442,40 +5442,111 @@
   // -----------------------------
   // Timeline rendering
   // -----------------------------
+  function getEventEmoji(kind, event) {
+    if (kind === 'report') return '📝';
+    if (kind === 'crime') return '🚓';
+    if (kind === 'system') return '⚙️';
+    if (kind === 'action') return '⚡';
+    return '📌';
+  }
+
+  function getRelativeTime(ts) {
+    const diff = Date.now() - ts;
+    const mins = Math.floor(diff / 60000);
+    const hours = Math.floor(diff / 3600000);
+    const days = Math.floor(diff / 86400000);
+
+    if (mins < 1) return 'Just now';
+    if (mins < 60) return `${mins}m ago`;
+    if (hours < 24) return `${hours}h ago`;
+    return `${days}d ago`;
+  }
+
   function renderTimeline() {
-    const container = $("timelineList");
-    if (!container) return;
+    const list = $("timelineList");
+    if (!list) return;
 
-    const filters = store.timeline.filters;
-    const cutoff = Date.now() - (filters.hours * 60 * 60 * 1000);
+    const { hours, reports, crime, system, actions } = store.timeline.filters;
+    const cutoff = Date.now() - (hours * 60 * 60 * 1000);
 
-    let events = store.timeline.events.filter(e => {
+    let filtered = store.timeline.events.filter(e => {
       if (e.ts < cutoff) return false;
-      if (e.kind === 'report' && !filters.reports) return false;
-      if (e.kind === 'crime' && !filters.crime) return false;
-      if (e.kind === 'system' && !filters.system) return false;
-      if (e.kind === 'action' && !filters.actions) return false;
+      if (e.kind === 'report' && !reports) return false;
+      if (e.kind === 'crime' && !crime) return false;
+      if (e.kind === 'system' && !system) return false;
+      if (e.kind === 'action' && !actions) return false;
       return true;
     });
 
-    events.sort((a, b) => b.ts - a.ts);
+    filtered.sort((a, b) => b.ts - a.ts);
 
-    if (events.length === 0) {
-      container.innerHTML = '<div class="timelineEmpty">No events in selected timeframe</div>';
+    if (filtered.length === 0) {
+      list.innerHTML = '<div class="timelineEmpty">No events in selected time range</div>';
       return;
     }
 
-    container.innerHTML = events.map(e => `
-      <div class="timelineItem timelineItem--${e.kind}" data-id="${e.id}">
-        <div class="timelineItem__time">${new Date(e.ts).toLocaleString()}</div>
-        <div class="timelineItem__title">${escapeHtml(e.title)}</div>
-        ${e.summary ? `<div class="timelineItem__summary">${escapeHtml(e.summary)}</div>` : ''}
-        <div class="timelineItem__meta">
-          <span class="timelineItem__kind">${e.kind}</span>
-          ${e.pendingSync ? '<span class="timelineItem__pending">⏳ Pending sync</span>' : ''}
+    list.innerHTML = filtered.map(e => {
+      const emoji = getEventEmoji(e.kind, e);
+      const relTime = getRelativeTime(e.ts);
+      const absTime = new Date(e.ts).toLocaleString();
+      const freshClass = e.pendingSync ? 'pending' : (e.freshness?.state || 'cached');
+
+      return `
+        <div class="timelineItem timelineItem--${e.kind}" data-event-id="${e.id}" data-lat="${e.lat || ''}" data-lng="${e.lng || ''}">
+          <div class="timelineItem__header">
+            <span class="timelineItem__emoji">${emoji}</span>
+            <span class="timelineItem__title">${escapeHtml(e.title)}</span>
+            <span class="timelineItem__time" title="${absTime}">${relTime}</span>
+          </div>
+          ${e.summary ? `<div class="timelineItem__summary">${escapeHtml(e.summary)}</div>` : ''}
+          <div class="timelineItem__footer">
+            <span class="timelineBadge">${escapeHtml(e.source?.name || e.kind)}</span>
+            <span class="timelineBadge timelineBadge--${freshClass}">${freshClass.toUpperCase()}</span>
+            ${e.severity ? `<span class="timelineBadge">⚠️ ${e.severity}</span>` : ''}
+          </div>
         </div>
-      </div>
-    `).join('');
+      `;
+    }).join('');
+
+    // Attach click handlers to pan map to event location
+    list.querySelectorAll('.timelineItem').forEach(item => {
+      item.addEventListener('click', () => {
+        const lat = parseFloat(item.dataset.lat);
+        const lng = parseFloat(item.dataset.lng);
+        if (lat && lng && map) {
+          map.setView([lat, lng], 15);
+          // Close panel on mobile for better map visibility
+          if (IS_MOBILE_UI) {
+            $("timelinePanel")?.classList.add("timelinePanel--hidden");
+            restoreHeaderIfNoBlockingPanels();
+          }
+        }
+      });
+    });
+  }
+
+  // Sync events to IndexedDB
+  async function syncTimelineToIDB() {
+    try {
+      await idbSaveEvents(store.timeline.events);
+      await idbSaveMeta('lastSync', { reports: Date.now(), crime: Date.now(), system: Date.now() });
+    } catch (err) {
+      console.warn('Timeline sync to IDB failed:', err);
+    }
+  }
+
+  // Merge new events (deduped by id, newer ts wins)
+  function mergeTimelineEvents(newEvents) {
+    if (!newEvents || !newEvents.length) return;
+    const existing = new Map(store.timeline.events.map(e => [e.id, e]));
+    for (const evt of newEvents) {
+      if (!existing.has(evt.id) || evt.ts > existing.get(evt.id).ts) {
+        existing.set(evt.id, evt);
+      }
+    }
+    store.timeline.events = Array.from(existing.values());
+    renderTimeline();
+    syncTimelineToIDB();
   }
 
   // Photo preview race condition fix: track current FileReader to abort on rapid file changes
@@ -8898,6 +8969,21 @@
       applyCrimeOverlayVisibility();
       updateCrimeIncidentsList();
 
+      // Merge crime incidents into timeline
+      const crimeEvents = incidents
+        .filter(inc => inc.latitude && inc.longitude)
+        .map(inc => fromCrimeToEvent({
+          IncidentNumber: inc.id,
+          Offense: inc.offenseType,
+          Category: inc.category,
+          Address: inc.locationRaw,
+          DateReported: inc.incidentDateISO,
+          DateOccurred: inc.incidentDateISO,
+          Latitude: inc.latitude,
+          Longitude: inc.longitude
+        }));
+      mergeTimelineEvents(crimeEvents);
+
       console.log(`[Crime Reports] Total crime items in store: ${store.crime.ids.size} (${bootWindowCount} in ${bootWindowDays}-day window)`);
 
     } catch (err) {
@@ -9268,6 +9354,9 @@
       store.reports.items = data.items;
       store.reports.lastFetch = Date.now();
       renderReportsLayer();
+      // Merge reports into timeline
+      const reportEvents = data.items.map(fromReportToEvent);
+      mergeTimelineEvents(reportEvents);
     } catch (err) {
       console.warn("[Reports] Fetch failed:", err);
     }
