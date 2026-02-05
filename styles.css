@@ -263,6 +263,111 @@ body{
   display: none;
 }
 
+.offlineMapControl {
+  background: rgba(15, 23, 48, .92);
+  border: 1px solid rgba(255,255,255,.16);
+  border-radius: 12px;
+  box-shadow: 0 10px 24px rgba(0,0,0,.38);
+  color: var(--txt);
+  padding: 10px;
+  min-width: 220px;
+}
+
+.offlineMapControl__title {
+  font-size: 12px;
+  font-weight: 700;
+  margin-bottom: 8px;
+}
+
+.offlineMapControl__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+  font-size: 12px;
+}
+
+.offlineMapControl__stats {
+  font-size: 11px;
+  color: var(--muted);
+  display: grid;
+  gap: 2px;
+  margin-top: 4px;
+}
+
+.offlineMapControl__btn {
+  width: 100%;
+  justify-content: center;
+  padding: 8px 10px;
+}
+
+.offlineMapModal {
+  position: fixed;
+  inset: 0;
+  z-index: 4200;
+  display: grid;
+  place-items: center;
+  background: rgba(5, 9, 20, .64);
+  backdrop-filter: blur(2px);
+}
+
+.offlineMapModal--hidden {
+  display: none;
+}
+
+.offlineMapModal__card {
+  width: min(420px, calc(100vw - 24px));
+  border-radius: 16px;
+  border: 1px solid rgba(255,255,255,.14);
+  background: rgba(11,18,32,.95);
+  box-shadow: 0 18px 46px rgba(0,0,0,.5);
+  padding: 12px;
+}
+
+.offlineMapModal__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.offlineMapModal__title {
+  font-size: 15px;
+  font-weight: 800;
+}
+
+.offlineMapModal__body {
+  display: grid;
+  gap: 10px;
+}
+
+.offlineMapModal__field {
+  display: grid;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.offlineMapModal__field select {
+  border: 1px solid rgba(255,255,255,.18);
+  border-radius: 10px;
+  background: rgba(255,255,255,.06);
+  color: var(--txt);
+  padding: 8px 10px;
+}
+
+.offlineMapModal__field--progress {
+  border-top: 1px solid rgba(255,255,255,.08);
+  padding-top: 8px;
+}
+
+.offlineMapModal__actions {
+  margin-top: 12px;
+  display: flex;
+  justify-content: flex-end;
+}
+
 .mini{ text-align: right; }
 .mini__label{ font-size: 11px; color: var(--muted2); }
 .mini__value{ font-size: 12px; font-weight: 700; }

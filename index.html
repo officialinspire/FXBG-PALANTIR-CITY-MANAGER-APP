@@ -554,6 +554,36 @@
   <div id="diagnosticsOverlay" class="diagnosticsOverlay diagnosticsOverlay--hidden" aria-hidden="true"></div>
   <div id="offlineToast" class="offlineToast offlineToast--hidden" role="status" aria-live="polite">Offline ready</div>
 
+  <div id="offlineMapModal" class="offlineMapModal offlineMapModal--hidden" role="dialog" aria-modal="true" aria-label="Offline map prefetch settings">
+    <div class="offlineMapModal__card">
+      <div class="offlineMapModal__header">
+        <div class="offlineMapModal__title">Offline Map Prefetch</div>
+        <button class="iconBtn" id="offlineMapModalClose" type="button" aria-label="Close offline map prefetch">✖️</button>
+      </div>
+      <div class="offlineMapModal__body">
+        <label class="offlineMapModal__field">
+          <span>Radius</span>
+          <select id="offlineMapRadius">
+            <option value="1">1 km</option>
+            <option value="3" selected>3 km</option>
+            <option value="5">5 km</option>
+            <option value="10">10 km</option>
+          </select>
+        </label>
+        <div class="offlineMapModal__field">
+          <span>Zoom range</span>
+          <div id="offlineMapZoomRange">Current to +2</div>
+        </div>
+        <div class="offlineMapModal__field offlineMapModal__field--progress">
+          <span id="offlineMapProgress">Downloading 0/0 tiles…</span>
+        </div>
+      </div>
+      <div class="offlineMapModal__actions">
+        <button class="btn" id="offlineMapStartPrefetch" type="button">Start Prefetch</button>
+      </div>
+    </div>
+  </div>
+
   <footer class="bottombar">
     <div class="dock" id="dock">
       <button class="dockBtn dockTab" data-dock="overview" data-panel="overview" aria-pressed="false">Overview</button>
