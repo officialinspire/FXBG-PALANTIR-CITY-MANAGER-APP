@@ -10603,35 +10603,97 @@
   }
 
   // Sync pack export/import
+  async function exportSyncPack() {
+    try {
+      const deviceId = await idbGetMeta('deviceId');
+      const events = await idbGetEvents();
+      const reports = await idbGetReports();
+
+      const pack = {
+        schemaVersion: 1,
+        exportedAt: new Date().toISOString(),
+        deviceId,
+        events,
+        reports
+      };
+
+      const blob = new Blob([JSON.stringify(pack, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `fxbg-sync-pack-${new Date().toISOString().slice(0, 10)}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+
+      alert(`✅ Exported ${events.length} events, ${reports.length} reports`);
+    } catch (err) {
+      alert('Export failed: ' + err.message);
+    }
+  }
+
+  async function importSyncPack(file) {
+    try {
+      const text = await file.text();
+      const pack = JSON.parse(text);
+
+      if (pack.schemaVersion !== 1) {
+        throw new Error('Incompatible schema version');
+      }
+
+      // Merge events
+      const currentEvents = await idbGetEvents();
+      const eventMap = new Map(currentEvents.map(e => [e.id, e]));
+
+      for (const evt of pack.events || []) {
+        if (!eventMap.has(evt.id) || evt.ts > (eventMap.get(evt.id)?.ts || 0)) {
+          eventMap.set(evt.id, { ...evt, freshness: { state: 'cached' } });
+        }
+      }
+
+      store.timeline.events = Array.from(eventMap.values());
+      await idbSaveEvents(store.timeline.events);
+
+      // Merge reports
+      const currentReports = await idbGetReports();
+      const reportMap = new Map(currentReports.map(r => [r.id, r]));
+
+      for (const report of pack.reports || []) {
+        if (!reportMap.has(report.id)) {
+          reportMap.set(report.id, report);
+        }
+      }
+
+      const mergedReports = Array.from(reportMap.values());
+      await idbSaveReports(mergedReports);
+      store.reports.items = mergedReports;
+
+      const now = Date.now();
+      await idbSaveMeta('lastSync', { reports: now, crime: now, system: now });
+
+      renderTimeline();
+      updateLastSyncDisplay();
+      alert(`✅ Imported ${pack.events?.length || 0} events, ${pack.reports?.length || 0} reports`);
+    } catch (err) {
+      alert('Import failed: ' + err.message);
+    }
+  }
+
+  async function updateLastSyncDisplay() {
+    const lastSync = await idbGetMeta('lastSync');
+    const display = $("timelineLastSync");
+    if (display && lastSync) {
+      const latest = Math.max(lastSync.reports || 0, lastSync.crime || 0, lastSync.system || 0);
+      const relTime = getRelativeTime(latest);
+      display.textContent = `Last sync: ${relTime}`;
+    }
+  }
+
   const btnExportSyncPack = $("btnExportSyncPack");
   const btnImportSyncPack = $("btnImportSyncPack");
   const syncPackInput = $("syncPackInput");
 
   if (btnExportSyncPack) {
-    btnExportSyncPack.addEventListener("click", async () => {
-      try {
-        const events = await idbGetEvents();
-        const reports = await idbGetReports();
-        const deviceId = await idbGetMeta('deviceId');
-        const syncPack = {
-          version: 1,
-          exportedAt: new Date().toISOString(),
-          deviceId,
-          events,
-          reports
-        };
-        const blob = new Blob([JSON.stringify(syncPack, null, 2)], { type: 'application/json' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `fxbg-sync-pack-${new Date().toISOString().slice(0,10)}.json`;
-        a.click();
-        URL.revokeObjectURL(url);
-      } catch (err) {
-        console.error('Export sync pack failed:', err);
-        alert('Failed to export sync pack');
-      }
-    });
+    btnExportSyncPack.addEventListener("click", exportSyncPack);
   }
 
   if (btnImportSyncPack && syncPackInput) {
@@ -10641,29 +10703,12 @@
 
     syncPackInput.addEventListener("change", async (e) => {
       const file = e.target.files?.[0];
-      if (!file) return;
-      try {
-        const text = await file.text();
-        const syncPack = JSON.parse(text);
-        if (syncPack.events) {
-          await idbSaveEvents(syncPack.events);
-          store.timeline.events = await idbGetEvents();
-        }
-        if (syncPack.reports) {
-          await idbSaveReports(syncPack.reports);
-        }
-        renderTimeline();
-        const timelineLastSync = $("timelineLastSync");
-        if (timelineLastSync) {
-          timelineLastSync.textContent = `Imported: ${new Date().toLocaleTimeString()}`;
-        }
-      } catch (err) {
-        console.error('Import sync pack failed:', err);
-        alert('Failed to import sync pack');
-      }
+      if (file) await importSyncPack(file);
       syncPackInput.value = '';
     });
   }
+
+  setInterval(updateLastSyncDisplay, 60000); // Update every minute
 
   // -----------------------------
   // Crime Reports Panel Event Listeners
@@ -12952,10 +12997,7 @@
       }
 
       // Update last sync display
-      const timelineLastSync = $("timelineLastSync");
-      if (timelineLastSync) {
-        timelineLastSync.textContent = `Last sync: ${new Date().toLocaleTimeString()}`;
-      }
+      updateLastSyncDisplay();
 
       console.log('[IDB] Initialized with deviceId:', deviceId);
 
