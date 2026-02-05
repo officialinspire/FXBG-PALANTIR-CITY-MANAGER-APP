@@ -57,6 +57,27 @@
     timerHandle: null
   };
 
+  const trackState = {
+    active: null,
+    watchId: null,
+    lastPointTs: 0,
+    lastWarnTs: 0,
+    haptics: true,
+    polyline: null,
+    pointsShownTrackId: null,
+    orientationAlpha: null,
+    orientationEnabled: false,
+    lastAccuracy: null,
+    lastSpeed: null,
+    lastHeading: null,
+    trackCache: []
+  };
+
+  function vibe(p) {
+    if (!trackState.haptics || !navigator.vibrate) return;
+    navigator.vibrate(p);
+  }
+
   // -----------------------------
   // Storage Keys for localStorage persistence
   // -----------------------------
@@ -66,7 +87,8 @@
     REPORTS: 'fxbg-reports',
     UI_MODE: 'fxbg.uiMode',
     ACTIVE_MISSION: 'fxbg.activeMission',
-    HUB_DEVICE_ID: 'fxbg.hubDeviceId'
+    HUB_DEVICE_ID: 'fxbg.hubDeviceId',
+    TRACK_HAPTICS: 'fxbg.trackHaptics'
   };
 
   currentUiMode = readStoredUiMode();
@@ -4769,6 +4791,26 @@
     startLocationWatch();
   }
 
+
+  try {
+    const storedTrackHaptics = localStorage.getItem(STORAGE_KEYS.TRACK_HAPTICS);
+    if (storedTrackHaptics !== null) {
+      trackState.haptics = storedTrackHaptics === 'true';
+    }
+  } catch {}
+
+  function getActiveMissionId() {
+    return missionState.active?.id || null;
+  }
+
+  if (window.DeviceOrientationEvent) {
+    window.addEventListener('deviceorientation', (event) => {
+      if (!Number.isFinite(event.alpha)) return;
+      trackState.orientationAlpha = event.alpha;
+      trackState.orientationEnabled = true;
+    });
+  }
+
   const LocateControl = L.Control.extend({
     onAdd() {
       const container = L.DomUtil.create("div", "locateControl leaflet-bar");
@@ -5834,7 +5876,7 @@
   // IndexedDB wrapper for offline persistence
   // -----------------------------
   const IDB_NAME = 'fxbg_city_manager';
-  const IDB_VERSION = 1;
+  const IDB_VERSION = 2;
   let idb = null;
 
   async function initIDB() {
@@ -5854,6 +5896,15 @@
         }
         if (!database.objectStoreNames.contains('meta')) {
           database.createObjectStore('meta', { keyPath: 'key' });
+        }
+        if (!database.objectStoreNames.contains('tracks')) {
+          const tracks = database.createObjectStore('tracks', { keyPath: 'id' });
+          tracks.createIndex('startedAt', 'startedAt', { unique: false });
+        }
+        if (!database.objectStoreNames.contains('track_points')) {
+          const trackPoints = database.createObjectStore('track_points', { keyPath: 'id' });
+          trackPoints.createIndex('trackId', 'trackId', { unique: false });
+          trackPoints.createIndex('ts', 'ts', { unique: false });
         }
       };
     });
@@ -6040,6 +6091,50 @@
     const store = tx.objectStore('reports');
     return new Promise((resolve, reject) => {
       const req = store.getAll();
+      req.onsuccess = () => resolve(req.result || []);
+      req.onerror = () => reject(req.error);
+    });
+  }
+
+
+  async function idbPut(storeName, value) {
+    if (!idb) return;
+    const tx = idb.transaction(storeName, 'readwrite');
+    tx.objectStore(storeName).put(value);
+    return new Promise((resolve, reject) => {
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  }
+
+  async function idbDelete(storeName, key) {
+    if (!idb) return;
+    const tx = idb.transaction(storeName, 'readwrite');
+    tx.objectStore(storeName).delete(key);
+    return new Promise((resolve, reject) => {
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  }
+
+  async function idbGetAll(storeName) {
+    if (!idb) return [];
+    const tx = idb.transaction(storeName, 'readonly');
+    const store = tx.objectStore(storeName);
+    return new Promise((resolve, reject) => {
+      const req = store.getAll();
+      req.onsuccess = () => resolve(req.result || []);
+      req.onerror = () => reject(req.error);
+    });
+  }
+
+  async function idbGetAllByIndex(storeName, indexName, key) {
+    if (!idb) return [];
+    const tx = idb.transaction(storeName, 'readonly');
+    const store = tx.objectStore(storeName);
+    const index = store.index(indexName);
+    return new Promise((resolve, reject) => {
+      const req = index.getAll(key);
       req.onsuccess = () => resolve(req.result || []);
       req.onerror = () => reject(req.error);
     });
@@ -12262,6 +12357,222 @@
   // Initialize radio UI
   radioRenderStations();
 
+
+  function ensureTrackPolyline() {
+    if (!trackState.polyline) {
+      trackState.polyline = L.polyline([], {
+        color: '#4fd1ff',
+        weight: 4,
+        opacity: 0.9
+      });
+    }
+    return trackState.polyline;
+  }
+
+  function showTrack(points) {
+    if (!Array.isArray(points) || !points.length) return;
+    const poly = ensureTrackPolyline();
+    const latLngs = points
+      .filter((pt) => Number.isFinite(pt.lat) && Number.isFinite(pt.lng))
+      .map((pt) => [pt.lat, pt.lng]);
+    if (!latLngs.length) return;
+    poly.setLatLngs(latLngs);
+    if (!map.hasLayer(poly)) {
+      poly.addTo(map);
+    }
+    const bounds = poly.getBounds();
+    if (bounds.isValid()) {
+      map.fitBounds(bounds.pad(0.15));
+    }
+  }
+
+  function hideTrack() {
+    if (trackState.polyline && map.hasLayer(trackState.polyline)) {
+      map.removeLayer(trackState.polyline);
+    }
+    trackState.pointsShownTrackId = null;
+  }
+
+  async function refreshTrackCache() {
+    const tracks = await idbGetAll('tracks');
+    trackState.trackCache = tracks.sort((a, b) => (b.startedAt || 0) - (a.startedAt || 0));
+  }
+
+  function resolveTrackHeading(coords) {
+    const speed = Number.isFinite(coords?.speed) ? coords.speed : null;
+    const gpsHeading = Number.isFinite(coords?.heading) ? coords.heading : null;
+    if (gpsHeading !== null && speed !== null && speed >= 0.7) {
+      return gpsHeading;
+    }
+    if (gpsHeading !== null && speed === null) {
+      return gpsHeading;
+    }
+    if (trackState.orientationEnabled && Number.isFinite(trackState.orientationAlpha)) {
+      return trackState.orientationAlpha;
+    }
+    return gpsHeading;
+  }
+
+  async function startTrack() {
+    if (trackState.active || trackState.watchId !== null) return;
+    if (!navigator.geolocation) {
+      alert('Geolocation is not available on this device/browser.');
+      return;
+    }
+    const startedAt = Date.now();
+    const track = {
+      id: `track_${startedAt}`,
+      name: `Track ${new Date(startedAt).toLocaleString()}`,
+      startedAt,
+      missionId: getActiveMissionId()
+    };
+    await idbPut('tracks', track);
+    trackState.active = track;
+    trackState.lastPointTs = 0;
+    trackState.lastWarnTs = 0;
+    vibe(60);
+
+    trackState.watchId = navigator.geolocation.watchPosition(async (pos) => {
+      const coords = pos.coords || {};
+      const ts = Date.now();
+      trackState.lastAccuracy = Number.isFinite(coords.accuracy) ? coords.accuracy : null;
+      trackState.lastSpeed = Number.isFinite(coords.speed) ? coords.speed : null;
+      const heading = resolveTrackHeading(coords);
+      trackState.lastHeading = Number.isFinite(heading) ? heading : null;
+
+      if (trackState.lastAccuracy !== null && trackState.lastAccuracy > 50 && (ts - trackState.lastWarnTs) > 10000) {
+        trackState.lastWarnTs = ts;
+        vibe([90, 70, 90]);
+      }
+
+      if (ts - trackState.lastPointTs < 2000) {
+        if (dockState.isOpen && dockState.tab === 'tracks') renderDock();
+        return;
+      }
+      trackState.lastPointTs = ts;
+
+      const point = {
+        id: `${track.id}:${ts}`,
+        trackId: track.id,
+        ts,
+        lat: coords.latitude,
+        lng: coords.longitude,
+        acc: coords.accuracy,
+        speed: coords.speed,
+        heading: Number.isFinite(heading) ? heading : null
+      };
+      if (!Number.isFinite(point.lat) || !Number.isFinite(point.lng)) return;
+
+      await idbPut('track_points', point);
+      if (trackState.pointsShownTrackId === track.id) {
+        const poly = ensureTrackPolyline();
+        const curr = poly.getLatLngs();
+        curr.push([point.lat, point.lng]);
+        poly.setLatLngs(curr);
+      }
+      if (dockState.isOpen && dockState.tab === 'tracks') renderDock();
+    }, (err) => {
+      console.warn('[Track] watchPosition failed:', err?.message || err);
+    }, { enableHighAccuracy: true, timeout: 10000, maximumAge: 1000 });
+
+    await refreshTrackCache();
+    if (dockState.isOpen && dockState.tab === 'tracks') renderDock();
+  }
+
+  async function stopTrack() {
+    if (!trackState.active) return;
+    if (trackState.watchId !== null && navigator.geolocation?.clearWatch) {
+      navigator.geolocation.clearWatch(trackState.watchId);
+    }
+    trackState.watchId = null;
+    const endedTrack = { ...trackState.active, endedAt: Date.now() };
+    await idbPut('tracks', endedTrack);
+    trackState.active = null;
+    vibe([70, 40, 120]);
+    await refreshTrackCache();
+    if (dockState.isOpen && dockState.tab === 'tracks') renderDock();
+  }
+
+  async function viewTrack(trackId) {
+    const points = await idbGetAllByIndex('track_points', 'trackId', trackId);
+    points.sort((a, b) => (a.ts || 0) - (b.ts || 0));
+    trackState.pointsShownTrackId = trackId;
+    showTrack(points);
+  }
+
+  async function deleteTrack(trackId) {
+    await idbDelete('tracks', trackId);
+    const points = await idbGetAllByIndex('track_points', 'trackId', trackId);
+    for (const point of points) {
+      await idbDelete('track_points', point.id);
+    }
+    if (trackState.pointsShownTrackId === trackId) {
+      hideTrack();
+    }
+    await refreshTrackCache();
+    if (dockState.isOpen && dockState.tab === 'tracks') renderDock();
+  }
+
+  async function exportTrackGeoJSON(trackId) {
+    const points = await idbGetAllByIndex('track_points', 'trackId', trackId);
+    points.sort((a, b) => (a.ts || 0) - (b.ts || 0));
+    const coords = points
+      .filter((pt) => Number.isFinite(pt.lng) && Number.isFinite(pt.lat))
+      .map((pt) => [pt.lng, pt.lat]);
+    if (!coords.length) {
+      alert('No points available to export.');
+      return;
+    }
+    const geojson = {
+      type: 'Feature',
+      properties: { trackId },
+      geometry: {
+        type: 'LineString',
+        coordinates: coords
+      }
+    };
+    const blob = new Blob([JSON.stringify(geojson, null, 2)], { type: 'application/geo+json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${trackId}.geojson`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  function renderTracksHTML() {
+    const active = trackState.active;
+    const status = active ? 'ON' : 'OFF';
+    const accuracy = Number.isFinite(trackState.lastAccuracy) ? `±${Math.round(trackState.lastAccuracy)}m` : '—';
+    const speed = Number.isFinite(trackState.lastSpeed) ? `${trackState.lastSpeed.toFixed(2)} m/s` : '—';
+    const heading = Number.isFinite(trackState.lastHeading) ? `${Math.round(trackState.lastHeading)}°` : '—';
+
+    let html = `<div class="dockCard">`;
+    html += `<div class="tracksRow">`;
+    html += `<button class="dockBtnSmall" id="trackStartBtn" ${active ? 'disabled' : ''}>Start</button>`;
+    html += `<button class="dockBtnSmall" id="trackStopBtn" ${active ? '' : 'disabled'}>Stop</button>`;
+    html += `<button class="dockBtnSmall" id="trackHideBtn">Hide Trail</button>`;
+    html += `<button class="dockBtnSmall" id="trackHapticsBtn">Haptics: ${trackState.haptics ? 'ON' : 'OFF'}</button>`;
+    html += `</div>`;
+    html += `<div class="tracksStat">Tracking: ${status} • Accuracy: ${escapeHtml(accuracy)} • Heading: ${escapeHtml(heading)} • Speed: ${escapeHtml(speed)}</div>`;
+    html += `</div>`;
+
+    html += `<div class="dockSectionTitle">Saved Tracks (${trackState.trackCache.length})</div>`;
+    html += `<div class="trackList">`;
+    for (const track of trackState.trackCache) {
+      html += `<div class="trackCard">`;
+      html += `<div class="trackCard__title">${escapeHtml(track.name || track.id)}</div>`;
+      html += `<div class="trackCard__meta">Started ${new Date(track.startedAt).toLocaleString()}${track.endedAt ? ` • Ended ${new Date(track.endedAt).toLocaleString()}` : ' • In progress'}</div>`;
+      html += `<div class="trackCard__actions">`;
+      html += `<button class="dockBtnSmall" data-track-action="view" data-track-id="${escapeAttr(track.id)}">View</button>`;
+      html += `<button class="dockBtnSmall" data-track-action="delete" data-track-id="${escapeAttr(track.id)}">Delete</button>`;
+      html += `<button class="dockBtnSmall" data-track-action="export" data-track-id="${escapeAttr(track.id)}">Export</button>`;
+      html += `</div></div>`;
+    }
+    html += `</div>`;
+    return html;
+  }
+
   // -----------------------------
   // DOCK BAR NAVIGATION SYSTEM
   // -----------------------------
@@ -13073,6 +13384,7 @@
       case "nearest": return renderNearestHTML();
       case "watchboard": return renderWatchboardHTML();
       case "alerts": return renderAlertsHTML();
+      case "tracks": return renderTracksHTML();
       case "sync": return renderSyncHTML();
       case "system": return renderSystemHTML();
       default: return "<p>Unknown tab</p>";
@@ -13088,6 +13400,7 @@
       nearest: "Nearest",
       watchboard: "Watchboard",
       alerts: "Hot Alerts",
+      tracks: "Tracks",
       sync: "Sync",
       system: "System"
     };
@@ -13213,6 +13526,31 @@
 
     if (dockState.tab === "alerts") {
       initializeAlertsPanel();
+    }
+
+    if (dockState.tab === "tracks") {
+      const startBtn = document.getElementById('trackStartBtn');
+      const stopBtn = document.getElementById('trackStopBtn');
+      const hideBtn = document.getElementById('trackHideBtn');
+      const hapticsBtn = document.getElementById('trackHapticsBtn');
+      startBtn?.addEventListener('click', () => startTrack());
+      stopBtn?.addEventListener('click', () => stopTrack());
+      hideBtn?.addEventListener('click', () => hideTrack());
+      hapticsBtn?.addEventListener('click', () => {
+        trackState.haptics = !trackState.haptics;
+        try { localStorage.setItem(STORAGE_KEYS.TRACK_HAPTICS, String(trackState.haptics)); } catch {}
+        renderDock();
+      });
+      dockPanelBody.querySelectorAll('[data-track-action]').forEach((btn) => {
+        btn.addEventListener('click', async () => {
+          const action = btn.dataset.trackAction;
+          const trackId = btn.dataset.trackId;
+          if (!trackId) return;
+          if (action === 'view') await viewTrack(trackId);
+          if (action === 'delete') await deleteTrack(trackId);
+          if (action === 'export') await exportTrackGeoJSON(trackId);
+        });
+      });
     }
 
     if (dockState.tab === "sync") {
@@ -14291,6 +14629,8 @@
           }
         }
       }
+
+      await refreshTrackCache();
 
       // Update last sync display
       updateLastSyncDisplay();
