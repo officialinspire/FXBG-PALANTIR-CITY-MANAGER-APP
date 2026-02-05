@@ -5549,6 +5549,167 @@
     syncTimelineToIDB();
   }
 
+  // Quick Actions
+  const QUICK_ACTIONS = [
+    { id: 'qa_report', icon: '➕', label: 'Report', action: 'openReport' },
+    { id: 'qa_hazard', icon: '⚠️', label: 'Hazard', action: 'markHazard' },
+    { id: 'qa_help', icon: '🆘', label: 'Help', action: 'requestHelp' },
+    { id: 'qa_checkin', icon: '✅', label: 'Check-in', action: 'checkIn' },
+    { id: 'qa_mission_start', icon: '🎯', label: 'Start', action: 'startMission' },
+    { id: 'qa_mission_end', icon: '🏁', label: 'End', action: 'endMission' }
+  ];
+
+  function initQuickActions() {
+    const container = document.getElementById('quickActions');
+    if (!container) return;
+
+    container.innerHTML = QUICK_ACTIONS.map(qa => `
+      <button class="quickActionBtn" data-action="${qa.action}">
+        <span class="quickActionBtn__icon">${qa.icon}</span>
+        <span>${qa.label}</span>
+      </button>
+    `).join('');
+
+    container.querySelectorAll('.quickActionBtn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const action = btn.dataset.action;
+        handleQuickAction(action);
+      });
+    });
+  }
+
+  async function handleQuickAction(action) {
+    switch(action) {
+      case 'openReport':
+        document.getElementById('btnReport')?.click();
+        break;
+      case 'markHazard':
+        await createQuickReport('Hazard', 3);
+        break;
+      case 'requestHelp':
+        await createQuickReport('Help', 4);
+        break;
+      case 'checkIn':
+        await createActionEvent('checkin', 'Check-in');
+        break;
+      case 'startMission':
+        const name = prompt('Mission name:');
+        if (name) await createActionEvent('mission_start', name);
+        break;
+      case 'endMission':
+        const summary = prompt('Mission summary (optional):');
+        await createActionEvent('mission_end', 'Mission End', summary);
+        break;
+    }
+  }
+
+  async function createQuickReport(type, severity) {
+    const note = prompt(`${type} notes (optional):`);
+    const report = {
+      id: crypto.randomUUID(),
+      type,
+      severity,
+      note: note || '',
+      createdAt: new Date().toISOString(),
+      lat: store.location?.lat || null,
+      lng: store.location?.lng || null,
+      pendingSync: true
+    };
+
+    // Create timeline event
+    const evt = fromReportToEvent(report);
+    mergeTimelineEvents([evt]);
+
+    // Try POST if online
+    if (!store.timeline.isOffline) {
+      try {
+        const res = await fetch('/api/reports', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(report)
+        });
+        if (res.ok) {
+          report.pendingSync = false;
+          evt.pendingSync = false;
+        }
+      } catch {}
+    }
+
+    // Save to IDB
+    await idbSaveReports([report]);
+    renderTimeline();
+  }
+
+  async function createActionEvent(actionType, title, summary = '') {
+    const evt = {
+      id: `action_${Date.now()}_${Math.random()}`,
+      ts: Date.now(),
+      kind: 'action',
+      title,
+      summary,
+      lat: store.location?.lat,
+      lng: store.location?.lng,
+      source: { name: 'Quick Actions' },
+      freshness: { state: 'live' },
+      actionType,
+      raw: { actionType, title, summary }
+    };
+
+    mergeTimelineEvents([evt]);
+    alert(`✅ ${title} logged`);
+  }
+
+  // Offline detection
+  function checkOnlineStatus() {
+    const wasOffline = store.timeline.isOffline;
+
+    // Check navigator.onLine
+    const navOffline = !navigator.onLine;
+
+    // TODO: Add health ping check in next part
+    store.timeline.isOffline = navOffline;
+
+    // Update UI
+    const status = document.getElementById('timelineOfflineStatus');
+    if (status) {
+      status.textContent = store.timeline.isOffline ? '🔴 OFFLINE' : '';
+      status.style.color = 'var(--bad)';
+    }
+
+    // If back online and was offline, try sync pending
+    if (wasOffline && !store.timeline.isOffline) {
+      syncPendingReports();
+    }
+  }
+
+  async function syncPendingReports() {
+    const reports = await idbGetReports();
+    const pending = reports.filter(r => r.pendingSync);
+
+    for (const report of pending) {
+      try {
+        const res = await fetch('/api/reports', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(report)
+        });
+        if (res.ok) {
+          report.pendingSync = false;
+          await idbSaveReports([report]);
+          // Update event
+          const evt = store.timeline.events.find(e => e.id === `report_${report.id}`);
+          if (evt) {
+            evt.pendingSync = false;
+            renderTimeline();
+          }
+        }
+      } catch {}
+    }
+  }
+
+  window.addEventListener('online', checkOnlineStatus);
+  window.addEventListener('offline', checkOnlineStatus);
+
   // Photo preview race condition fix: track current FileReader to abort on rapid file changes
   let __reportPhotoReader = null;
 
@@ -12797,6 +12958,11 @@
       }
 
       console.log('[IDB] Initialized with deviceId:', deviceId);
+
+      // Initialize Quick Actions and offline detection
+      initQuickActions();
+      checkOnlineStatus();
+      setInterval(checkOnlineStatus, 30000); // Check every 30s
     } catch (err) {
       console.warn('[IDB] Init failed:', err);
       const timelineOfflineStatus = $("timelineOfflineStatus");
