@@ -3667,6 +3667,109 @@ html, body{
   outline-offset: 2px;
 }
 
+
+/* UI mode toggle */
+.uiModeToggle {
+  display: inline-flex;
+  background: rgba(255,255,255,.06);
+  border: 1px solid var(--stroke);
+  border-radius: 999px;
+  padding: 2px;
+  gap: 2px;
+}
+.uiModeToggle__btn {
+  border: 0;
+  background: transparent;
+  color: var(--muted2);
+  padding: 6px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.uiModeToggle__btn.is-active {
+  background: rgba(126,240,255,.2);
+  color: var(--txt);
+}
+
+/* Active mission pinned header */
+.activeMissionBar {
+  position: fixed;
+  top: var(--topH);
+  left: 10px;
+  right: 10px;
+  z-index: 10450;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 216, 107, .4);
+  background: rgba(15,23,48,.95);
+  box-shadow: 0 10px 26px rgba(0,0,0,.28);
+}
+.activeMissionBar--hidden { display: none; }
+.activeMissionBar__label { font-size: 11px; color: var(--warn); text-transform: uppercase; letter-spacing: .04em; }
+.activeMissionBar__name { font-size: 14px; font-weight: 700; }
+.activeMissionBar__meta { display: flex; flex-direction: column; }
+.activeMissionBar__actions { display: flex; align-items: center; gap: 10px; }
+.activeMissionBar__timer { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-weight: 700; }
+
+body.field-mode .timelinePanel {
+  left: 10px;
+  right: 10px;
+  width: auto;
+  top: auto;
+  bottom: calc(var(--botH) + 10px);
+  max-height: min(70vh, 560px);
+  border-radius: 18px 18px 0 0;
+}
+body.field-mode .timelinePanel--hidden { transform: translateY(115%); }
+body.field-mode .quickActionBtn {
+  min-width: 112px;
+  padding: 14px;
+  font-size: 13px;
+}
+body.field-mode .quickActionBtn__icon { font-size: 24px; }
+body.field-mode .panel,
+body.field-mode .newsFlashPanel,
+body.field-mode .radioPanel,
+body.field-mode .crimePanel {
+  left: 0 !important;
+  right: 0 !important;
+  width: 100vw !important;
+  max-width: 100vw !important;
+  border-radius: 0 !important;
+}
+
+body.dispatch-mode .timelinePanel {
+  left: 10px;
+  right: auto;
+  width: 400px;
+}
+body.dispatch-mode .timelinePanel--hidden { transform: translateX(-110%); }
+body.dispatch-mode .timelinePanel__filters {
+  gap: 6px;
+  padding: 8px 12px;
+}
+body.dispatch-mode .timelinePanel__filters label {
+  font-size: 11px;
+}
+body.dispatch-mode .panel {
+  right: 12px;
+  left: auto;
+}
+
+.timelineBadge--missionStart {
+  background: rgba(68,240,166,.25);
+  color: var(--good);
+}
+.timelineBadge--missionEnd {
+  background: rgba(255,107,138,.25);
+  color: var(--bad);
+}
+
 /* ========================================
    TIMELINE PANEL ENHANCEMENTS
    ======================================== */

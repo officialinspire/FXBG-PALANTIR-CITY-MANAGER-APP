@@ -33,14 +33,42 @@
 
   let IS_MOBILE_UI = computeIsMobileUI();
 
+  const UI_MODES = {
+    FIELD: 'field',
+    DISPATCH: 'dispatch'
+  };
+
+  function getDefaultUiMode() {
+    return computeIsMobileUI() ? UI_MODES.FIELD : UI_MODES.DISPATCH;
+  }
+
+  function readStoredUiMode() {
+    try {
+      const stored = localStorage.getItem(STORAGE_KEYS.UI_MODE);
+      if (stored === UI_MODES.FIELD || stored === UI_MODES.DISPATCH) return stored;
+    } catch {}
+    return getDefaultUiMode();
+  }
+
+  let currentUiMode = getDefaultUiMode();
+
+  const missionState = {
+    active: null,
+    timerHandle: null
+  };
+
   // -----------------------------
   // Storage Keys for localStorage persistence
   // -----------------------------
   const STORAGE_KEYS = {
     PORTRAIT_DISMISSED: 'fxbg-palantir-portrait-dismissed',
     CRIME_UI: 'fxbg-crime-ui',
-    REPORTS: 'fxbg-reports'
+    REPORTS: 'fxbg-reports',
+    UI_MODE: 'fxbg.uiMode',
+    ACTIVE_MISSION: 'fxbg.activeMission'
   };
+
+  currentUiMode = readStoredUiMode();
 
   // -----------------------------
   // Config
@@ -5511,6 +5539,99 @@
 
 
 
+
+  function setBodyUiMode(mode) {
+    currentUiMode = (mode === UI_MODES.FIELD || mode === UI_MODES.DISPATCH) ? mode : getDefaultUiMode();
+    document.body.classList.toggle('field-mode', currentUiMode === UI_MODES.FIELD);
+    document.body.classList.toggle('dispatch-mode', currentUiMode === UI_MODES.DISPATCH);
+    try { localStorage.setItem(STORAGE_KEYS.UI_MODE, currentUiMode); } catch {}
+
+    const panel = document.getElementById('timelinePanel');
+    if (panel) {
+      panel.classList.toggle('timelinePanel--leftDocked', currentUiMode === UI_MODES.DISPATCH);
+      panel.classList.toggle('timelinePanel--bottomSheet', currentUiMode === UI_MODES.FIELD);
+    }
+
+    document.querySelectorAll('[data-ui-mode-btn]').forEach((btn) => {
+      const selected = btn.getAttribute('data-ui-mode-btn') === currentUiMode;
+      btn.classList.toggle('is-active', selected);
+      btn.setAttribute('aria-pressed', selected ? 'true' : 'false');
+    });
+  }
+
+  function wireUiModeToggle(scope = document) {
+    scope.querySelectorAll('[data-ui-mode-btn]').forEach((btn) => {
+      if (btn.dataset.modeBound === '1') return;
+      btn.dataset.modeBound = '1';
+      btn.addEventListener('click', () => {
+        const next = btn.getAttribute('data-ui-mode-btn');
+        if (!next || next === currentUiMode) return;
+        setBodyUiMode(next);
+      });
+    });
+  }
+
+  function formatMissionElapsed(startedAt) {
+    const elapsed = Math.max(0, Date.now() - new Date(startedAt).getTime());
+    const totalSeconds = Math.floor(elapsed / 1000);
+    const h = Math.floor(totalSeconds / 3600).toString().padStart(2, '0');
+    const m = Math.floor((totalSeconds % 3600) / 60).toString().padStart(2, '0');
+    const sec = Math.floor(totalSeconds % 60).toString().padStart(2, '0');
+    return `${h}:${m}:${sec}`;
+  }
+
+  function renderActiveMissionHeader() {
+    const bar = document.getElementById('activeMissionBar');
+    const nameEl = document.getElementById('activeMissionName');
+    const timerEl = document.getElementById('activeMissionTimer');
+    if (!bar || !nameEl || !timerEl) return;
+
+    if (!missionState.active) {
+      bar.classList.add('activeMissionBar--hidden');
+      return;
+    }
+
+    bar.classList.remove('activeMissionBar--hidden');
+    nameEl.textContent = missionState.active.name || 'Untitled Mission';
+    timerEl.textContent = formatMissionElapsed(missionState.active.startedAt);
+  }
+
+  async function persistActiveMission() {
+    try {
+      const payload = missionState.active || null;
+      localStorage.setItem(STORAGE_KEYS.ACTIVE_MISSION, JSON.stringify(payload));
+      await idbSaveMeta('activeMission', payload);
+    } catch {}
+  }
+
+  function startMissionTimer() {
+    if (missionState.timerHandle) clearInterval(missionState.timerHandle);
+    renderActiveMissionHeader();
+    missionState.timerHandle = setInterval(renderActiveMissionHeader, 1000);
+  }
+
+  function stopMissionTimer() {
+    if (missionState.timerHandle) {
+      clearInterval(missionState.timerHandle);
+      missionState.timerHandle = null;
+    }
+  }
+
+  async function setActiveMission(activeMission) {
+    missionState.active = activeMission || null;
+    if (missionState.active) startMissionTimer();
+    else stopMissionTimer();
+    renderActiveMissionHeader();
+    await persistActiveMission();
+  }
+
+  function getActionBadge(event) {
+    if (event.kind !== 'action') return '';
+    if (event.actionType === 'mission_start') return '<span class="timelineBadge timelineBadge--missionStart">MISSION START</span>';
+    if (event.actionType === 'mission_end') return '<span class="timelineBadge timelineBadge--missionEnd">MISSION END</span>';
+    return '';
+  }
+
   // -----------------------------
   // Data store
   // -----------------------------
@@ -5774,6 +5895,7 @@
             <span class="timelineBadge">${escapeHtml(e.source?.name || e.kind)}</span>
             <span class="timelineBadge timelineBadge--${freshClass}">${freshClass.toUpperCase()}</span>
             ${e.severity ? `<span class="timelineBadge">⚠️ ${e.severity}</span>` : ''}
+            ${getActionBadge(e)}
           </div>
         </div>
       `;
@@ -5863,14 +5985,30 @@
       case 'checkIn':
         await createActionEvent('checkin', 'Check-in');
         break;
-      case 'startMission':
+      case 'startMission': {
         const name = prompt('Mission name:');
-        if (name) await createActionEvent('mission_start', name);
+        if (!name) break;
+        const mission = {
+          id: `mission_${Date.now()}`,
+          name: name.trim() || 'Mission',
+          startedAt: new Date().toISOString()
+        };
+        await setActiveMission(mission);
+        await createActionEvent('mission_start', mission.name, '', { missionId: mission.id, startedAt: mission.startedAt });
         break;
-      case 'endMission':
-        const summary = prompt('Mission summary (optional):');
-        await createActionEvent('mission_end', 'Mission End', summary);
+      }
+      case 'endMission': {
+        const active = missionState.active;
+        if (!active) {
+          alert('No active mission to end.');
+          break;
+        }
+        const summary = prompt('Mission summary (optional):') || '';
+        const durationMs = Math.max(0, Date.now() - new Date(active.startedAt).getTime());
+        await createActionEvent('mission_end', `Mission End: ${active.name}`, summary, { missionId: active.id, startedAt: active.startedAt, durationMs });
+        await setActiveMission(null);
         break;
+      }
     }
   }
 
@@ -5924,7 +6062,7 @@
     renderTimeline();
   }
 
-  async function createActionEvent(actionType, title, summary = '') {
+  async function createActionEvent(actionType, title, summary = '', extra = {}) {
     const evt = {
       id: `action_${Date.now()}_${Math.random()}`,
       ts: Date.now(),
@@ -5936,7 +6074,8 @@
       source: { name: 'Quick Actions' },
       freshness: { state: 'live' },
       actionType,
-      raw: { actionType, title, summary }
+      raw: { actionType, title, summary, ...extra },
+      ...extra
     };
 
     mergeTimelineEvents([evt]);
@@ -12862,6 +13001,10 @@
       </div>
 
       <div class="topbar__right">
+        <div class="uiModeToggle" role="group" aria-label="UI mode selector">
+          <button class="uiModeToggle__btn" data-ui-mode-btn="field" type="button">Field</button>
+          <button class="uiModeToggle__btn" data-ui-mode-btn="dispatch" type="button">Dispatch</button>
+        </div>
         <button class="btn crime-btn" id="btnCrime" title="FXBG PD Crime Reports" aria-pressed="false">
           <span class="btn__icon">🚓</span>
           <span class="btn__label">Crime</span>
@@ -12902,6 +13045,7 @@
     // Guard against duplicate listener attachment
     if (__headerListenersAttached) return;
     __headerListenersAttached = true;
+    wireUiModeToggle();
 
     // Refresh button - use parent-aware selectors to avoid ID conflicts during mobile/desktop transitions
     const btnRefresh = IS_MOBILE_UI
@@ -13394,10 +13538,16 @@
   initServiceWorkerUI();
   setInterval(requestTileCacheStats, 30000);
   syncUiMode();
+  setBodyUiMode(readStoredUiMode());
+  wireUiModeToggle();
   updateChromeHeights();
   updateCrimeButtonActiveState();
   ensureOverlayLegendControl();
   runUiSanityCheck("boot");
+  const activeMissionEndBtn = document.getElementById('activeMissionEnd');
+  if (activeMissionEndBtn) {
+    activeMissionEndBtn.addEventListener('click', () => handleQuickAction('endMission'));
+  }
 
   // Set a short timeout to ensure chips update even if refreshAll hangs
   setTimeout(ensureChipsHaveState, 10000); // 10 seconds after boot
@@ -13433,6 +13583,20 @@
 
       // Initialize Quick Actions and offline detection
       initQuickActions();
+
+      // Restore active mission state across reloads
+      let persistedMission = await idbGetMeta('activeMission');
+      if (!persistedMission) {
+        try {
+          persistedMission = JSON.parse(localStorage.getItem(STORAGE_KEYS.ACTIVE_MISSION) || 'null');
+        } catch {}
+      }
+      if (persistedMission?.startedAt) {
+        await setActiveMission(persistedMission);
+      } else {
+        renderActiveMissionHeader();
+      }
+
       checkOnlineStatus();
       setInterval(checkOnlineStatus, 30000); // Check every 30s
     } catch (err) {
