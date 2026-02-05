@@ -5270,6 +5270,9 @@
     }
   };
 
+  // Photo preview race condition fix: track current FileReader to abort on rapid file changes
+  let __reportPhotoReader = null;
+
   const CAMERA_PINS_KEY = "fxbg.cameraPins";
   const ALERT_PREFS_KEY = "fxbg.alertPrefs";
 
@@ -9246,6 +9249,16 @@
 
     if (liveTextEl) liveTextEl.textContent = "Live";
     setLastUpdate();
+
+    // Hide loading skeleton after first successful data load
+    if (store._firstLoadComplete !== true) {
+      setTimeout(() => {
+        const skeleton = $("mapLoadingSkeleton");
+        if (skeleton) skeleton.classList.add("mapLoadingSkeleton--hidden");
+      }, 2000);
+      store._firstLoadComplete = true;
+    }
+
     updateNearestPanel();
     evaluateAlertRules();
     updateWatchboardPanel();
@@ -10276,24 +10289,36 @@
 
   const reportPhotoInput = $("reportPhoto");
   if (reportPhotoInput) {
-    reportPhotoInput.addEventListener("change", () => {
-      const file = reportPhotoInput.files?.[0];
-      const previewWrap = $("reportPhotoPreviewWrap");
-      const previewImg = $("reportPhotoPreview");
-      if (!previewWrap || !previewImg) return;
-      if (!file) {
-        previewWrap.style.display = "none";
-        previewImg.src = "";
-        return;
+    reportPhotoInput.addEventListener("change", (e) => {
+      const file = e.target.files[0];
+      // Race condition fix: abort any previous reader
+      if (__reportPhotoReader) {
+        try { __reportPhotoReader.abort(); } catch {}
+        __reportPhotoReader = null;
       }
+      if (!file) return;
+
       if (file.size > 5 * 1024 * 1024) {
         setReportStatus("Photo is too large (max 5MB).", "warn");
         reportPhotoInput.value = "";
-        previewWrap.style.display = "none";
+        const previewWrap = $("reportPhotoPreviewWrap");
+        if (previewWrap) previewWrap.style.display = "none";
         return;
       }
-      previewImg.src = URL.createObjectURL(file);
-      previewWrap.style.display = "block";
+
+      const reader = new FileReader();
+      __reportPhotoReader = reader;
+      reader.onload = (evt) => {
+        if (reader !== __reportPhotoReader) return; // Stale reader, ignore
+        const preview = $("reportPhotoPreview");
+        if (preview) preview.src = evt.target.result;
+        const wrapper = $("reportPhotoPreviewWrap");
+        if (wrapper) wrapper.style.display = "block";
+        __reportPhotoReader = null;
+      };
+      reader.onerror = () => { __reportPhotoReader = null; };
+      reader.onabort = () => { __reportPhotoReader = null; };
+      reader.readAsDataURL(file);
     });
   }
 
@@ -12316,4 +12341,26 @@
   setInterval(fetchAirQuality, CONFIG.air.refreshMs);
   setInterval(pollFxbgCrimeReports, CONFIG.fxbgCrimeReports.polling);
   setInterval(() => fetchReports({ sinceDays: 90 }), 60 * 1000);
+
+  // Keyboard shortcuts
+  document.addEventListener("keydown", (e) => {
+    if (e.target.matches("input, textarea, select")) return;
+
+    if ((e.metaKey || e.ctrlKey) && e.key === "k") {
+      e.preventDefault(); openDock("overview");
+    } else if (e.key === "r" || e.key === "R") {
+      e.preventDefault(); refreshAll();
+    } else if (e.key === "c" || e.key === "C") {
+      e.preventDefault(); $("btnCrime")?.click();
+    } else if (e.key === "n" || e.key === "N") {
+      e.preventDefault(); $("btnNewsFlash")?.click();
+    } else if (e.key === "d" || e.key === "D") {
+      e.preventDefault(); $("healthBadge")?.click();
+    } else if (e.key === "Escape") {
+      closeDock(); closeAllPanels();
+    } else if (e.key === "?" && e.shiftKey) {
+      e.preventDefault();
+      alert("SHORTCUTS:\nR=Refresh C=Crime N=News D=Diagnostics ⌘K=Dock Esc=Close ?=Help");
+    }
+  });
 })();

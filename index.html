@@ -140,6 +140,17 @@
     <section class="mapShell" aria-label="Interactive map">
       <div id="map"></div>
 
+      <!-- Loading Skeleton -->
+      <div id="mapLoadingSkeleton" class="mapLoadingSkeleton">
+        <div class="skeleton__content">
+          <div class="skeleton__logo">🧠</div>
+          <div class="skeleton__title">CITY MANAGER</div>
+          <div class="skeleton__subtitle">Fredericksburg • Stafford • Spotsylvania</div>
+          <div class="skeleton__status">Loading real-time data...</div>
+          <div class="skeleton__spinner"></div>
+        </div>
+      </div>
+
       <!-- Overlay panel (expands/collapses) -->
       <aside class="panel panel--collapsed" id="panel" aria-label="Details panel">
         <div class="panel__handle" id="panelHandle" role="button" tabindex="0" aria-expanded="false">
