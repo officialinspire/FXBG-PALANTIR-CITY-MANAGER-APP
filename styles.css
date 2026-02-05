@@ -3527,3 +3527,98 @@ html, body{
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
+
+/* ========================================
+   TIMELINE PANEL ENHANCEMENTS
+   ======================================== */
+
+/* Quick Action Buttons */
+.quickActionBtn {
+  min-width: 90px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--stroke);
+  background: var(--card);
+  cursor: pointer;
+  font-size: 11px;
+  text-align: center;
+  white-space: nowrap;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  color: var(--txt);
+  transition: background 0.15s ease, transform 0.1s ease;
+}
+.quickActionBtn__icon {
+  font-size: 20px;
+}
+.quickActionBtn:hover {
+  background: rgba(255, 255, 255, .10);
+  transform: translateY(-1px);
+}
+.quickActionBtn:active {
+  transform: translateY(0);
+}
+
+/* Timeline Item Header with Emoji */
+.timelineItem__header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.timelineItem__emoji {
+  font-size: 18px;
+  flex-shrink: 0;
+}
+.timelineItem__title {
+  font-weight: 600;
+  font-size: 13px;
+  flex: 1;
+  color: var(--txt);
+  margin-bottom: 0;
+}
+.timelineItem__time {
+  font-size: 11px;
+  color: var(--muted2);
+  flex-shrink: 0;
+}
+
+/* Timeline Item Footer with Badges */
+.timelineItem__footer {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+  font-size: 11px;
+  flex-wrap: wrap;
+}
+.timelineBadge {
+  padding: 3px 8px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, .08);
+  color: var(--muted);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+.timelineBadge--live {
+  background: rgba(68, 240, 166, .2);
+  color: var(--good);
+}
+.timelineBadge--cached {
+  background: rgba(255, 216, 107, .2);
+  color: var(--warn);
+}
+.timelineBadge--pending {
+  background: rgba(255, 107, 138, .2);
+  color: var(--bad);
+}
+
+/* Timeline Item Clickable Enhancement */
+.timelineItem {
+  cursor: pointer;
+}
+.timelineItem[data-lat][data-lng]:hover {
+  border-color: var(--accent);
+}
