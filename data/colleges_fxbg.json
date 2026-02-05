@@ -13,6 +13,20 @@
     "lat": 38.301222,
     "lng": -77.5124009,
     "city": "Fredericksburg",
-    "kind": "community_college"
+    "kind": "community_college",
+    "address": "10000 Germanna Point Dr",
+    "state": "VA",
+    "zip": "22408"
+  },
+  {
+    "id": "germanna_locust_grove",
+    "name": "Germanna Community College — Locust Grove Campus",
+    "lat": null,
+    "lng": null,
+    "city": "Locust Grove",
+    "kind": "community_college",
+    "address": "2130 Germanna Hwy",
+    "state": "VA",
+    "zip": "22508"
   }
 ]

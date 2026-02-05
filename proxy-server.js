@@ -212,7 +212,16 @@ const HUB_CLIENTS_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 const GEO_DATA_CACHE_TTL_MS = 60 * 1000;
 const GAZETTEER_FILE = path.join(__dirname, "data", "gazetteer.json");
 const INTERSECTIONS_FILE = path.join(__dirname, "data", "intersections.json");
+const PLACES_FILE = path.join(__dirname, "data", "places.json");
+const CACHE_DIR = path.join(__dirname, "data", "cache");
+const VA511_ICONS_CACHE_FILE = path.join(CACHE_DIR, "va511-icons-metadata.json");
 const geoDataCache = new Map();
+const va511IconsMemoryCache = { ts: 0, payload: null };
+const VA511_ICONS_CACHE_TTL_MS = 5 * 60 * 1000;
+const VA511_ICONS_SOURCE_URL = "https://files5.iteriscdn.com/WebApps/VA/SafeTravel/data/local/icons/metadata/icons.incident.geojsonp";
+const CDC_SOURCE_URL = "https://data.cdc.gov/api/v3/views/psx4-wq38/query.json";
+const CDC_BACKOFF_MS = 30 * 60 * 1000;
+const cdcState = { backoffUntil: 0, lastReason: null, cache: null };
 const hubClients = new Map();
 let hubClientsFlushTimer = null;
 
@@ -221,6 +230,80 @@ function defaultGeoDataset() {
     version: 1,
     items: []
   };
+}
+
+function parseJsonpPayload(rawText, context = "jsonp") {
+  const text = String(rawText || "").trim();
+  if (!text) throw new Error(`${context}: empty response`);
+  const match = text.match(/^[a-zA-Z_$][\w$]*\s*\(\s*([\s\S]+)\s*\)\s*;?\s*$/);
+  const jsonText = match ? match[1] : text;
+  return JSON.parse(jsonText);
+}
+
+async function readJsonFile(filePath) {
+  try {
+    const raw = await fsp.readFile(filePath, "utf8");
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+async function writeJsonFile(filePath, value) {
+  await fsp.mkdir(path.dirname(filePath), { recursive: true });
+  await fsp.writeFile(filePath, JSON.stringify(value, null, 2), "utf8");
+}
+
+async function fetchVa511IconsMetadata() {
+  const now = Date.now();
+  if (va511IconsMemoryCache.payload && (now - va511IconsMemoryCache.ts) < VA511_ICONS_CACHE_TTL_MS) {
+    return { ok: true, data: va511IconsMemoryCache.payload.data, sourceUrl: VA511_ICONS_SOURCE_URL, fetchedAt: va511IconsMemoryCache.payload.fetchedAt, cached: true };
+  }
+
+  try {
+    const res = await fetch(VA511_ICONS_SOURCE_URL, {
+      headers: {
+        "Accept": "application/javascript,text/javascript,text/plain,application/json,*/*",
+        "Referer": "https://511.vdot.virginia.gov/",
+        "Origin": "https://511.vdot.virginia.gov",
+        "User-Agent": "FXBG-PALANTIR-CityManager/1.0"
+      }
+    });
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status}`);
+    }
+    const text = await res.text();
+    const parsed = parseJsonpPayload(text, "va511_icons_metadata");
+    const payload = { ok: true, data: parsed, sourceUrl: VA511_ICONS_SOURCE_URL, fetchedAt: new Date().toISOString() };
+    va511IconsMemoryCache.ts = now;
+    va511IconsMemoryCache.payload = payload;
+    await writeJsonFile(VA511_ICONS_CACHE_FILE, payload);
+    return { ...payload, cached: false };
+  } catch (err) {
+    const diskCached = await readJsonFile(VA511_ICONS_CACHE_FILE);
+    if (diskCached?.ok && diskCached?.data) {
+      va511IconsMemoryCache.ts = now;
+      va511IconsMemoryCache.payload = diskCached;
+      return {
+        ok: false,
+        degraded: true,
+        reason: err.message,
+        cached: true,
+        sourceUrl: VA511_ICONS_SOURCE_URL,
+        fetchedAt: diskCached.fetchedAt || null,
+        data: diskCached.data
+      };
+    }
+    return {
+      ok: false,
+      degraded: true,
+      reason: err.message,
+      cached: false,
+      sourceUrl: VA511_ICONS_SOURCE_URL,
+      fetchedAt: null,
+      data: null
+    };
+  }
 }
 
 async function readOrInitGeoDataset(filePath, context) {
@@ -652,6 +735,8 @@ const ALLOWED_UPSTREAM_DOMAINS = [
   'www.spotsylvania.va.us',
   'staffordcountyva.gov',
   'www.staffordcountyva.gov',
+  'staffordschools.net',
+  'www.staffordschools.net',
   'co.caroline.va.us',
   'warrentonva.gov',
   'www.warrentonva.gov',
@@ -698,6 +783,39 @@ const ALLOWED_UPSTREAM_DOMAINS = [
   'httpbin.org',
   'www.httpbin.org',
 ];
+
+function normalizeHost(host) {
+  return String(host || "").trim().toLowerCase().replace(/^www\./, "");
+}
+
+const NORMALIZED_ALLOWED_HOSTS = new Set(ALLOWED_UPSTREAM_DOMAINS.map(normalizeHost));
+
+function isAllowedHost(host) {
+  const normalized = normalizeHost(host);
+  if (!normalized) return false;
+  for (const allowed of NORMALIZED_ALLOWED_HOSTS) {
+    if (normalized === allowed) return true;
+    if (normalized.endsWith(`.${allowed}`) && normalized.length > allowed.length + 1) return true;
+  }
+  return false;
+}
+
+function runAllowlistSanityCheck() {
+  const cases = [
+    ["www.staffordschools.net", true],
+    ["staffordschools.net", true],
+    ["files5.iteriscdn.com", true],
+    ["eviliteriscdn.com", false],
+    ["localhost", false]
+  ];
+  const failed = cases.filter(([host, expected]) => isAllowedHost(host) !== expected);
+  if (failed.length === 0) {
+    console.log("[allowlist] sanity check passed");
+    return true;
+  }
+  console.error("[allowlist] sanity check failed", failed);
+  return false;
+}
 
 const REQUIRED_UPSTREAMS = [
   {
@@ -801,6 +919,7 @@ function checkUrlAllowed(targetUrl) {
   try {
     const url = new URL(targetUrl);
     const hostname = url.hostname.toLowerCase();
+    const normalizedHostname = normalizeHost(hostname);
 
     // 1. Block non-http(s) protocols
     if (!['http:', 'https:'].includes(url.protocol)) {
@@ -830,24 +949,18 @@ function checkUrlAllowed(targetUrl) {
 
     // 4. Check allowlist (match hostname or parent domain)
     // Round 3: Fixed domain boundary check to prevent matches like 'evilarcgis.com' matching 'arcgis.com'
-    const isAllowed = ALLOWED_UPSTREAM_DOMAINS.some(allowed => {
-      // Exact match
-      if (hostname === allowed) return true;
-      // Subdomain match (e.g., 'services1.arcgis.com' matches 'arcgis.com')
-      // IMPORTANT: Only match if hostname is longer and has a dot before the allowed domain
-      if (hostname.endsWith('.' + allowed) && hostname.length > allowed.length + 1) return true;
-      return false;
-    });
+    const isAllowed = isAllowedHost(normalizedHostname);
 
     if (!isAllowed) {
       return {
         allowed: false,
-        reason: `Domain '${hostname}' not in allowlist (see DEV_NOTES.md for permitted domains)`
+        host: normalizedHostname,
+        reason: `Domain '${normalizedHostname}' not in allowlist (see DEV_NOTES.md for permitted domains)`
       };
     }
 
     // All checks passed
-    return { allowed: true };
+    return { allowed: true, host: normalizedHostname };
 
   } catch (err) {
     return {
@@ -3083,6 +3196,66 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, JSON.stringify(payload, null, 2), { "Content-Type": "application/json" });
     }
 
+    if (urlObj.pathname === "/api/places" && req.method === "GET") {
+      const payload = await readOrInitGeoDataset(PLACES_FILE, "places");
+      return send(res, 200, JSON.stringify(payload, null, 2), { "Content-Type": "application/json" });
+    }
+
+    if (urlObj.pathname === "/api/va511/icons-metadata" && req.method === "GET") {
+      const payload = await fetchVa511IconsMetadata();
+      return send(res, payload.ok ? 200 : 200, JSON.stringify(payload, null, 2), { "Content-Type": "application/json" });
+    }
+
+    if (urlObj.pathname === "/api/cdc/wonder" && req.method === "GET") {
+      const token = String(process.env.CDC_APP_TOKEN || "").trim();
+      if (!token) {
+        return send(res, 200, JSON.stringify({ ok: false, disabled: true, reason: "CDC_APP_TOKEN not configured" }, null, 2), { "Content-Type": "application/json" });
+      }
+
+      if (Date.now() < cdcState.backoffUntil) {
+        return send(res, 200, JSON.stringify({
+          ok: false,
+          degraded: true,
+          reason: cdcState.lastReason || "CDC backoff active",
+          backoffUntil: new Date(cdcState.backoffUntil).toISOString(),
+          cached: Boolean(cdcState.cache),
+          data: cdcState.cache
+        }, null, 2), { "Content-Type": "application/json" });
+      }
+
+      try {
+        const upstream = await fetch(CDC_SOURCE_URL, {
+          headers: {
+            "Accept": "application/json",
+            "X-App-Token": token,
+            "User-Agent": "FXBG-PALANTIR-CityManager/1.0"
+          }
+        });
+
+        if (!upstream.ok) {
+          if (upstream.status === 403 || upstream.status === 429) {
+            cdcState.backoffUntil = Date.now() + CDC_BACKOFF_MS;
+            cdcState.lastReason = `HTTP ${upstream.status}`;
+          }
+          throw new Error(`HTTP ${upstream.status}`);
+        }
+
+        const data = await upstream.json();
+        cdcState.cache = data;
+        cdcState.backoffUntil = 0;
+        cdcState.lastReason = null;
+        return send(res, 200, JSON.stringify({ ok: true, data, fetchedAt: new Date().toISOString() }, null, 2), { "Content-Type": "application/json" });
+      } catch (err) {
+        return send(res, 200, JSON.stringify({
+          ok: false,
+          degraded: true,
+          reason: err.message,
+          cached: Boolean(cdcState.cache),
+          data: cdcState.cache
+        }, null, 2), { "Content-Type": "application/json" });
+      }
+    }
+
     if (urlObj.pathname === "/api/location/address" || urlObj.pathname === "/api/location/intersection" || urlObj.pathname === "/api/location/alias") {
       if (req.method !== "GET") {
         return send(res, 405, JSON.stringify({ ok: false, error: "method_not_allowed" }), { "Content-Type": "application/json" });
@@ -3881,7 +4054,8 @@ const server = http.createServer(async (req, res) => {
       // Security: Check if target URL is allowed
       const urlCheck = checkUrlAllowed(target);
       if (!urlCheck.allowed) {
-        console.warn(`[proxy] Blocked request to ${target}: ${urlCheck.reason}`);
+        const blockedHost = urlCheck.host || (() => { try { return normalizeHost(new URL(target).hostname); } catch { return 'unknown'; } })();
+        console.warn(`[proxy] Blocked host=${blockedHost} url=${target}. ${urlCheck.reason}. Add ${blockedHost} to ALLOWLIST if approved.`);
         let upstreamHost = '';
         try { upstreamHost = new URL(target).hostname; } catch {}
         const errorBody = JSON.stringify({
@@ -3933,6 +4107,8 @@ const server = http.createServer(async (req, res) => {
 });
 
 async function startServer() {
+  await fsp.mkdir(CACHE_DIR, { recursive: true });
+  runAllowlistSanityCheck();
   await validateRequiredUpstreams();
   await loadHubClients();
 

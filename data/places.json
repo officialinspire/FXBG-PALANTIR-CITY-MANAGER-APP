@@ -1,0 +1,96 @@
+{
+  "version": 1,
+  "items": [
+    {
+      "id": "germanna-fxbg-area",
+      "name": "Germanna Community College - Fredericksburg Area Campus",
+      "category": "campus",
+      "address": "10000 Germanna Point Dr",
+      "city": "Fredericksburg",
+      "state": "VA",
+      "zip": "22408",
+      "lat": 38.301222,
+      "lng": -77.5124009,
+      "aliases": ["Germanna Fredericksburg", "Germanna Fred Area Campus", "school_germanna_fxbg", "germanna_fxbg"],
+      "tags": ["education"]
+    },
+    {
+      "id": "germanna-locust-grove",
+      "name": "Germanna Community College - Locust Grove Campus",
+      "category": "campus",
+      "address": "2130 Germanna Hwy",
+      "city": "Locust Grove",
+      "state": "VA",
+      "zip": "22508",
+      "lat": null,
+      "lng": null,
+      "aliases": ["Germanna Locust Grove", "Germanna Orange"],
+      "tags": ["education"]
+    },
+    {
+      "id": "james-monroe-high-school",
+      "name": "James Monroe High School",
+      "category": "school",
+      "address": "2300 Washington Ave",
+      "city": "Fredericksburg",
+      "state": "VA",
+      "zip": "22401",
+      "lat": 38.2885,
+      "lng": -77.4627,
+      "aliases": ["JMHS"],
+      "tags": ["education", "downtown"]
+    },
+    {
+      "id": "walker-grant-middle-school",
+      "name": "Walker-Grant Middle School",
+      "category": "school",
+      "address": "500 Kenmore Ave",
+      "city": "Fredericksburg",
+      "state": "VA",
+      "zip": "22401",
+      "lat": 38.2921,
+      "lng": -77.4705,
+      "aliases": ["Walker Grant"],
+      "tags": ["education", "downtown"]
+    },
+    {
+      "id": "mary-washington-hospital",
+      "name": "Mary Washington Hospital",
+      "category": "hospital",
+      "address": "1001 Sam Perry Blvd",
+      "city": "Fredericksburg",
+      "state": "VA",
+      "zip": "22401",
+      "lat": 38.3092,
+      "lng": -77.4838,
+      "aliases": ["MWH"],
+      "tags": ["healthcare"]
+    },
+    {
+      "id": "stafford-hospital-center",
+      "name": "Stafford Hospital Center",
+      "category": "hospital",
+      "address": "101 Hospital Center Blvd",
+      "city": "Stafford",
+      "state": "VA",
+      "zip": "22554",
+      "lat": 38.4394,
+      "lng": -77.4483,
+      "aliases": ["Stafford Hospital"],
+      "tags": ["healthcare"]
+    },
+    {
+      "id": "spotsylvania-regional-medical-center",
+      "name": "Spotsylvania Regional Medical Center",
+      "category": "hospital",
+      "address": "4600 Spotsylvania Pkwy",
+      "city": "Fredericksburg",
+      "state": "VA",
+      "zip": "22408",
+      "lat": 38.1928,
+      "lng": -77.5894,
+      "aliases": ["SRMC"],
+      "tags": ["healthcare"]
+    }
+  ]
+}

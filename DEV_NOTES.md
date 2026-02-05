@@ -244,6 +244,7 @@ The proxy server accepts requests to these allowlisted domains:
 - `iteriscdn.com` — Iteris CDN (fallback for 511 traffic data)
 - `files4.iteriscdn.com` — Camera snapshots fallback
 - `files5.iteriscdn.com` — Incidents data fallback
+- `staffordschools.net` / `www.staffordschools.net` — Stafford Schools calendar pages
 
 ### Crash Data
 - `data.virginia.gov` — Virginia Socrata open data portal
@@ -259,7 +260,7 @@ The proxy server accepts requests to these allowlisted domains:
 - `fredericksburgfreepress.com` — Local news
 
 ### Health Data
-- `data.cdc.gov` — CDC health surveillance data
+- `data.cdc.gov` — CDC health surveillance data (optional, requires `CDC_APP_TOKEN`)
 
 ### Geocoding
 - `nominatim.openstreetmap.org` — Reverse geocoding for addresses
@@ -271,6 +272,14 @@ The proxy server accepts requests to these allowlisted domains:
 - Private IP ranges (localhost, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16)
 - Non-HTTP(S) protocols (file://, ftp://, etc.)
 - Unknown domains not in the allowlist above
+
+Allowlist matching normalizes hosts to lowercase and strips a leading `www.` before comparison.
+Blocked requests log host + original URL and include a hint: `Add <host> to ALLOWLIST if approved.`
+
+### New API endpoints
+- `GET /api/va511/icons-metadata` — server-side fetch for VA511 incident icons geojsonp (JSONP decoded to JSON, cached in memory + `data/cache/va511-icons-metadata.json`)
+- `GET /api/cdc/wonder` — CDC fetch proxy (disabled unless `CDC_APP_TOKEN` set; uses 30-minute backoff on 403/429 and serves cached data when available)
+- `GET /api/places` — address-first places dataset for schools/campuses/hospitals (`data/places.json`)
 
 ---
 
