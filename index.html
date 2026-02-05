@@ -102,6 +102,8 @@
           <span class="chip__text" id="swStatusTextMobile">📦 Cached</span>
           <button class="btn btn--ghost swUpdateBtn swUpdateBtn--hidden" id="swUpdateBtnMobile" type="button">Update</button>
         </div>
+
+        <div class="freshnessBadges" id="freshnessBadgesMobile" aria-label="Feed freshness status"></div>
       </div>
 
       <div class="topbarRow topbarRow--actions" id="topbarActionsRow">
@@ -203,6 +205,19 @@
       <div class="timelineEmpty">Loading timeline...</div>
     </div>
   </aside>
+
+  <div class="freshnessModal freshnessModal--hidden" id="freshnessModal" role="dialog" aria-modal="true" aria-labelledby="freshnessModalTitle">
+    <div class="freshnessModal__card">
+      <div class="freshnessModal__header">
+        <strong id="freshnessModalTitle">Feed status</strong>
+        <button class="iconBtn" id="freshnessModalClose" aria-label="Close">✖️</button>
+      </div>
+      <div class="freshnessModal__body" id="freshnessModalBody"></div>
+      <div class="freshnessModal__actions">
+        <button class="btn btn--primary" id="freshnessRetryBtn" type="button">Retry now</button>
+      </div>
+    </div>
+  </div>
 
   <main class="stage">
     <section class="mapShell" aria-label="Interactive map">
@@ -629,6 +644,7 @@
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
   <script src="./client/geocode.js"></script>
+  <script src="./client/freshness.js"></script>
   <script src="./index.js"></script>
   <script>
     window.__registerSW && window.__registerSW();

@@ -5703,6 +5703,24 @@
   // -----------------------------
   // Data store
   // -----------------------------
+  const freshnessTracker = window.createFreshnessTracker ? window.createFreshnessTracker() : null;
+
+  const FEED_BADGE_CONFIG = [
+    { key: 'crime', label: 'Crime' },
+    { key: 'reports', label: 'Reports' },
+    { key: 'va511', label: 'Traffic' },
+    { key: 'openuv', label: 'UV' },
+    { key: 'waqi', label: 'AQI' }
+  ];
+
+  const FEED_RETRY_HANDLERS = {
+    crime: () => pollFxbgCrimeReports(),
+    reports: () => fetchReports({ sinceDays: 90 }),
+    va511: () => pollVa511(),
+    openuv: () => fetchOpenUV(),
+    waqi: () => fetchAirQuality()
+  };
+
   const store = {
     itemsById: new Map(),
     seenKeys: new Set(),
@@ -5759,7 +5777,8 @@
       reachable: false,
       lastSyncAt: null,
       clients: []
-    }
+    },
+    freshnessTransitions: new Map()
   };
 
   // -----------------------------
@@ -5835,6 +5854,122 @@
       req.onsuccess = () => resolve(req.result?.value);
       req.onerror = () => reject(req.error);
     });
+  }
+
+
+  function fmtFreshnessTs(ts) {
+    if (!ts) return '—';
+    try { return new Date(ts).toLocaleString(); } catch { return '—'; }
+  }
+
+  function saveFreshnessMeta() {
+    if (!freshnessTracker) return;
+    idbSaveMeta('freshnessStatus', freshnessTracker.snapshot()).catch(() => {});
+  }
+
+  function emitFreshnessSystemEvent(title, message, sourceKey) {
+    const evt = fromHealthToEvent({ title, message, severity: 2 });
+    evt.raw = { ...(evt.raw || {}), sourceKey, freshnessEvent: true };
+    mergeTimelineEvents([evt]);
+  }
+
+  function handleFreshnessTransition(key, prevState, nextState, errorText) {
+    if (!store.freshnessTransitions) store.freshnessTransitions = new Map();
+    const now = Date.now();
+    const lastTs = store.freshnessTransitions.get(key) || 0;
+    const minGapMs = 5 * 60 * 1000;
+    if (prevState === nextState) return;
+    const degradedLike = nextState === 'DEGRADED' || nextState === 'OFFLINE';
+    const recovered = (prevState === 'DEGRADED' || prevState === 'OFFLINE') && nextState === 'LIVE';
+    if ((degradedLike || recovered) && now - lastTs >= minGapMs) {
+      if (degradedLike) {
+        emitFreshnessSystemEvent(`${String(key).toUpperCase()} degraded`, `${String(key).toUpperCase()} degraded: ${errorText || 'upstream unavailable'}`, key);
+      } else if (recovered) {
+        emitFreshnessSystemEvent(`${String(key).toUpperCase()} recovered`, `${String(key).toUpperCase()} recovered (live)`, key);
+      }
+      store.freshnessTransitions.set(key, now);
+    }
+  }
+
+  function updateFreshnessStatus(key, updater, errorText) {
+    if (!freshnessTracker) return null;
+    const prev = freshnessTracker.get(key);
+    const next = updater();
+    handleFreshnessTransition(key, prev?.state, next?.state, errorText || next?.lastError);
+    saveFreshnessMeta();
+    renderFreshnessBadges();
+    return next;
+  }
+
+
+  function refreshFreshnessStates() {
+    if (!freshnessTracker) return;
+    for (const { key } of FEED_BADGE_CONFIG) {
+      updateFreshnessStatus(key, () => freshnessTracker.setCached(key, freshnessTracker.get(key).usingCached));
+    }
+  }
+
+  function updateGlobalStatusRibbon() {
+    const liveText = getChipElement('liveText');
+    if (!liveText) return;
+    let label = 'ONLINE';
+    if (!navigator.onLine) label = 'OFFLINE';
+    else if (!store.hub.reachable) label = 'HUB UNREACHABLE';
+
+    const lastSync = store.hub.lastSyncAt ? fmtFreshnessTs(store.hub.lastSyncAt) : '—';
+    liveText.textContent = `${label} • Last sync: ${lastSync}`;
+  }
+
+  function renderFreshnessBadges() {
+    if (!freshnessTracker) return;
+    const html = FEED_BADGE_CONFIG.map(({ key, label }) => {
+      const st = freshnessTracker.get(key);
+      const state = st?.state || 'DEGRADED';
+      const cls = `freshnessPill freshnessPill--${state.toLowerCase()}`;
+      return `<button class="freshnessPillBtn" data-freshness-key="${escapeAttr(key)}" title="${escapeAttr(label)} status"><span class="${cls}">${escapeHtml(label)}: ${escapeHtml(state)}</span></button>`;
+    }).join('');
+
+    const mobile = document.getElementById('freshnessBadgesMobile');
+    if (mobile) mobile.innerHTML = html;
+    const desktop = document.getElementById('freshnessBadgesDesktop');
+    if (desktop) desktop.innerHTML = html;
+
+    document.querySelectorAll('[data-freshness-key]').forEach((btn) => {
+      btn.addEventListener('click', () => openFreshnessModal(btn.dataset.freshnessKey));
+    });
+
+    updateGlobalStatusRibbon();
+  }
+
+  function openFreshnessModal(key) {
+    if (!freshnessTracker) return;
+    const st = freshnessTracker.get(key);
+    const modal = document.getElementById('freshnessModal');
+    const title = document.getElementById('freshnessModalTitle');
+    const body = document.getElementById('freshnessModalBody');
+    const retryBtn = document.getElementById('freshnessRetryBtn');
+    if (!modal || !title || !body || !retryBtn || !st) return;
+
+    title.textContent = `${key.toUpperCase()} — ${st.state}`;
+    body.innerHTML = `
+      <div><strong>Last success:</strong> ${escapeHtml(fmtFreshnessTs(st.lastSuccessTs))}</div>
+      <div><strong>Last attempt:</strong> ${escapeHtml(fmtFreshnessTs(st.lastAttemptTs))}</div>
+      <div><strong>Fail count:</strong> ${escapeHtml(String(st.failCount || 0))}</div>
+      <div><strong>Last error:</strong> ${escapeHtml(st.lastError || '—')}</div>
+    `;
+    retryBtn.onclick = async () => {
+      const fn = FEED_RETRY_HANDLERS[key];
+      if (typeof fn === 'function') {
+        await fn();
+      }
+      openFreshnessModal(key);
+    };
+
+    modal.classList.remove('freshnessModal--hidden');
+  }
+
+  function closeFreshnessModal() {
+    document.getElementById('freshnessModal')?.classList.add('freshnessModal--hidden');
   }
 
   async function idbSaveReports(reports) {
@@ -6175,10 +6310,12 @@
       store.hub.reachable = true;
       store.hub.lastSyncAt = Date.now();
       if (dockState?.isOpen && dockState.tab === 'sync') renderDock();
+      updateGlobalStatusRibbon();
       return clients;
     } catch {
       store.hub.reachable = false;
       if (dockState?.isOpen && dockState.tab === 'sync') renderDock();
+      updateGlobalStatusRibbon();
       return [];
     }
   }
@@ -6194,9 +6331,11 @@
         body: JSON.stringify({ deviceId, userAgent: ua })
       });
       store.hub.reachable = res.ok;
+      updateGlobalStatusRibbon();
       return res.ok;
     } catch {
       store.hub.reachable = false;
+      updateGlobalStatusRibbon();
       return false;
     }
   }
@@ -6222,6 +6361,10 @@
     const hubDown = !(await checkHubHealth());
 
     store.timeline.isOffline = navOffline || hubDown;
+    if (freshnessTracker) {
+      freshnessTracker.setHubReachable(!hubDown && navigator.onLine);
+      refreshFreshnessStates();
+    }
 
     // Update UI
     const status = document.getElementById('timelineOfflineStatus');
@@ -6235,6 +6378,9 @@
       }
       status.style.color = 'var(--bad)';
     }
+
+    updateGlobalStatusRibbon();
+    renderFreshnessBadges();
 
     // If back online and was offline, try sync pending
     if (wasOffline && !store.timeline.isOffline) {
@@ -7754,6 +7900,7 @@
   async function pollVa511() {
     if (store.locks.va511) return;
     store.locks.va511 = true;
+    updateFreshnessStatus('va511', () => freshnessTracker.markAttempt('va511'));
     try {
 
     if (!CONFIG.va511.enabled) return { i95Incidents: 0 };
@@ -7993,8 +8140,14 @@
     setI95Indicator(i95Incidents);
     setLastUpdate();
     redraw();
+    if (incidentsLoaded) {
+      updateFreshnessStatus('va511', () => freshnessTracker.markSuccess('va511'));
+    } else {
+      updateFreshnessStatus('va511', () => freshnessTracker.markFailure('va511', 'va511_incidents_unavailable', { usingCached: true }), 'va511 incidents unavailable');
+    }
     return { i95Incidents };
     } catch (e) {
+      updateFreshnessStatus('va511', () => freshnessTracker.markFailure('va511', e?.message || 'va511_failed'), e?.message || 'va511 failed');
       console.warn("511 refresh failed", e);
 
       // Round 3: Track outer VA511 failures (catastrophic failure)
@@ -9284,6 +9437,7 @@
     if (!CONFIG.openUV.enabled) return;
     if (store.locks.openUV) return;
     store.locks.openUV = true;
+    updateFreshnessStatus('openuv', () => freshnessTracker.markAttempt('openuv'));
 
     // Round 3: Check source backoff before polling
     const backoffCheck = checkSourceBackoff('openuv');
@@ -9308,6 +9462,7 @@
           console.warn(`[OpenUV] Disabled: ${response.data?.reason || "missing API key"}`);
           store._openUVDisabledLogged = true;
         }
+        updateFreshnessStatus('openuv', () => freshnessTracker.markFailure('openuv', response.data?.reason || 'missing_openuv_key'), response.data?.reason || 'missing key');
         return;
       }
 
@@ -9319,6 +9474,7 @@
         store.openUV.status = "error";
         store.openUV.displayText = "UV: N/A";
         updateWeatherChipText();
+        updateFreshnessStatus('openuv', () => freshnessTracker.markFailure('openuv', 'invalid_uv_data'), 'invalid uv data');
         return;
       }
 
@@ -9368,12 +9524,14 @@
       store.openUV.status = "ok";
       store.openUV.displayText = `UV ${uvValue.toFixed(1)}`;
       store.openUV.timestamp = Date.now();
+      updateFreshnessStatus('openuv', () => freshnessTracker.markSuccess('openuv'));
       updateWeatherChipText();
 
       // Round 3: Record success to clear backoff
       recordSourceSuccess('openuv');
 
     } catch (err) {
+      updateFreshnessStatus('openuv', () => freshnessTracker.markFailure('openuv', err?.message || 'openuv_error'), err?.message);
       console.error("[OpenUV] Fetch failed:", err.message);
 
       // Round 3: Record failure and apply backoff
@@ -9608,6 +9766,7 @@
     if (!CONFIG.air.enabled) return;
     if (store.locks.air) return;
     store.locks.air = true;
+    updateFreshnessStatus('waqi', () => freshnessTracker.markAttempt('waqi'));
 
     try {
       const airTextEl = getChipElement("airText");
@@ -9625,6 +9784,7 @@
         }
         if (airTextEl) airTextEl.textContent = "AQI: N/A";
         if (airDotEl) airDotEl.style.backgroundColor = "#888";
+        updateFreshnessStatus('waqi', () => freshnessTracker.markFailure('waqi', response.data?.reason || 'missing_waqi_token'), response.data?.reason || 'missing token');
         return;
       }
 
@@ -9655,12 +9815,14 @@
         }
 
         console.log(`[Air Quality] AQI: ${aqi}`);
+        updateFreshnessStatus('waqi', () => freshnessTracker.markSuccess('waqi'));
       } else {
         console.warn("[Air Quality] No valid AQI data received");
         if (airTextEl) airTextEl.textContent = "AQI: N/A";
         if (airDotEl) airDotEl.style.backgroundColor = "#888";
         recordSourceFailure('air', 'invalid_data');
         recordFeedError('air');
+        updateFreshnessStatus('waqi', () => freshnessTracker.markFailure('waqi', 'invalid_aqi_data'), 'invalid aqi data');
       }
     } catch (err) {
       console.error("[Air Quality] Fetch failed:", err.message);
@@ -9668,6 +9830,7 @@
       const airDotEl = getChipElement("airDot");
       if (airTextEl) airTextEl.textContent = "AQI: N/A";
       if (airDotEl) airDotEl.style.backgroundColor = "#888";
+      updateFreshnessStatus('waqi', () => freshnessTracker.markFailure('waqi', err?.message || 'aqi_fetch_failed'), err?.message);
     } finally {
       store.locks.air = false;
     }
@@ -9742,6 +9905,7 @@
     if (store.locks.crime) return;
 
     store.locks.crime = true;
+    updateFreshnessStatus('crime', () => freshnessTracker.markAttempt('crime'));
 
     try {
       const months = CONFIG.fxbgCrimeReports.months;
@@ -9749,12 +9913,14 @@
 
       const res = await fetch(url);
       if (!res.ok) {
+        updateFreshnessStatus('crime', () => freshnessTracker.markFailure('crime', `http_${res.status}`), `http_${res.status}`);
         console.warn(`[Crime Reports] API returned ${res.status}`);
         return;
       }
 
       const json = await res.json();
       if (!json.ok || !json.incidents) {
+        updateFreshnessStatus('crime', () => freshnessTracker.markFailure('crime', 'invalid_crime_payload'), 'invalid crime payload');
         console.warn("[Crime Reports] Invalid API response");
         return;
       }
@@ -9839,8 +10005,10 @@
       mergeTimelineEvents(crimeEvents);
 
       console.log(`[Crime Reports] Total crime items in store: ${store.crime.ids.size} (${bootWindowCount} in ${bootWindowDays}-day window)`);
+      updateFreshnessStatus('crime', () => freshnessTracker.markSuccess('crime'));
 
     } catch (err) {
+      updateFreshnessStatus('crime', () => freshnessTracker.markFailure('crime', err?.message || 'crime_poll_failed'), err?.message);
       console.error("[Crime Reports] Poll error:", err);
     } finally {
       store.locks.crime = false;
@@ -10192,16 +10360,19 @@
 
   async function fetchReports({ sinceDays = 90 } = {}) {
     if (!store.reports) return;
+    updateFreshnessStatus('reports', () => freshnessTracker.markAttempt('reports'));
     try {
       const params = new URLSearchParams();
       if (sinceDays) params.set("sinceDays", String(sinceDays));
       const res = await fetch(`/api/reports?${params.toString()}`);
       if (!res.ok) {
+        updateFreshnessStatus('reports', () => freshnessTracker.markFailure('reports', `http_${res.status}`), `http_${res.status}`);
         setReportStatus("Reports feed unavailable.", "warn");
         return;
       }
       const data = await res.json();
       if (!data.ok || !Array.isArray(data.items)) {
+        updateFreshnessStatus('reports', () => freshnessTracker.markFailure('reports', 'invalid_reports_payload'), 'invalid reports payload');
         setReportStatus("Reports feed unavailable.", "warn");
         return;
       }
@@ -10211,7 +10382,9 @@
       // Merge reports into timeline
       const reportEvents = data.items.map(fromReportToEvent);
       mergeTimelineEvents(reportEvents);
+      updateFreshnessStatus('reports', () => freshnessTracker.markSuccess('reports'));
     } catch (err) {
+      updateFreshnessStatus('reports', () => freshnessTracker.markFailure('reports', err?.message || 'reports_fetch_failed'), err?.message);
       console.warn("[Reports] Fetch failed:", err);
     }
   }
@@ -10400,6 +10573,8 @@
 
     if (liveTextEl) liveTextEl.textContent = "Live";
     setLastUpdate();
+    updateGlobalStatusRibbon();
+    renderFreshnessBadges();
 
     // Hide loading skeleton after first successful data load
     if (store._firstLoadComplete !== true) {
@@ -13391,6 +13566,8 @@
           <span class="chip__text" id="swStatusTextDesktop">📦 Cached</span>
           <button class="btn btn--ghost swUpdateBtn swUpdateBtn--hidden" id="swUpdateBtnDesktop" type="button">Update</button>
         </div>
+
+        <div class="freshnessBadges" id="freshnessBadgesDesktop" aria-label="Feed freshness status"></div>
       </div>
 
       <div class="topbar__right">
@@ -13750,6 +13927,7 @@
         attachHeaderEventListeners();
         __mobileListenersAttached = true;
       }
+      renderFreshnessBadges();
       updateChromeHeights();
       runUiSanityCheck("syncUiMode");
       return;
@@ -13762,6 +13940,7 @@
     initDesktopHeader();
     __headerListenersAttached = false; // Reset guard since initDesktopHeader() recreated HTML
     attachHeaderEventListeners();
+    renderFreshnessBadges();
     updateChromeHeights();
     runUiSanityCheck("syncUiMode");
   }
@@ -13941,6 +14120,10 @@
   if (activeMissionEndBtn) {
     activeMissionEndBtn.addEventListener('click', () => handleQuickAction('endMission'));
   }
+  document.getElementById('freshnessModalClose')?.addEventListener('click', closeFreshnessModal);
+  document.getElementById('freshnessModal')?.addEventListener('click', (e) => {
+    if (e.target?.id === 'freshnessModal') closeFreshnessModal();
+  });
 
   // Set a short timeout to ensure chips update even if refreshAll hangs
   setTimeout(ensureChipsHaveState, 10000); // 10 seconds after boot
@@ -13959,6 +14142,11 @@
       const cachedEvents = await idbGetEvents();
       store.timeline.events = cachedEvents;
       renderTimeline();
+
+      const freshnessMeta = await idbGetMeta('freshnessStatus');
+      if (freshnessTracker && Array.isArray(freshnessMeta)) {
+        freshnessTracker.hydrate(freshnessMeta);
+      }
 
       // Load cached reports and merge if needed
       const cachedReports = await idbGetReports();
@@ -13995,6 +14183,7 @@
 
       checkOnlineStatus();
       await pingHub();
+      renderFreshnessBadges();
       await refreshHubClients();
       setInterval(checkOnlineStatus, 30000); // Check every 30s
       setInterval(pingHub, 30000);
