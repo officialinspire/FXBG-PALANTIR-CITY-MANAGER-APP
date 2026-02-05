@@ -3989,3 +3989,18 @@ body.dispatch-mode .panel {
 .timelineItem[data-lat][data-lng]:hover {
   border-color: var(--accent);
 }
+
+.freshnessBadges{ display:flex; gap:6px; flex-wrap:wrap; align-items:center; }
+.freshnessPillBtn{ background:transparent; border:0; padding:0; cursor:pointer; }
+.freshnessPill{ display:inline-flex; align-items:center; padding:4px 8px; border-radius:999px; font-size:11px; border:1px solid rgba(255,255,255,.2); }
+.freshnessPill--live{ background:rgba(34,197,94,.18); color:#86efac; }
+.freshnessPill--cached{ background:rgba(59,130,246,.18); color:#93c5fd; }
+.freshnessPill--stale{ background:rgba(245,158,11,.18); color:#fcd34d; }
+.freshnessPill--degraded,.freshnessPill--offline{ background:rgba(239,68,68,.18); color:#fca5a5; }
+
+.freshnessModal{ position:fixed; inset:0; background:rgba(0,0,0,.55); display:flex; align-items:center; justify-content:center; z-index:5000; }
+.freshnessModal--hidden{ display:none; }
+.freshnessModal__card{ width:min(420px,92vw); background:#0f172a; border:1px solid rgba(255,255,255,.12); border-radius:12px; padding:12px; }
+.freshnessModal__header{ display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; }
+.freshnessModal__body{ display:grid; gap:6px; font-size:13px; margin-bottom:12px; }
+.freshnessModal__actions{ display:flex; justify-content:flex-end; }
