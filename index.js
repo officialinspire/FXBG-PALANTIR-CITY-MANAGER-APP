@@ -3285,6 +3285,32 @@
     }
     return null;
   }
+  async function resolveWithPrecisionGeocoder({ text, cityHint, defaultCenter }) {
+    if (!window.FXBGGeocode || typeof window.FXBGGeocode.resolveLocation !== "function") return null;
+    try {
+      const resolved = await window.FXBGGeocode.resolveLocation({ text, cityHint, defaultCenter });
+      if (!resolved || !Number.isFinite(resolved.lat) || !Number.isFinite(resolved.lng)) return null;
+      return {
+        lat: resolved.lat,
+        lon: resolved.lng,
+        locationText: resolved.label || text || cityHint || null,
+        locationMethod: resolved.method || "resolver",
+        locationConfidence: Number.isFinite(resolved.confidence) ? resolved.confidence : null,
+        geocodeMeta: {
+          confidence: Number.isFinite(resolved.confidence) ? resolved.confidence : null,
+          method: resolved.method || "resolver",
+          label: resolved.label || text || cityHint || null
+        },
+        normalizedQuery: resolved.normalizedQuery || null
+      };
+    } catch (err) {
+      if (CONFIG.debug.rssGeo) {
+        console.warn("[Location Resolver] Precision resolver failed:", err?.message || err);
+      }
+      return null;
+    }
+  }
+
 
   /**
    * Extract potential location references from text
@@ -3958,6 +3984,7 @@
       result.locationMethod = 'gazetteer';
       result.locationConfidence = LOCATION_CONFIDENCE.gazetteer;
       result.chosenCandidate = { phrase: best.phrase, type: best.type };
+      result._geocode = { confidence: result.locationConfidence, method: result.locationMethod, label: best.phrase };
 
       if (CONFIG.debug.rssGeo) {
         console.log(`[Location] Gazetteer match: "${best.phrase}" -> ${result.lat}, ${result.lon}`);
@@ -3973,6 +4000,7 @@
       result.locationText = knownLocation.label || 'known location';
       result.locationMethod = 'override';
       result.locationConfidence = LOCATION_CONFIDENCE.override;
+      result._geocode = { confidence: result.locationConfidence, method: result.locationMethod, label: result.locationText };
 
       if (CONFIG.debug.rssGeo) {
         console.log(`[Location] Known location override -> ${result.lat}, ${result.lon}`);
@@ -3994,7 +4022,23 @@
         console.log(`[Location] Enriched for geocoding: "${enrichedPhrase}"`);
       }
 
-      // Geocode the enriched phrase
+      // Geocode the enriched phrase (precision resolver first, legacy geocoder fallback)
+      const precise = await resolveWithPrecisionGeocoder({
+        text: enrichedPhrase,
+        cityHint: jurisdictionHint,
+        defaultCenter: { lat: source.defaultLoc?.lat || CONFIG.center.lat, lng: source.defaultLoc?.lon || CONFIG.center.lon }
+      });
+
+      if (precise) {
+        result.lat = precise.lat;
+        result.lon = precise.lon;
+        result.locationText = best.rawPhrase;
+        result.locationMethod = precise.locationMethod;
+        result.locationConfidence = precise.locationConfidence;
+        result._geocode = precise.geocodeMeta;
+        return result;
+      }
+
       const geocoded = await geocodeLocation(enrichedPhrase, jurisdictionHint);
 
       if (geocoded) {
@@ -4003,6 +4047,7 @@
         result.locationText = best.rawPhrase;
         result.locationMethod = 'extract+geocode';
         result.locationConfidence = baseConfidence;
+        result._geocode = { confidence: result.locationConfidence, method: result.locationMethod, label: best.rawPhrase };
 
         if (geocoded.aoi === "outside" && LOCAL_JURISDICTIONS.has(String(jurisdictionHint || "").toLowerCase()) && baseConfidence >= 80) {
           result.locationConfidence = Math.max(0, baseConfidence - 20);
@@ -4026,7 +4071,22 @@
       console.log(`[Location] Fallback: ${reason} for "${item.title?.slice(0, 50)}..."`);
     }
 
-    // Use intelligent category/content-based default
+    // Fallback using resolver center first, then intelligent category/content default
+    const precisionFallback = await resolveWithPrecisionGeocoder({
+      text: textToSearch,
+      cityHint: jurisdictionHint,
+      defaultCenter: { lat: source.defaultLoc?.lat || CONFIG.center.lat, lng: source.defaultLoc?.lon || CONFIG.center.lon }
+    });
+    if (precisionFallback) {
+      result.lat = precisionFallback.lat;
+      result.lon = precisionFallback.lon;
+      result.locationText = precisionFallback.locationText;
+      result.locationMethod = precisionFallback.locationMethod;
+      result.locationConfidence = precisionFallback.locationConfidence;
+      result._geocode = precisionFallback.geocodeMeta;
+      return result;
+    }
+
     const fallbackSeed = `${source.id}|${item.guid || item.url || item.title || ""}|${item.published || ""}`;
     const fallbackLoc = getFallbackLocationForItem({ source, category: source.category, seed: fallbackSeed });
     result.lat = fallbackLoc.lat;
@@ -4034,6 +4094,7 @@
     result.locationText = null;
     result.locationMethod = 'fallback';
     result.locationConfidence = LOCATION_CONFIDENCE.fallback;
+    result._geocode = { confidence: result.locationConfidence, method: 'fallback_center', label: jurisdictionHint || 'Regional center' };
 
     return result;
   }
@@ -6468,6 +6529,11 @@
       locationConfidence,
       chosenCandidate: raw.chosenCandidate || null,
       flag: raw.flag || null,
+      _geocode: raw._geocode || (Number.isFinite(locationConfidence) || locationMethod ? {
+        confidence: Number.isFinite(locationConfidence) ? locationConfidence : null,
+        method: locationMethod || "unknown",
+        label: locationText || "Unknown location"
+      } : null),
       category: picked.category,
       emoji: picked.emoji,
       tone: picked.tone || source.tone || "warn",
@@ -6532,11 +6598,11 @@
     return SOURCE_TYPE_COLORS['rss'];
   }
 
-  function makeEmojiIcon(emoji, tone = "warn", sourceId = null) {
+  function makeEmojiIcon(emoji, tone = "warn", sourceId = null, geocodeMeta = null) {
     const sourceColor = getSourceTypeColor(sourceId);
     return L.divIcon({
       className: "",
-      html: `<div class="emojiMarker" data-tone="${tone}" data-source-type="${sourceId || 'unknown'}" style="--source-color: ${sourceColor}">${emoji}</div>`,
+      html: `<div class="emojiMarker${Number.isFinite(geocodeMeta?.confidence) && geocodeMeta.confidence < 70 ? ' emojiMarker--lowConfidence' : ''}" data-tone="${tone}" data-source-type="${sourceId || 'unknown'}" data-geocode-confidence="${Number.isFinite(geocodeMeta?.confidence) ? Math.round(geocodeMeta.confidence) : ''}" style="--source-color: ${sourceColor}">${emoji}</div>`,
       iconSize: [36, 36],
       iconAnchor: [18, 18],
       popupAnchor: [0, -12]
@@ -6567,7 +6633,7 @@
     const locationInfo = item.sourceType === "rss"
       ? `<div style="font-size:11px; color:rgba(255,255,255,0.78); margin-top:8px; padding-top:6px; border-top:1px solid rgba(255,255,255,0.08);">
            <div>📍 ${item.locationText ? escapeHtml(item.locationText) : "Unknown location"}</div>
-           <div style="margin-top:2px;">Method: ${escapeHtml(item.locationMethod || "unknown")}${Number.isFinite(item.locationConfidence) ? ` (${Math.round(item.locationConfidence)}%)` : ""}</div>
+           <div style="margin-top:2px;">Location: ${escapeHtml((item._geocode && item._geocode.label) || item.locationText || "Unknown location")} (confidence: ${Number.isFinite(item.locationConfidence) ? Math.round(item.locationConfidence) : 0}, method: ${escapeHtml((item._geocode && item._geocode.method) || item.locationMethod || "unknown")})</div>
          </div>`
       : "";
 
@@ -6596,7 +6662,7 @@
   function attachMarker(item) {
     // Use fallback pattern: prefer lon, fall back to lng for API compatibility
     const lng = item.lon ?? item.lng;
-    const m = L.marker([item.lat, lng], { icon: makeEmojiIcon(item.emoji, item.tone, item.sourceId) });
+    const m = L.marker([item.lat, lng], { icon: makeEmojiIcon(item.emoji, item.tone, item.sourceId, item._geocode) });
     m.on("click", () => selectItem(item.id));
     m.bindPopup(renderPopup(item), { closeButton: false });
     clusters.addLayer(m);
@@ -6814,6 +6880,12 @@
     } else {
       mediaEl.style.display = "none";
       mediaEl.innerHTML = "";
+    }
+    const geocodeMeta = item._geocode || null;
+    if (geocodeMeta && Number.isFinite(geocodeMeta.confidence)) {
+      const geocodeLine = `<div class="panelLocationMeta">Location: ${escapeHtml(geocodeMeta.label || item.locationText || "Unknown location")} (confidence: ${Math.round(geocodeMeta.confidence)}, method: ${escapeHtml(geocodeMeta.method || "unknown")})</div>`;
+      const descEl = $("panelDesc");
+      descEl.innerHTML = `${descEl.innerHTML}${geocodeLine}`;
     }
     $("panelLink").href = item.url || "#";
 
@@ -7222,6 +7294,7 @@
         item.locationConfidence = resolved.locationConfidence;
         item.chosenCandidate = resolved.chosenCandidate || null;
         item.flag = resolved.flag || null;
+        item._geocode = resolved._geocode || null;
 
         if (CONFIG.debug.rss && resolved.locationMethod !== 'fallback') {
           console.log(`[Location] Resolved "${item.title?.slice(0, 50)}..." via ${resolved.locationMethod}: ${resolved.lat.toFixed(4)}, ${resolved.lon.toFixed(4)}${resolved.locationText ? ` ("${resolved.locationText}")` : ''}`);

@@ -3019,6 +3019,17 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, JSON.stringify(health, null, 2), { "Content-Type": "application/json" });
     }
 
+    if (urlObj.pathname === "/api/location/address" || urlObj.pathname === "/api/location/intersection" || urlObj.pathname === "/api/location/alias") {
+      if (req.method !== "GET") {
+        return send(res, 405, JSON.stringify({ ok: false, error: "method_not_allowed" }), { "Content-Type": "application/json" });
+      }
+      return send(res, 404, JSON.stringify({
+        ok: false,
+        error: "not_implemented",
+        message: "Module 6 dataset endpoint placeholder"
+      }, null, 2), { "Content-Type": "application/json" });
+    }
+
     if (urlObj.pathname === "/api/geocode/stats") {
       const response = {
         ok: true,
