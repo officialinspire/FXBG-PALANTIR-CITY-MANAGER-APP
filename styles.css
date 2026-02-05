@@ -229,6 +229,40 @@ body{
   box-shadow: none;
 }
 
+
+.chip--sw{
+  min-width: 180px;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.swUpdateBtn{
+  padding: 4px 8px;
+  font-size: 11px;
+}
+
+.swUpdateBtn--hidden{
+  display: none;
+}
+
+.offlineToast{
+  position: fixed;
+  right: 18px;
+  bottom: calc(var(--botH) + 24px);
+  z-index: 1300;
+  background: rgba(11,18,32,.92);
+  border: 1px solid rgba(126,240,255,.35);
+  color: #d8f7ff;
+  padding: 10px 14px;
+  border-radius: 12px;
+  box-shadow: 0 12px 30px rgba(0,0,0,.35);
+  font-size: 12px;
+}
+
+.offlineToast--hidden{
+  display: none;
+}
+
 .mini{ text-align: right; }
 .mini__label{ font-size: 11px; color: var(--muted2); }
 .mini__value{ font-size: 12px; font-weight: 700; }
