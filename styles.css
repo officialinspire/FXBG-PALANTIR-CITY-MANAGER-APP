@@ -3284,3 +3284,44 @@ html, body{
   font-size: 13px;
   color: var(--good);
 }
+
+/* ========================================
+   LOADING SKELETON
+   ======================================== */
+
+.mapLoadingSkeleton {
+  position: absolute; inset: 0; background: var(--bg0);
+  display: flex; align-items: center; justify-content: center; z-index: 9000;
+  animation: fadeOut 0.5s ease 2s forwards;
+}
+.mapLoadingSkeleton--hidden { display: none; }
+.skeleton__content { text-align: center; padding: 20px; }
+.skeleton__logo { font-size: 64px; margin-bottom: 16px; animation: skeletonPulse 2s ease-in-out infinite; }
+.skeleton__title { font-size: 24px; font-weight: 900; letter-spacing: 0.12em; margin-bottom: 8px; }
+.skeleton__subtitle { font-size: 14px; color: var(--muted); margin-bottom: 24px; }
+.skeleton__status { font-size: 13px; color: var(--muted2); margin-bottom: 16px; }
+.skeleton__spinner {
+  width: 40px; height: 40px; margin: 0 auto;
+  border: 3px solid rgba(255,255,255,.1); border-top-color: var(--accent);
+  border-radius: 50%; animation: spin 1s linear infinite;
+}
+@keyframes skeletonPulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.7; transform: scale(1.05); } }
+@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes fadeOut { to { opacity: 0; visibility: hidden; } }
+
+/* ========================================
+   CHIP HOVER & FOCUS STATES
+   ======================================== */
+
+.chip {
+  cursor: pointer;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+.chip:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 12px 28px rgba(0,0,0,.30), 0 1px 0 rgba(255,255,255,.10) inset;
+}
+.chip:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
