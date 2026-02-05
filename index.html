@@ -105,6 +105,10 @@
       </div>
 
       <div class="topbarRow topbarRow--actions" id="topbarActionsRow">
+        <div class="uiModeToggle" role="group" aria-label="UI mode selector">
+          <button class="uiModeToggle__btn" data-ui-mode-btn="field" type="button">Field</button>
+          <button class="uiModeToggle__btn" data-ui-mode-btn="dispatch" type="button">Dispatch</button>
+        </div>
         <button class="btn crime-btn" id="btnCrime" title="FXBG PD Crime Reports" aria-pressed="false">
           <span class="btn__icon">🚓</span>
           <span class="btn__label">Crime</span>
@@ -145,6 +149,17 @@
   <header class="topbar desktop-only" id="desktopHeader">
     <!-- Will be populated by JavaScript with old desktop header layout -->
   </header>
+
+  <div class="activeMissionBar activeMissionBar--hidden" id="activeMissionBar" role="status" aria-live="polite">
+    <div class="activeMissionBar__meta">
+      <span class="activeMissionBar__label">Active Mission</span>
+      <span class="activeMissionBar__name" id="activeMissionName">—</span>
+    </div>
+    <div class="activeMissionBar__actions">
+      <span class="activeMissionBar__timer" id="activeMissionTimer">00:00:00</span>
+      <button class="btn btnSmall" id="activeMissionEnd" type="button">End</button>
+    </div>
+  </div>
 
   <!-- Timeline Panel -->
   <aside id="timelinePanel" class="timelinePanel timelinePanel--hidden">

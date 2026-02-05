@@ -145,6 +145,19 @@ Fast logging buttons at top of Timeline:
 
 All actions work offline and sync when connected.
 
+
+### UI Modes (Field vs Dispatch)
+- Use the **Field | Dispatch** pill in the top bar to switch layouts.
+- Mode is persisted per-device in localStorage key `fxbg.uiMode`.
+- **Field mode** (mobile-first): timeline opens as a bottom sheet by default, quick actions are larger/always visible, and operational panels use full-width overlays.
+- **Dispatch mode** (desktop ops): timeline is docked left by default, detail panel stays right-aligned, and timeline filters use a denser row.
+
+### Active Mission Header + Timer
+- Starting a mission from Quick Actions pins an **Active Mission** header at the top.
+- The header shows mission name, elapsed timer, and an **End** button.
+- Active mission state persists in IndexedDB (`meta.activeMission`) and localStorage (`fxbg.activeMission`) so timer survives reloads.
+- Ending a mission logs a `mission_end` action event (including duration and optional summary), then clears the pinned header.
+
 ### Offline Mode
 App functions without internet:
 - Timeline loads from local cache
