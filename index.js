@@ -4305,7 +4305,7 @@
             <span>Cache tiles while browsing</span>
             <input type="checkbox" id="offlineTileCacheToggle" ${offlineTileCachingEnabled ? 'checked' : ''}>
           </label>
-          <button class="btn offlineMapControl__btn" id="offlineMapPrefetchBtn" type="button">Prefetch area</button>
+          <button class="btn btn--primary btn--wide offlineMapControl__btn" id="offlineMapPrefetchBtn" type="button">Prefetch area</button>
           <div class="offlineMapControl__stats">
             <div id="offlineMapTilesCached">Tiles cached: 0</div>
             <div id="offlineMapApproxMb">Approx MB: 0</div>
@@ -5953,8 +5953,8 @@
   const QUICK_ACTIONS = [
     { id: 'qa_report', icon: '➕', label: 'Report', action: 'openReport' },
     { id: 'qa_hazard', icon: '⚠️', label: 'Hazard', action: 'markHazard' },
-    { id: 'qa_help', icon: '🆘', label: 'Help', action: 'requestHelp' },
-    { id: 'qa_checkin', icon: '✅', label: 'Check-in', action: 'checkIn' },
+    { id: 'qa_help', icon: '🆘', label: 'Request Help', shortLabel: 'Help', action: 'requestHelp' },
+    { id: 'qa_checkin', icon: '✅', label: 'Check-in Now', shortLabel: 'Check-in', action: 'checkIn' },
     { id: 'qa_mission_start', icon: '🎯', label: 'Start', action: 'startMission' },
     { id: 'qa_mission_end', icon: '🏁', label: 'End', action: 'endMission' }
   ];
@@ -5964,9 +5964,9 @@
     if (!container) return;
 
     container.innerHTML = QUICK_ACTIONS.map(qa => `
-      <button class="quickActionBtn" data-action="${qa.action}">
+      <button class="quickActionBtn btn btn--primary" data-action="${qa.action}">
         <span class="quickActionBtn__icon">${qa.icon}</span>
-        <span>${qa.label}</span>
+        <span class="label label--long">${qa.label}</span><span class="label label--short">${qa.shortLabel || qa.label}</span>
       </button>
     `).join('');
 
@@ -13108,30 +13108,30 @@
 
       <div class="topbar__right">
         <div class="uiModeToggle" role="group" aria-label="UI mode selector">
-          <button class="uiModeToggle__btn" data-ui-mode-btn="field" type="button">Field</button>
-          <button class="uiModeToggle__btn" data-ui-mode-btn="dispatch" type="button">Dispatch</button>
+          <button class="uiModeToggle__btn btn btn--compact" data-ui-mode-btn="field" type="button">Field</button>
+          <button class="uiModeToggle__btn btn btn--compact" data-ui-mode-btn="dispatch" type="button">Dispatch</button>
         </div>
-        <button class="btn crime-btn" id="btnCrime" title="FXBG PD Crime Reports" aria-pressed="false">
+        <button class="btn btn--compact crime-btn" id="btnCrime" title="FXBG PD Crime Reports" aria-pressed="false">
           <span class="btn__icon">🚓</span>
           <span class="btn__label">Crime</span>
         </button>
-        <button class="btn" id="btnReport" title="Field Notes / Incidents">
+        <button class="btn btn--compact" id="btnReport" title="Field Notes / Incidents">
           <span class="btn__icon">📝</span>
           <span class="btn__label">Report</span>
         </button>
-        <button class="btn" id="btnNewsFlash" title="Regional News Flash Dashboard">
+        <button class="btn btn--compact" id="btnNewsFlash" title="Regional News Flash Dashboard">
           <span class="btn__icon">📰</span>
           <span class="btn__label">News Flash</span>
         </button>
-        <button class="btn" id="btnRadioScanner" title="Radio Scanner">
+        <button class="btn btn--compact" id="btnRadioScanner" title="Radio Scanner">
           <span class="btn__icon">📻</span>
           <span class="btn__label">Radio</span>
         </button>
-        <button class="btn" id="btnTimeline" title="Timeline">
+        <button class="btn btn--compact" id="btnTimeline" title="Timeline">
           <span class="btn__icon">⏱️</span>
           <span class="btn__label">Timeline</span>
         </button>
-        <button class="btn" id="btnRefresh" title="Refresh now">
+        <button class="btn btn--compact" id="btnRefresh" title="Refresh now">
           <span class="btn__icon">🔄</span>
           <span class="btn__label">Refresh</span>
         </button>

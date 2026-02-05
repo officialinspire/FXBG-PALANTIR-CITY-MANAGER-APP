@@ -106,30 +106,30 @@
 
       <div class="topbarRow topbarRow--actions" id="topbarActionsRow">
         <div class="uiModeToggle" role="group" aria-label="UI mode selector">
-          <button class="uiModeToggle__btn" data-ui-mode-btn="field" type="button">Field</button>
-          <button class="uiModeToggle__btn" data-ui-mode-btn="dispatch" type="button">Dispatch</button>
+          <button class="uiModeToggle__btn btn btn--compact" data-ui-mode-btn="field" type="button">Field</button>
+          <button class="uiModeToggle__btn btn btn--compact" data-ui-mode-btn="dispatch" type="button">Dispatch</button>
         </div>
-        <button class="btn crime-btn" id="btnCrime" title="FXBG PD Crime Reports" aria-pressed="false">
+        <button class="btn btn--compact crime-btn" id="btnCrime" title="FXBG PD Crime Reports" aria-pressed="false">
           <span class="btn__icon">🚓</span>
           <span class="btn__label">Crime</span>
         </button>
-        <button class="btn" id="btnReport" title="Field Notes / Incidents">
+        <button class="btn btn--compact" id="btnReport" title="Field Notes / Incidents">
           <span class="btn__icon">📝</span>
           <span class="btn__label">Report</span>
         </button>
-        <button class="btn" id="btnNewsFlash" title="Regional News Flash Dashboard">
+        <button class="btn btn--compact" id="btnNewsFlash" title="Regional News Flash Dashboard">
           <span class="btn__icon">📰</span>
           <span class="btn__label">News Flash</span>
         </button>
-        <button class="btn" id="btnRadioScanner" title="Radio Scanner">
+        <button class="btn btn--compact" id="btnRadioScanner" title="Radio Scanner">
           <span class="btn__icon">📻</span>
           <span class="btn__label">Radio</span>
         </button>
-        <button class="btn" id="btnTimeline" title="Timeline">
+        <button class="btn btn--compact" id="btnTimeline" title="Timeline">
           <span class="btn__icon">⏱️</span>
           <span class="btn__label">Timeline</span>
         </button>
-        <button class="btn" id="btnRefresh" title="Refresh now">
+        <button class="btn btn--compact" id="btnRefresh" title="Refresh now">
           <span class="btn__icon">🔄</span>
           <span class="btn__label">Refresh</span>
         </button>
@@ -194,8 +194,8 @@
     </div>
 
     <div class="timelinePanel__sync">
-      <button class="btn btnSmall" id="btnExportSyncPack">Export Sync Pack</button>
-      <button class="btn btnSmall" id="btnImportSyncPack">Import Sync Pack</button>
+      <button class="btn btn--wide" id="btnExportSyncPack"><span class="label label--long">Export Sync Pack</span><span class="label label--short">Export Pack</span></button>
+      <button class="btn btn--wide" id="btnImportSyncPack"><span class="label label--long">Import Sync Pack</span><span class="label label--short">Import Pack</span></button>
       <input type="file" id="syncPackInput" accept=".json" hidden>
     </div>
 
@@ -469,8 +469,8 @@
           </div>
 
           <div class="reportPanel__section reportPanel__exports">
-            <button class="btn btnSmall" id="reportExportCsv">Export CSV</button>
-            <button class="btn btnSmall" id="reportExportGeojson">Export GeoJSON</button>
+            <button class="btn btn--wide" id="reportExportCsv">Export CSV</button>
+            <button class="btn btn--wide" id="reportExportGeojson"><span class="label label--long">Export GeoJSON</span><span class="label label--short">GeoJSON</span></button>
           </div>
 
           <div class="reportStatus" id="reportStatus" role="status" aria-live="polite"></div>
@@ -594,7 +594,7 @@
         </div>
       </div>
       <div class="offlineMapModal__actions">
-        <button class="btn" id="offlineMapStartPrefetch" type="button">Start Prefetch</button>
+        <button class="btn btn--primary btn--wide" id="offlineMapStartPrefetch" type="button">Start Prefetch</button>
       </div>
     </div>
   </div>
