@@ -115,6 +115,10 @@
           <span class="btn__icon">📻</span>
           <span class="btn__label">Radio</span>
         </button>
+        <button class="btn" id="btnTimeline" title="Timeline">
+          <span class="btn__icon">⏱️</span>
+          <span class="btn__label">Timeline</span>
+        </button>
         <button class="btn" id="btnRefresh" title="Refresh now">
           <span class="btn__icon">🔄</span>
           <span class="btn__label">Refresh</span>
@@ -135,6 +139,49 @@
   <header class="topbar desktop-only" id="desktopHeader">
     <!-- Will be populated by JavaScript with old desktop header layout -->
   </header>
+
+  <!-- Timeline Panel -->
+  <aside id="timelinePanel" class="timelinePanel timelinePanel--hidden">
+    <div class="timelinePanel__header">
+      <div class="timelinePanel__title">
+        <span class="timelinePanel__emoji">⏱️</span>
+        <span>Timeline</span>
+      </div>
+      <div class="timelinePanel__status">
+        <span id="timelineOfflineStatus"></span>
+        <span id="timelineLastSync">Last sync: —</span>
+      </div>
+      <button class="iconBtn" id="timelinePanelClose">✖️</button>
+    </div>
+
+    <div class="timelinePanel__filters">
+      <select id="timelineRange" class="timelineSelect">
+        <option value="1">1 hour</option>
+        <option value="6">6 hours</option>
+        <option value="24" selected>24 hours</option>
+        <option value="168">7 days</option>
+        <option value="720">30 days</option>
+      </select>
+      <label><input type="checkbox" id="filterReports" checked> Reports</label>
+      <label><input type="checkbox" id="filterCrime" checked> Crime</label>
+      <label><input type="checkbox" id="filterSystem" checked> System</label>
+      <label><input type="checkbox" id="filterActions" checked> Actions</label>
+    </div>
+
+    <div class="timelinePanel__actions" id="quickActions">
+      <!-- Quick action buttons added by JS -->
+    </div>
+
+    <div class="timelinePanel__sync">
+      <button class="btn btnSmall" id="btnExportSyncPack">Export Sync Pack</button>
+      <button class="btn btnSmall" id="btnImportSyncPack">Import Sync Pack</button>
+      <input type="file" id="syncPackInput" accept=".json" hidden>
+    </div>
+
+    <div class="timelinePanel__list" id="timelineList">
+      <div class="timelineEmpty">Loading timeline...</div>
+    </div>
+  </aside>
 
   <main class="stage">
     <section class="mapShell" aria-label="Interactive map">
