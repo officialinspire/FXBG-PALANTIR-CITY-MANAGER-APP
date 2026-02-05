@@ -288,3 +288,26 @@ When encountering new proxy errors:
 - VDOT Data & APIs: https://www.virginiadot.org/info/developer.asp
 - Fredericksburg City: https://www.fredericksburgva.gov
 - Spotsylvania County: https://www.spotsylvania.va.us
+
+
+## Android / Termux (mobile)
+
+If you run locally on Android (Termux):
+
+```bash
+pkg install nodejs
+npm install
+./scripts/up.sh
+```
+
+`up.sh` now auto-detects Android/Termux, supports Android-safe global env locations, and prints the local URL to open from the same device browser.
+
+## GitHub PR blocked: "Binary Files are Not Allowed"
+
+If GitHub rulesets reject the PR, check staged files and remove binary assets from the commit.
+
+```bash
+git diff --name-only --cached
+```
+
+In this repo, use `favicon.svg`; avoid committing `favicon.ico`.
