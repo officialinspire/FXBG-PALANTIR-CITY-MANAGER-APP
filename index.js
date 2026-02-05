@@ -5603,16 +5603,29 @@
     }
   }
 
+  async function getCurrentLocation() {
+    if (!navigator.geolocation) return null;
+
+    return new Promise((resolve) => {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+        () => resolve(null),
+        { timeout: 8000, enableHighAccuracy: false }
+      );
+    });
+  }
+
   async function createQuickReport(type, severity) {
     const note = prompt(`${type} notes (optional):`);
+    const location = await getCurrentLocation();
     const report = {
       id: crypto.randomUUID(),
       type,
       severity,
       note: note || '',
       createdAt: new Date().toISOString(),
-      lat: store.location?.lat || null,
-      lng: store.location?.lng || null,
+      lat: location?.lat || store.location?.lat || null,
+      lng: location?.lng || store.location?.lng || null,
       pendingSync: true
     };
 
@@ -5659,20 +5672,38 @@
     alert(`✅ ${title} logged`);
   }
 
+  async function checkHubHealth() {
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 5000);
+
+      const res = await fetch('/api/health', { signal: controller.signal });
+      clearTimeout(timeout);
+
+      return res.ok;
+    } catch {
+      return false;
+    }
+  }
+
   // Offline detection
-  function checkOnlineStatus() {
+  async function checkOnlineStatus() {
     const wasOffline = store.timeline.isOffline;
-
-    // Check navigator.onLine
     const navOffline = !navigator.onLine;
+    const hubDown = !(await checkHubHealth());
 
-    // TODO: Add health ping check in next part
-    store.timeline.isOffline = navOffline;
+    store.timeline.isOffline = navOffline || hubDown;
 
     // Update UI
     const status = document.getElementById('timelineOfflineStatus');
     if (status) {
-      status.textContent = store.timeline.isOffline ? '🔴 OFFLINE' : '';
+      if (navOffline) {
+        status.textContent = '🔴 OFFLINE';
+      } else if (hubDown) {
+        status.textContent = '🟡 HUB UNREACHABLE';
+      } else {
+        status.textContent = '';
+      }
       status.style.color = 'var(--bad)';
     }
 
@@ -12571,6 +12602,10 @@
           <span class="btn__icon">📻</span>
           <span class="btn__label">Radio</span>
         </button>
+        <button class="btn" id="btnTimeline" title="Timeline">
+          <span class="btn__icon">⏱️</span>
+          <span class="btn__label">Timeline</span>
+        </button>
         <button class="btn" id="btnRefresh" title="Refresh now">
           <span class="btn__icon">🔄</span>
           <span class="btn__label">Refresh</span>
@@ -13043,11 +13078,13 @@
       e.preventDefault(); $("btnNewsFlash")?.click();
     } else if (e.key === "d" || e.key === "D") {
       e.preventDefault(); $("healthBadge")?.click();
+    } else if (e.key === "t" || e.key === "T") {
+      e.preventDefault(); document.getElementById('btnTimeline')?.click();
     } else if (e.key === "Escape") {
       closeDock(); closeAllPanels();
     } else if (e.key === "?" && e.shiftKey) {
       e.preventDefault();
-      alert("SHORTCUTS:\nR=Refresh C=Crime N=News D=Diagnostics ⌘K=Dock Esc=Close ?=Help");
+      alert("SHORTCUTS:\nR=Refresh C=Crime N=News D=Diagnostics T=Timeline ⌘K=Dock Esc=Close ?=Help");
     }
   });
 })();

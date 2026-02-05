@@ -117,6 +117,42 @@ The app pulls live data from:
 - Detailed panel view for each marker
 - Auto-refresh every few minutes
 
+## Timeline + Offline Features
+
+### Timeline Panel
+View unified event stream from Reports, Crime, and System sources:
+- Click **Timeline** button (⏱️) in header
+- Filter by time range (1h to 30d) and event types
+- Click events to center map on location
+- Shows freshness: LIVE / CACHED / PENDING
+
+### Quick Actions (Field Operations)
+Fast logging buttons at top of Timeline:
+- **+ Report**: Open full report form
+- **⚠️ Hazard**: Quick hazard marker (severity 3)
+- **🆘 Help**: Request assistance (severity 4)
+- **✅ Check-in**: Log location check-in
+- **🎯 Start / 🏁 End**: Mission tracking
+
+All actions work offline and sync when connected.
+
+### Offline Mode
+App functions without internet:
+- Timeline loads from local cache
+- Quick Actions store to device
+- Shows "OFFLINE" or "HUB UNREACHABLE" status
+- Auto-syncs pending items when reconnected
+
+### Sync Pack (Data Sharing)
+Share timeline data between devices:
+- **Export Sync Pack**: Download JSON with events+reports
+- **Import Sync Pack**: Merge data from another device
+- Useful for field teams without constant connectivity
+
+### Keyboard Shortcuts
+- `T` - Toggle Timeline panel
+- (See existing shortcuts with `?`)
+
 ## ⚠️ Troubleshooting
 
 ### Markers/Waypoints Not Loading?
