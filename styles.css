@@ -193,13 +193,21 @@ body{
 }
 
 .btn{
-  display:flex; align-items:center; gap:8px;
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-width: 0;
+  min-height: 38px;
   padding: 10px 12px;
   border-radius: 14px;
   border: 1px solid rgba(255,255,255,.12);
   background: rgba(255,255,255,.06);
   color: var(--txt);
   cursor:pointer;
+  line-height: 1.15;
+  overflow: hidden;
   box-shadow: 12px 12px 26px rgba(0,0,0,.35), -8px -8px 18px rgba(255,255,255,.04);
   transition: all 0.15s ease;
 }
@@ -213,7 +221,63 @@ body{
   transform: translateY(1px);
   box-shadow: 6px 6px 16px rgba(0,0,0,.35), -4px -4px 10px rgba(255,255,255,.02);
 }
-.btn__label{ font-size: 12px; font-weight: 700; letter-spacing: .05em; }
+.btn__label{
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: .05em;
+}
+
+.btn .label{
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.btn--compact{
+  min-height: 38px;
+  padding: 8px 10px;
+  white-space: nowrap;
+}
+
+.btn--compact .btn__label,
+.btn--compact .label{
+  font-size: clamp(12px, 1.4vw, 14px);
+}
+
+.btn--primary{
+  min-height: 38px;
+  white-space: nowrap;
+}
+
+.btn--wide{
+  justify-content: flex-start;
+  white-space: normal;
+  line-height: 1.2;
+  text-align: left;
+}
+
+.btn--wide .btn__label,
+.btn--wide .label{
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+}
+
+.btn--icon{
+  width: 38px;
+  min-width: 38px;
+  min-height: 38px;
+  padding: 0;
+}
+
+.btn .label--short{
+  display: none;
+}
 
 .btn--ghost{
   padding: 6px 10px;
@@ -239,6 +303,18 @@ body{
 .swUpdateBtn{
   padding: 4px 8px;
   font-size: 11px;
+}
+
+/* UI sanity checklist / debugging aid
+ * [ ] Desktop + mobile buttons keep labels inside boundaries
+ * [ ] Field + dispatch mode buttons keep readable spacing
+ * [ ] Long labels wrap only on .btn--wide buttons
+ * Toggle visual fit outlines in console:
+ * document.body.classList.toggle('debug-ui')
+ */
+body.debug-ui button {
+  outline: 1px dashed rgba(255,255,255,0.25);
+  outline-offset: 1px;
 }
 
 .swUpdateBtn--hidden{
@@ -2015,6 +2091,11 @@ body{
 html, body{
   -webkit-text-size-adjust: 100%;
 }
+button {
+  box-sizing: border-box;
+  max-width: 100%;
+  font: inherit;
+}
 *{
   -webkit-tap-highlight-color: transparent;
 }
@@ -3104,7 +3185,12 @@ html, body{
 
 .reportPanel__exports {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
+}
+
+.reportPanel__exports .btn {
+  flex: 1 1 140px;
 }
 
 .reportStatus {
@@ -3728,6 +3814,7 @@ body.field-mode .timelinePanel {
 body.field-mode .timelinePanel--hidden { transform: translateY(115%); }
 body.field-mode .quickActionBtn {
   min-width: 112px;
+  min-height: 44px;
   padding: 14px;
   font-size: 13px;
 }
@@ -3777,6 +3864,7 @@ body.dispatch-mode .panel {
 /* Quick Action Buttons */
 .quickActionBtn {
   min-width: 90px;
+  min-height: 38px;
   padding: 10px 12px;
   border-radius: 12px;
   border: 1px solid var(--stroke);
@@ -3784,16 +3872,21 @@ body.dispatch-mode .panel {
   cursor: pointer;
   font-size: 11px;
   text-align: center;
-  white-space: nowrap;
+  white-space: normal;
   display: flex;
   flex-direction: column;
   align-items: center;
+  justify-content: center;
+  line-height: 1.15;
+  min-width: 0;
+  overflow: hidden;
   gap: 4px;
   color: var(--txt);
   transition: background 0.15s ease, transform 0.1s ease;
 }
 .quickActionBtn__icon {
   font-size: 20px;
+  flex-shrink: 0;
 }
 .quickActionBtn:hover {
   background: rgba(255, 255, 255, .10);
@@ -3801,6 +3894,25 @@ body.dispatch-mode .panel {
 }
 .quickActionBtn:active {
   transform: translateY(0);
+}
+
+@media (max-width: 900px) {
+  .btn {
+    min-height: 44px;
+  }
+
+  .quickActionBtn {
+    min-height: 44px;
+    padding: 12px 14px;
+  }
+
+  .btn .label--long {
+    display: none;
+  }
+
+  .btn .label--short {
+    display: inline;
+  }
 }
 
 /* Timeline Item Header with Emoji */
