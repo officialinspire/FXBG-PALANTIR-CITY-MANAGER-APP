@@ -9,6 +9,7 @@ data/*
 !data/intersections.json
 !data/gazetteer.json
 !data/places.json
+!data/places-downtown-centralpark.json
 
 # Logs
 *.log

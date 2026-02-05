@@ -3230,6 +3230,7 @@
   ]);
   const LOCATION_CONFIDENCE = {
     override: 100,
+    precision_places_pack: 99,
     gazetteer: 95,
     address: 90,
     intersection: 80,
@@ -6803,7 +6804,16 @@
     return SOURCE_TYPE_COLORS['rss'];
   }
 
+  function getLocationSourceLabel(method) {
+    const value = String(method || "").toLowerCase();
+    if (value === "precision_places_pack") return "Precision Places Pack";
+    if (value.includes("address")) return "Address";
+    if (value.includes("intersection")) return "Intersection";
+    return "Fallback";
+  }
+
   function getMarkerPrecisionClass(geocodeMeta = null) {
+    if (String(geocodeMeta?.method || "").toLowerCase() === "precision_places_pack") return "marker--precise";
     const confidence = Number.isFinite(geocodeMeta?.confidence) ? geocodeMeta.confidence : null;
     if (confidence === null) return "marker--unknown";
     if (confidence >= 85) return "marker--precise";
@@ -6820,7 +6830,7 @@
 
     return L.divIcon({
       className: "",
-      html: `<div class="emojiMarker ${markerClass}${Number.isFinite(geocodeMeta?.confidence) && geocodeMeta.confidence < 70 ? ' emojiMarker--lowConfidence' : ''}" data-tone="${tone}" data-source-type="${sourceId || 'unknown'}" data-geocode-confidence="${Number.isFinite(geocodeMeta?.confidence) ? Math.round(geocodeMeta.confidence) : ''}" style="--source-color: ${sourceColor}">${emoji}${stackBadge}</div>`,
+      html: `<div class="emojiMarker ${markerClass}${String(geocodeMeta?.method || "").toLowerCase() !== "precision_places_pack" && Number.isFinite(geocodeMeta?.confidence) && geocodeMeta.confidence < 70 ? ' emojiMarker--lowConfidence' : ''}" data-tone="${tone}" data-source-type="${sourceId || 'unknown'}" data-geocode-confidence="${Number.isFinite(geocodeMeta?.confidence) ? Math.round(geocodeMeta.confidence) : ''}" style="--source-color: ${sourceColor}">${emoji}${stackBadge}</div>`,
       iconSize: [36, 36],
       iconAnchor: [18, 18],
       popupAnchor: [0, -12]
@@ -6874,7 +6884,8 @@
     const locationInfo = item.sourceType === "rss"
       ? `<div style="font-size:11px; color:rgba(255,255,255,0.78); margin-top:8px; padding-top:6px; border-top:1px solid rgba(255,255,255,0.08);">
            <div>📍 ${item.locationText ? escapeHtml(item.locationText) : "Unknown location"}</div>
-           <div style="margin-top:2px;">Location: ${escapeHtml((item._geocode && item._geocode.label) || item.locationText || "Unknown location")} (confidence: ${Number.isFinite(item.locationConfidence) ? Math.round(item.locationConfidence) : 0}, method: ${escapeHtml((item._geocode && item._geocode.method) || item.locationMethod || "unknown")})</div>
+           <div style="margin-top:2px;">Location source: ${escapeHtml(getLocationSourceLabel((item._geocode && item._geocode.method) || item.locationMethod || "unknown"))}</div>
+           <div style="margin-top:2px;">Confidence: ${Number.isFinite(item.locationConfidence) ? Math.round(item.locationConfidence) : 0}</div>
            ${downtownMeta}
          </div>`
       : "";
@@ -7158,7 +7169,7 @@
     }
     const geocodeMeta = item._geocode || null;
     if (geocodeMeta && Number.isFinite(geocodeMeta.confidence)) {
-      const geocodeLine = `<div class="panelLocationMeta">Location: ${escapeHtml(geocodeMeta.label || item.locationText || "Unknown location")} (confidence: ${Math.round(geocodeMeta.confidence)}, method: ${escapeHtml(geocodeMeta.method || "unknown")})</div>`;
+      const geocodeLine = `<div class="panelLocationMeta">Location source: ${escapeHtml(getLocationSourceLabel(geocodeMeta.method || "unknown"))} • Confidence: ${Math.round(geocodeMeta.confidence)}</div>`;
       const descEl = $("panelDesc");
       descEl.innerHTML = `${descEl.innerHTML}${geocodeLine}`;
     }

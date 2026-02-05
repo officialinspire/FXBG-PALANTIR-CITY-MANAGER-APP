@@ -213,6 +213,7 @@ const GEO_DATA_CACHE_TTL_MS = 60 * 1000;
 const GAZETTEER_FILE = path.join(__dirname, "data", "gazetteer.json");
 const INTERSECTIONS_FILE = path.join(__dirname, "data", "intersections.json");
 const PLACES_FILE = path.join(__dirname, "data", "places.json");
+const DOWNTOWN_CENTRAL_PARK_PLACES_FILE = path.join(__dirname, "data", "places-downtown-centralpark.json");
 const CACHE_DIR = path.join(__dirname, "data", "cache");
 const VA511_ICONS_CACHE_FILE = path.join(CACHE_DIR, "va511-icons-metadata.json");
 const geoDataCache = new Map();
@@ -3199,6 +3200,11 @@ const server = http.createServer(async (req, res) => {
     if (urlObj.pathname === "/api/places" && req.method === "GET") {
       const payload = await readOrInitGeoDataset(PLACES_FILE, "places");
       return send(res, 200, JSON.stringify(payload, null, 2), { "Content-Type": "application/json" });
+    }
+
+    if (urlObj.pathname === "/api/places/downtown-centralpark" && req.method === "GET") {
+      const payload = await readOrInitGeoDataset(DOWNTOWN_CENTRAL_PARK_PLACES_FILE, "places_downtown_centralpark");
+      return send(res, 200, JSON.stringify({ ok: true, data: payload }, null, 2), { "Content-Type": "application/json" });
     }
 
     if (urlObj.pathname === "/api/va511/icons-metadata" && req.method === "GET") {

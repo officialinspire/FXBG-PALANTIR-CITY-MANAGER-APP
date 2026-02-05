@@ -1,9 +1,10 @@
 (() => {
   const DB_NAME = 'fxbg_city_manager';
-  const DB_VERSION = 3;
+  const DB_VERSION = 4;
   const STORE_NAME = 'geocache';
   const GAZETTEER_STORE = 'gazetteer';
   const INTERSECTIONS_STORE = 'intersections';
+  const PRECISION_PLACES_STORE = 'precision_places_pack';
   const DATASET_KEY = 'default';
   const TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
@@ -37,7 +38,8 @@
 
   const localDatasets = {
     gazetteer: { version: 1, items: [] },
-    intersections: { version: 1, items: [] }
+    intersections: { version: 1, items: [] },
+    precisionPlaces: { version: 1, items: [] }
   };
 
   function normalizeLocationText(text) {
@@ -76,6 +78,9 @@
         }
         if (!db.objectStoreNames.contains(INTERSECTIONS_STORE)) {
           db.createObjectStore(INTERSECTIONS_STORE, { keyPath: 'key' });
+        }
+        if (!db.objectStoreNames.contains(PRECISION_PLACES_STORE)) {
+          db.createObjectStore(PRECISION_PLACES_STORE, { keyPath: 'key' });
         }
       };
     });
@@ -121,9 +126,10 @@
   }
 
   function sanitizeDataset(payload) {
+    const source = payload && payload.data && Array.isArray(payload.data.items) ? payload.data : payload;
     return {
-      version: Number(payload?.version) || 1,
-      items: Array.isArray(payload?.items) ? payload.items : []
+      version: Number(source?.version) || 1,
+      items: Array.isArray(source?.items) ? source.items : []
     };
   }
 
@@ -142,7 +148,8 @@
   async function hydrateGeoDatasets() {
     await Promise.all([
       warmDataset('gazetteer', '/api/geo/gazetteer', GAZETTEER_STORE),
-      warmDataset('intersections', '/api/geo/intersections', INTERSECTIONS_STORE)
+      warmDataset('intersections', '/api/geo/intersections', INTERSECTIONS_STORE),
+      warmDataset('precisionPlaces', '/api/places/downtown-centralpark', PRECISION_PLACES_STORE)
     ]);
   }
 
@@ -160,6 +167,14 @@
       if (cached) localDatasets.intersections = sanitizeDataset(cached);
     }
     return localDatasets.intersections;
+  }
+
+  async function getPrecisionPlaces() {
+    if (!Array.isArray(localDatasets.precisionPlaces.items) || localDatasets.precisionPlaces.items.length === 0) {
+      const cached = await loadDatasetFromIDB(PRECISION_PLACES_STORE);
+      if (cached) localDatasets.precisionPlaces = sanitizeDataset(cached);
+    }
+    return localDatasets.precisionPlaces;
   }
 
   async function readCache(normalizedQuery) {
@@ -264,6 +279,34 @@
     return null;
   }
 
+  function precisionIntersectionKey(item) {
+    const explicit = parseIntersection(item?.name || '');
+    if (explicit) return explicit;
+    if (item?.a && item?.b) {
+      return [normalizeLocationText(item.a), normalizeLocationText(item.b)].sort().join(' & ');
+    }
+    return null;
+  }
+
+  function findPrecisionPlacesHit(normalizedQuery, items) {
+    const queryIntersection = parseIntersection(normalizedQuery);
+    for (const item of items || []) {
+      const values = [item?.name, item?.address, ...(Array.isArray(item?.aliases) ? item.aliases : [])]
+        .map((v) => normalizeLocationText(v))
+        .filter(Boolean);
+      const matchedText = values.some((value) => normalizedQuery.includes(value) || value.includes(normalizedQuery));
+      const matchedIntersection = queryIntersection && precisionIntersectionKey(item) === queryIntersection;
+      if (!matchedText && !matchedIntersection) continue;
+      if (!Number.isFinite(Number(item?.lat)) || !Number.isFinite(Number(item?.lng))) continue;
+      return {
+        lat: Number(item.lat),
+        lng: Number(item.lng),
+        label: item.name || item.address || normalizedQuery
+      };
+    }
+    return null;
+  }
+
   async function resolveLocation({ text, cityHint = 'Fredericksburg, VA', defaultCenter } = {}) {
     const fallbackCenter = defaultCenter || { lat: 38.3032, lng: -77.4605 };
     const normalizedQuery = normalizeLocationText(`${text || ''} ${cityHint || ''}`);
@@ -278,7 +321,22 @@
 
     const gazetteer = await getGazetteer();
     const intersections = await getIntersections();
+    const precisionPlaces = await getPrecisionPlaces();
     let best = buildResult({ lat: fallbackCenter.lat, lng: fallbackCenter.lng, confidence: 10, method: 'fallback_center', label: cityHint || 'Default center', normalizedQuery });
+
+    const precisionHit = findPrecisionPlacesHit(normalizedQuery, precisionPlaces.items);
+    if (precisionHit) {
+      best = buildResult({
+        lat: precisionHit.lat,
+        lng: precisionHit.lng,
+        confidence: 99,
+        method: 'precision_places_pack',
+        label: precisionHit.label,
+        normalizedQuery
+      });
+      await writeCache(best);
+      return best;
+    }
 
     const address = parseAddress(normalizedQuery);
     if (address) {
@@ -330,6 +388,25 @@
     normalizeLocationText,
     resolveLocation,
     getGazetteer,
-    getIntersections
+    getIntersections,
+    getPrecisionPlaces,
+    addPlaceAnchor(input = {}) {
+      const slug = String(input.name || 'new-anchor')
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/(^-|-$)/g, '') || 'new-anchor';
+      const snippet = {
+        id: slug,
+        name: input.name || 'New Anchor',
+        type: input.type || 'poi',
+        address: input.address || '',
+        lat: Number.isFinite(Number(input.lat)) ? Number(input.lat) : null,
+        lng: Number.isFinite(Number(input.lng)) ? Number(input.lng) : null,
+        aliases: Array.isArray(input.aliases) ? input.aliases : [],
+        tags: Array.isArray(input.tags) ? input.tags : []
+      };
+      console.log(JSON.stringify(snippet, null, 2));
+      return snippet;
+    }
   };
 })();
