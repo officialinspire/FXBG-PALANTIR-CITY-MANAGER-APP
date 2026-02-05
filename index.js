@@ -65,7 +65,8 @@
     CRIME_UI: 'fxbg-crime-ui',
     REPORTS: 'fxbg-reports',
     UI_MODE: 'fxbg.uiMode',
-    ACTIVE_MISSION: 'fxbg.activeMission'
+    ACTIVE_MISSION: 'fxbg.activeMission',
+    HUB_DEVICE_ID: 'fxbg.hubDeviceId'
   };
 
   currentUiMode = readStoredUiMode();
@@ -5680,6 +5681,12 @@
       filters: { hours: 24, reports: true, crime: true, system: true, actions: true },
       isOffline: false,
       lastSync: {}
+    },
+    hub: {
+      deviceId: null,
+      reachable: false,
+      lastSyncAt: null,
+      clients: []
     }
   };
 
@@ -6082,12 +6089,52 @@
     alert(`✅ ${title} logged`);
   }
 
+  function getPendingReportsCount() {
+    return store.timeline.events.filter((e) => e.kind === 'report' && e.pendingSync).length;
+  }
+
+  async function refreshHubClients() {
+    try {
+      const res = await fetch('/api/hub/clients');
+      if (!res.ok) throw new Error(`hub_clients_${res.status}`);
+      const payload = await res.json();
+      const clients = Array.isArray(payload?.clients) ? payload.clients : [];
+      store.hub.clients = clients;
+      store.hub.reachable = true;
+      store.hub.lastSyncAt = Date.now();
+      if (dockState?.isOpen && dockState.tab === 'sync') renderDock();
+      return clients;
+    } catch {
+      store.hub.reachable = false;
+      if (dockState?.isOpen && dockState.tab === 'sync') renderDock();
+      return [];
+    }
+  }
+
+  async function pingHub() {
+    const deviceId = store.hub.deviceId;
+    if (!deviceId) return false;
+    try {
+      const ua = `${navigator.platform || 'unknown'}|${navigator.userAgentData?.platform || 'na'}`;
+      const res = await fetch('/api/hub/ping', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ deviceId, userAgent: ua })
+      });
+      store.hub.reachable = res.ok;
+      return res.ok;
+    } catch {
+      store.hub.reachable = false;
+      return false;
+    }
+  }
+
   async function checkHubHealth() {
     try {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 5000);
 
-      const res = await fetch('/api/health', { signal: controller.signal });
+      const res = await fetch('/api/hub/clients', { signal: controller.signal });
       clearTimeout(timeout);
 
       return res.ok;
@@ -6137,6 +6184,7 @@
         if (res.ok) {
           report.pendingSync = false;
           await idbSaveReports([report]);
+          store.hub.lastSyncAt = Date.now();
           // Update event
           const evt = store.timeline.events.find(e => e.id === `report_${report.id}`);
           if (evt) {
@@ -12273,6 +12321,42 @@
     return html;
   }
 
+  // Render Sync tab
+  function renderSyncHTML() {
+    const reachableLabel = store.hub.reachable ? 'yes' : 'no';
+    const lastSyncText = store.hub.lastSyncAt ? getRelativeTime(store.hub.lastSyncAt) : '—';
+    const pendingCount = getPendingReportsCount();
+    let html = `<div class="dockCard">`;
+    html += `<div class="dockSectionTitle">Sync</div>`;
+    html += `<div class="dockRow"><div class="dockRowLeft"><div class="dockRowTitle">Hub reachable?</div></div><div class="dockBadge ${store.hub.reachable ? 'status-ok' : 'status-error'}">${reachableLabel.toUpperCase()}</div></div>`;
+    html += `<div class="dockRow"><div class="dockRowLeft"><div class="dockRowTitle">Last sync time</div></div><div class="dockBadge">${escapeHtml(lastSyncText)}</div></div>`;
+    html += `<div class="dockRow"><div class="dockRowLeft"><div class="dockRowTitle">Pending items count</div></div><div class="dockBadge">${pendingCount}</div></div>`;
+    html += `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;">`;
+    html += `<button class="dockBtnSmall" id="hubPullNow">Pull latest from Hub now</button>`;
+    html += `<button class="dockBtnSmall" id="hubPushNow">Push pending now</button>`;
+    html += `<button class="dockBtnSmall" id="hubStatusNow">Show hub status</button>`;
+    html += `</div>`;
+    html += `</div>`;
+
+    html += `<div class="dockSectionTitle">Connected clients (${store.hub.clients.length})</div>`;
+    if (!store.hub.clients.length) {
+      html += `<div class="dockCard"><div class="dockRowMeta">No recent clients reported.</div></div>`;
+      return html;
+    }
+
+    for (const client of store.hub.clients.slice(0, 25)) {
+      html += `<div class="dockCard">`;
+      html += `<div class="dockRow">`;
+      html += `<div class="dockRowLeft">`;
+      html += `<div class="dockRowTitle">${escapeHtml(client.deviceId || 'unknown')}</div>`;
+      html += `<div class="dockRowMeta">Last seen ${formatRelativeTime(client.lastSeen)}</div>`;
+      html += `</div>`;
+      html += `<div class="dockBadge">${escapeHtml((client.userAgent || 'unknown').slice(0, 22))}</div>`;
+      html += `</div></div>`;
+    }
+    return html;
+  }
+
   // Render System tab
   function renderSystemHTML() {
     const health = healthTracker.computeHealth();
@@ -12397,6 +12481,7 @@
       case "nearest": return renderNearestHTML();
       case "watchboard": return renderWatchboardHTML();
       case "alerts": return renderAlertsHTML();
+      case "sync": return renderSyncHTML();
       case "system": return renderSystemHTML();
       default: return "<p>Unknown tab</p>";
     }
@@ -12411,6 +12496,7 @@
       nearest: "Nearest",
       watchboard: "Watchboard",
       alerts: "Hot Alerts",
+      sync: "Sync",
       system: "System"
     };
     return titles[tab] || "Dock";
@@ -12535,6 +12621,26 @@
 
     if (dockState.tab === "alerts") {
       initializeAlertsPanel();
+    }
+
+    if (dockState.tab === "sync") {
+      const pullBtn = document.getElementById("hubPullNow");
+      const pushBtn = document.getElementById("hubPushNow");
+      const statusBtn = document.getElementById("hubStatusNow");
+      pullBtn?.addEventListener("click", async () => {
+        await refreshAll();
+        await refreshHubClients();
+      });
+      pushBtn?.addEventListener("click", async () => {
+        await syncPendingReports();
+        await refreshHubClients();
+        renderDock();
+      });
+      statusBtn?.addEventListener("click", async () => {
+        await pingHub();
+        await refreshHubClients();
+        renderDock();
+      });
     }
   }
 
@@ -13556,8 +13662,11 @@
   (async () => {
     try {
       await initIDB();
-      const deviceId = await idbGetMeta('deviceId') || crypto.randomUUID();
+      const storedHubId = localStorage.getItem(STORAGE_KEYS.HUB_DEVICE_ID);
+      const deviceId = await idbGetMeta('deviceId') || storedHubId || crypto.randomUUID();
       await idbSaveMeta('deviceId', deviceId);
+      try { localStorage.setItem(STORAGE_KEYS.HUB_DEVICE_ID, deviceId); } catch {}
+      store.hub.deviceId = deviceId;
 
       // Load cached events
       const cachedEvents = await idbGetEvents();
@@ -13598,7 +13707,11 @@
       }
 
       checkOnlineStatus();
+      await pingHub();
+      await refreshHubClients();
       setInterval(checkOnlineStatus, 30000); // Check every 30s
+      setInterval(pingHub, 30000);
+      setInterval(refreshHubClients, 60000);
     } catch (err) {
       console.warn('[IDB] Init failed:', err);
       const timelineOfflineStatus = $("timelineOfflineStatus");

@@ -206,6 +206,11 @@ const REPORT_ALLOWED_MIME = new Set(["image/jpeg", "image/png", "image/webp"]);
 const REPORT_UPLOAD_LIMIT = 5 * 1024 * 1024;
 const REPORT_FORM_LIMIT = REPORT_UPLOAD_LIMIT + (1 * 1024 * 1024);
 const REPORT_NOTE_LIMIT = 2000;
+const HUB_CLIENTS_FILE = path.join(__dirname, "data", "clients.json");
+const HUB_CLIENTS_FLUSH_MS = 5 * 1000;
+const HUB_CLIENTS_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+const hubClients = new Map();
+let hubClientsFlushTimer = null;
 
 async function ensureReportsFile() {
   const dir = path.dirname(REPORTS_FILE);
@@ -229,6 +234,95 @@ async function writeReports(items) {
   const tmp = `${REPORTS_FILE}.tmp`;
   await fsp.writeFile(tmp, JSON.stringify(items, null, 2), "utf8");
   await fsp.rename(tmp, REPORTS_FILE);
+}
+
+function sanitizeDeviceId(raw) {
+  const input = String(raw || "").trim();
+  if (!input) return "";
+  return input.replace(/[^a-zA-Z0-9._:-]/g, "").slice(0, 64);
+}
+
+function sanitizeUserAgent(raw) {
+  const input = String(raw || "").trim();
+  if (!input) return "unknown";
+  return input.slice(0, 160);
+}
+
+function scheduleHubClientsFlush() {
+  if (hubClientsFlushTimer) return;
+  hubClientsFlushTimer = setTimeout(async () => {
+    hubClientsFlushTimer = null;
+    try {
+      const payload = {
+        updatedAt: new Date().toISOString(),
+        clients: Array.from(hubClients.values())
+      };
+      await fsp.mkdir(path.dirname(HUB_CLIENTS_FILE), { recursive: true });
+      const tmp = `${HUB_CLIENTS_FILE}.tmp`;
+      await fsp.writeFile(tmp, JSON.stringify(payload, null, 2), "utf8");
+      await fsp.rename(tmp, HUB_CLIENTS_FILE);
+    } catch (err) {
+      logApp({
+        level: "WARN",
+        kind: "hub_clients_persist_failed",
+        msg: "Failed to persist hub clients",
+        errorCode: err.message
+      });
+    }
+  }, HUB_CLIENTS_FLUSH_MS);
+}
+
+async function loadHubClients() {
+  try {
+    const raw = await fsp.readFile(HUB_CLIENTS_FILE, "utf8");
+    const parsed = safeJsonParse(raw, null, "hub clients");
+    const clients = Array.isArray(parsed) ? parsed : parsed?.clients;
+    if (!Array.isArray(clients)) return;
+    for (const item of clients) {
+      const deviceId = sanitizeDeviceId(item?.deviceId);
+      if (!deviceId) continue;
+      const lastSeen = Number(item?.lastSeen);
+      if (!Number.isFinite(lastSeen)) continue;
+      hubClients.set(deviceId, {
+        deviceId,
+        lastSeen,
+        userAgent: sanitizeUserAgent(item?.userAgent)
+      });
+    }
+  } catch (err) {
+    if (err.code !== "ENOENT") {
+      logApp({
+        level: "WARN",
+        kind: "hub_clients_load_failed",
+        msg: "Failed to load hub clients",
+        errorCode: err.message
+      });
+    }
+  }
+}
+
+function touchHubClient({ deviceId, userAgent }) {
+  const safeDeviceId = sanitizeDeviceId(deviceId);
+  if (!safeDeviceId) return null;
+  const now = Date.now();
+
+  // prune stale entries to avoid unbounded growth
+  for (const [id, entry] of hubClients.entries()) {
+    if (now - Number(entry.lastSeen || 0) > HUB_CLIENTS_MAX_AGE_MS) {
+      hubClients.delete(id);
+    }
+  }
+
+  const current = hubClients.get(safeDeviceId) || { deviceId: safeDeviceId };
+  const next = {
+    ...current,
+    deviceId: safeDeviceId,
+    lastSeen: now,
+    userAgent: sanitizeUserAgent(userAgent)
+  };
+  hubClients.set(safeDeviceId, next);
+  scheduleHubClientsFlush();
+  return next;
 }
 
 function parseMultipart(buffer, boundary) {
@@ -3585,6 +3679,33 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, JSON.stringify(status, null, 2), { "Content-Type": "application/json" });
     }
 
+
+    if (urlObj.pathname === "/api/hub/ping" && req.method === "POST") {
+      // Intentionally no auth for LAN ops utility; future hardening should add auth and signatures.
+      const body = await readBody(req, 64 * 1024);
+      const payload = safeJsonParse(body.toString("utf8"), {}, "hub ping payload") || {};
+      const client = touchHubClient({
+        deviceId: payload.deviceId,
+        userAgent: payload.userAgent || req.headers["user-agent"] || ""
+      });
+      if (!client) {
+        return send(res, 400, JSON.stringify({ ok: false, error: "invalid_device_id" }), { "Content-Type": "application/json" });
+      }
+      return send(res, 200, JSON.stringify({ ok: true, lastSeen: client.lastSeen }, null, 2), { "Content-Type": "application/json" });
+    }
+
+    if (urlObj.pathname === "/api/hub/clients" && req.method === "GET") {
+      const now = Date.now();
+      const clients = Array.from(hubClients.values())
+        .filter((entry) => now - Number(entry.lastSeen || 0) <= HUB_CLIENTS_MAX_AGE_MS)
+        .sort((a, b) => Number(b.lastSeen || 0) - Number(a.lastSeen || 0))
+        .map((entry) => ({
+          deviceId: entry.deviceId,
+          lastSeen: entry.lastSeen,
+          userAgent: entry.userAgent
+        }));
+      return send(res, 200, JSON.stringify({ ok: true, clients }, null, 2), { "Content-Type": "application/json" });
+    }
     if (urlObj.pathname === "/api/fxbg/crime-reports/incidents") {
       const months = parseInt(urlObj.searchParams.get("months") || "6", 10);
       try {
@@ -3738,6 +3859,7 @@ const server = http.createServer(async (req, res) => {
 
 async function startServer() {
   await validateRequiredUpstreams();
+  await loadHubClients();
 
   server.listen(PORT, HOST, () => {
     console.log(`\n🧠 CITY MANAGER server running on ${HOST}:${PORT}\n`);
