@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "items": [
+    { "name": "Greenbrier Apartments", "aliases": ["Greenbrier Apt", "Greenbrier Apartment Complex"], "lat": 38.3184, "lng": -77.5003, "tags": ["housing"] },
+    { "name": "Downtown Fredericksburg", "aliases": ["Downtown", "Olde Towne", "Old Town"], "lat": 38.3030, "lng": -77.4605, "tags": ["neighborhood"] },
+    { "name": "Fredericksburg City Hall", "aliases": ["City Hall", "FXBG City Hall"], "lat": 38.3032, "lng": -77.4605, "tags": ["government"] },
+    { "name": "Mary Washington Hospital", "aliases": ["MWH", "Mary Washington"], "lat": 38.3092, "lng": -77.4838, "tags": ["hospital", "healthcare"] },
+    { "name": "Fredericksburg Police Department", "aliases": ["FXBG PD", "Police HQ"], "lat": 38.3043, "lng": -77.4607, "tags": ["public-safety", "police"] },
+    { "name": "Fredericksburg Fire Department Station 1", "aliases": ["Station 1", "FXBG Fire Station 1"], "lat": 38.3021, "lng": -77.4600, "tags": ["public-safety", "fire"] },
+    { "name": "Fredericksburg Fire Department Station 2", "aliases": ["Station 2", "Carl D. Silver Pkwy Fire"], "lat": 38.2806, "lng": -77.5052, "tags": ["public-safety", "fire"] },
+    { "name": "Fredericksburg VRE Station", "aliases": ["VRE", "Train Station", "Amtrak Station"], "lat": 38.2995, "lng": -77.4586, "tags": ["transit"] },
+    { "name": "Fredericksburg Visitor Center", "aliases": ["Visitor Center", "Tourism Office"], "lat": 38.3024, "lng": -77.4608, "tags": ["tourism"] },
+    { "name": "Fredericksburg Expo and Conference Center", "aliases": ["Expo Center", "FXBG Expo"], "lat": 38.2968, "lng": -77.4898, "tags": ["venue"] },
+    { "name": "Central Park", "aliases": ["Central Park Shopping Center", "Celebrate Virginia North"], "lat": 38.3002, "lng": -77.4677, "tags": ["commercial"] },
+    { "name": "University of Mary Washington", "aliases": ["UMW", "Mary Washington University"], "lat": 38.3012, "lng": -77.4769, "tags": ["education"] },
+    { "name": "Fredericksburg Nationals Ballpark", "aliases": ["Virginia Credit Union Stadium", "FredNats Stadium"], "lat": 38.2933, "lng": -77.4671, "tags": ["sports", "venue"] },
+    { "name": "Rappahannock River Heritage Trail", "aliases": ["Heritage Trail", "River Trail"], "lat": 38.3055, "lng": -77.4588, "tags": ["park", "trail"] },
+    { "name": "Old Mill Park", "aliases": ["Old Mill", "Canal Path Access"], "lat": 38.3098, "lng": -77.4528, "tags": ["park"] },
+    { "name": "Alum Spring Park", "aliases": ["Alum Spring"], "lat": 38.3146, "lng": -77.4689, "tags": ["park"] },
+    { "name": "Hugh Mercer Apothecary Shop", "aliases": ["Mercer Apothecary"], "lat": 38.3025, "lng": -77.4601, "tags": ["historic", "tourism"] },
+    { "name": "Spotsylvania Towne Centre", "aliases": ["Towne Centre", "Mall"], "lat": 38.2832, "lng": -77.5067, "tags": ["commercial"] }
+  ]
+}

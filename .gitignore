@@ -6,6 +6,8 @@ data/*
 !data/.gitkeep
 !data/colleges_fxbg.json
 !data/schools_fxbg.json
+!data/intersections.json
+!data/gazetteer.json
 
 # Logs
 *.log

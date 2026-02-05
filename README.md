@@ -336,3 +336,46 @@ Header chip states show service worker lifecycle:
 
 When first install caching completes, a subtle **Offline ready** toast appears.
 If an update is waiting, an **Update** button posts `skipWaiting` and reloads after activation.
+
+
+## 📍 Offline Gazetteer + Intersections (Module 6)
+
+The hub now serves two small local datasets used by the client geocoder when offline:
+
+- `data/gazetteer.json` via `GET /api/geo/gazetteer`
+- `data/intersections.json` via `GET /api/geo/intersections`
+
+### Data format
+
+`data/gazetteer.json`:
+
+```json
+{
+  "version": 1,
+  "items": [
+    { "name": "Place Name", "aliases": ["Alias A"], "lat": 38.30, "lng": -77.46, "tags": ["category"] }
+  ]
+}
+```
+
+`data/intersections.json`:
+
+```json
+{
+  "version": 1,
+  "items": [
+    { "a": "Caroline St", "b": "William St", "lat": 38.3026, "lng": -77.4582 }
+  ]
+}
+```
+
+### How to add or edit entries
+
+1. Open the JSON file and add/update an item in `items`.
+2. Keep `version` as an integer (increment if you want to track major local changes).
+3. Prefer including both canonical `name` and practical `aliases` (for fuzzy alias matching).
+4. Keep datasets intentionally small in this module (seed/high-value locations only).
+5. Restart the server after edits for immediate refresh, or wait up to 60s for server cache expiry.
+
+The server auto-creates empty defaults if either file is missing, so startup remains safe.
+
