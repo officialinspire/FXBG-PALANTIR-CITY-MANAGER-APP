@@ -624,6 +624,19 @@ body.debug-ui button {
   pointer-events: none;
 }
 
+.emojiMarker--lowConfidence{
+  border: 1px dashed rgba(255, 170, 0, 0.95);
+  filter: saturate(0.9);
+}
+
+.panelLocationMeta{
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(255,255,255,.12);
+  font-size: 12px;
+  color: rgba(255,255,255,.85);
+}
+
 /* Tone-based accents (secondary visual indicator) */
 .emojiMarker[data-tone="good"]{ outline: 2px solid rgba(68,240,166,.25); }
 .emojiMarker[data-tone="warn"]{ outline: 2px solid rgba(255,216,107,.25); }
