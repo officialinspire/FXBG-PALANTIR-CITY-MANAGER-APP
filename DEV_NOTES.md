@@ -437,3 +437,18 @@ watch -n 5 'curl -s http://localhost:8000/cache/stats | jq'
 
 **Last Updated:** 2026-01-03
 **Maintained by:** FXBG-PALANTIR Team
+
+## FXBG Precision Places Pack (Downtown + Central Park)
+
+- Dataset file: `data/places-downtown-centralpark.json`
+- API endpoint: `GET /api/places/downtown-centralpark` (returns `{ ok: true, data }`)
+- Resolver behavior: precision pack is checked first (name, alias, intersection text, address) before Module 5 fallback logic.
+
+### How to extend
+
+1. Open browser console and run:
+   `FXBGGeocode.addPlaceAnchor({ name, lat, lng, aliases, tags, type, address })`
+2. Copy the printed JSON snippet.
+3. Paste into `data/places-downtown-centralpark.json` under `items`.
+4. Prefer verified coordinates only. If unknown, set `lat/lng` to `null` and include a `todo` note.
+5. Reload app to refresh client cache, or wait up to 60s for server cache expiry.

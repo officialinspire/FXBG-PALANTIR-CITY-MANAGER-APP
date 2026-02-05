@@ -1,0 +1,497 @@
+{
+  "version": 1,
+  "area": "FXBG Downtown + Central Park",
+  "items": [
+    {
+      "id": "caroline-william",
+      "name": "Caroline St & William St",
+      "type": "intersection",
+      "address": "Caroline St & William St, Fredericksburg, VA 22401",
+      "lat": 38.3026,
+      "lng": -77.4582,
+      "aliases": ["Caroline and William", "William & Caroline"],
+      "tags": ["downtown", "traffic", "high_incident"]
+    },
+    {
+      "id": "caroline-princess-anne",
+      "name": "Caroline St & Princess Anne St",
+      "type": "intersection",
+      "address": "Caroline St & Princess Anne St, Fredericksburg, VA 22401",
+      "lat": 38.3017,
+      "lng": -77.459,
+      "aliases": ["Caroline and Princess Anne"],
+      "tags": ["downtown", "traffic"]
+    },
+    {
+      "id": "caroline-george",
+      "name": "Caroline St & George St",
+      "type": "intersection",
+      "address": "Caroline St & George St, Fredericksburg, VA 22401",
+      "lat": 38.3041,
+      "lng": -77.4587,
+      "aliases": ["George and Caroline"],
+      "tags": ["downtown", "traffic"]
+    },
+    {
+      "id": "caroline-charlotte",
+      "name": "Caroline St & Charlotte St",
+      "type": "intersection",
+      "address": "Caroline St & Charlotte St, Fredericksburg, VA 22401",
+      "lat": 38.3052,
+      "lng": -77.4583,
+      "aliases": ["Caroline and Charlotte"],
+      "tags": ["downtown", "traffic"]
+    },
+    {
+      "id": "caroline-hanover",
+      "name": "Caroline St & Hanover St",
+      "type": "intersection",
+      "address": "Caroline St & Hanover St, Fredericksburg, VA 22401",
+      "lat": 38.3064,
+      "lng": -77.458,
+      "aliases": ["Caroline and Hanover"],
+      "tags": ["downtown", "traffic"]
+    },
+    {
+      "id": "princess-anne-george",
+      "name": "Princess Anne St & George St",
+      "type": "intersection",
+      "address": "Princess Anne St & George St, Fredericksburg, VA 22401",
+      "lat": 38.304,
+      "lng": -77.4603,
+      "aliases": ["Princess Anne and George"],
+      "tags": ["downtown", "traffic", "high_incident"]
+    },
+    {
+      "id": "princess-anne-william",
+      "name": "Princess Anne St & William St",
+      "type": "intersection",
+      "address": "Princess Anne St & William St, Fredericksburg, VA 22401",
+      "lat": 38.3024,
+      "lng": -77.4601,
+      "aliases": ["Princess Anne and William"],
+      "tags": ["downtown", "traffic"]
+    },
+    {
+      "id": "princess-anne-charlotte",
+      "name": "Princess Anne St & Charlotte St",
+      "type": "intersection",
+      "address": "Princess Anne St & Charlotte St, Fredericksburg, VA 22401",
+      "lat": 38.3051,
+      "lng": -77.4608,
+      "aliases": ["Princess Anne and Charlotte"],
+      "tags": ["downtown", "traffic"]
+    },
+    {
+      "id": "william-george",
+      "name": "William St & George St",
+      "type": "intersection",
+      "address": "William St & George St, Fredericksburg, VA 22401",
+      "lat": 38.304,
+      "lng": -77.4578,
+      "aliases": ["William and George"],
+      "tags": ["downtown", "traffic"]
+    },
+    {
+      "id": "william-lafayette",
+      "name": "William St & Lafayette Blvd",
+      "type": "intersection",
+      "address": "William St & Lafayette Blvd, Fredericksburg, VA 22401",
+      "lat": 38.2926,
+      "lng": -77.4584,
+      "aliases": ["Lafayette and William"],
+      "tags": ["downtown", "traffic", "high_incident"]
+    },
+    {
+      "id": "william-blue-gray",
+      "name": "William St & Blue and Gray Pkwy",
+      "type": "intersection",
+      "address": "William St & Blue and Gray Pkwy, Fredericksburg, VA 22401",
+      "lat": 38.2959,
+      "lng": -77.4592,
+      "aliases": ["Blue and Gray and William"],
+      "tags": ["downtown", "traffic", "high_incident"]
+    },
+    {
+      "id": "george-charlotte",
+      "name": "George St & Charlotte St",
+      "type": "intersection",
+      "address": "George St & Charlotte St, Fredericksburg, VA 22401",
+      "lat": 38.3051,
+      "lng": -77.4597,
+      "aliases": ["George and Charlotte"],
+      "tags": ["downtown", "traffic"]
+    },
+    {
+      "id": "george-hanover",
+      "name": "George St & Hanover St",
+      "type": "intersection",
+      "address": "George St & Hanover St, Fredericksburg, VA 22401",
+      "lat": 38.3063,
+      "lng": -77.4594,
+      "aliases": ["George and Hanover"],
+      "tags": ["downtown", "traffic"]
+    },
+    {
+      "id": "lafayette-route-1",
+      "name": "Lafayette Blvd & Route 1",
+      "type": "intersection",
+      "address": "Lafayette Blvd & US-1, Fredericksburg, VA",
+      "lat": 38.2919,
+      "lng": -77.453,
+      "aliases": ["Lafayette and US 1"],
+      "tags": ["downtown", "traffic", "high_incident"]
+    },
+    {
+      "id": "plank-route-1",
+      "name": "Plank Rd & Route 1",
+      "type": "intersection",
+      "address": "Plank Rd & US-1, Fredericksburg, VA",
+      "lat": 38.2998,
+      "lng": -77.4608,
+      "aliases": ["Plank and US 1"],
+      "tags": ["downtown", "traffic", "high_incident"]
+    },
+    {
+      "id": "fall-hill-carl-d-silver",
+      "name": "Fall Hill Ave & Carl D Silver Pkwy",
+      "type": "intersection",
+      "address": "Fall Hill Ave & Carl D Silver Pkwy, Fredericksburg, VA",
+      "lat": 38.2928,
+      "lng": -77.4841,
+      "aliases": ["Fall Hill and Carl D Silver"],
+      "tags": ["central_park", "traffic", "high_incident"]
+    },
+    {
+      "id": "sophia-william",
+      "name": "Sophia St & William St",
+      "type": "intersection",
+      "address": "Sophia St & William St, Fredericksburg, VA 22401",
+      "lat": null,
+      "lng": null,
+      "aliases": ["Sophia and William"],
+      "tags": ["downtown", "traffic"],
+      "todo": "TODO: verify precise coordinates"
+    },
+    {
+      "id": "sophia-princess-anne",
+      "name": "Sophia St & Princess Anne St",
+      "type": "intersection",
+      "address": "Sophia St & Princess Anne St, Fredericksburg, VA 22401",
+      "lat": null,
+      "lng": null,
+      "aliases": ["Sophia and Princess Anne"],
+      "tags": ["downtown", "traffic"],
+      "todo": "TODO: verify precise coordinates"
+    },
+    {
+      "id": "sophia-hanover",
+      "name": "Sophia St & Hanover St",
+      "type": "intersection",
+      "address": "Sophia St & Hanover St, Fredericksburg, VA 22401",
+      "lat": null,
+      "lng": null,
+      "aliases": ["Sophia and Hanover"],
+      "tags": ["downtown", "traffic"],
+      "todo": "TODO: verify precise coordinates"
+    },
+    {
+      "id": "charles-william",
+      "name": "Charles St & William St",
+      "type": "intersection",
+      "address": "Charles St & William St, Fredericksburg, VA 22401",
+      "lat": null,
+      "lng": null,
+      "aliases": ["Charles and William"],
+      "tags": ["downtown", "traffic"],
+      "todo": "TODO: verify precise coordinates"
+    },
+    {
+      "id": "charles-princess-anne",
+      "name": "Charles St & Princess Anne St",
+      "type": "intersection",
+      "address": "Charles St & Princess Anne St, Fredericksburg, VA 22401",
+      "lat": null,
+      "lng": null,
+      "aliases": ["Charles and Princess Anne"],
+      "tags": ["downtown", "traffic"],
+      "todo": "TODO: verify precise coordinates"
+    },
+    {
+      "id": "charles-george",
+      "name": "Charles St & George St",
+      "type": "intersection",
+      "address": "Charles St & George St, Fredericksburg, VA 22401",
+      "lat": null,
+      "lng": null,
+      "aliases": ["Charles and George"],
+      "tags": ["downtown", "traffic"],
+      "todo": "TODO: verify precise coordinates"
+    },
+    {
+      "id": "charlotte-princess-anne",
+      "name": "Charlotte St & Princess Anne St",
+      "type": "intersection",
+      "address": "Charlotte St & Princess Anne St, Fredericksburg, VA 22401",
+      "lat": null,
+      "lng": null,
+      "aliases": ["Charlotte and Princess Anne"],
+      "tags": ["downtown", "traffic"],
+      "todo": "TODO: verify precise coordinates"
+    },
+    {
+      "id": "hanover-princess-anne",
+      "name": "Hanover St & Princess Anne St",
+      "type": "intersection",
+      "address": "Hanover St & Princess Anne St, Fredericksburg, VA 22401",
+      "lat": null,
+      "lng": null,
+      "aliases": ["Hanover and Princess Anne"],
+      "tags": ["downtown", "traffic"],
+      "todo": "TODO: verify precise coordinates"
+    },
+    {
+      "id": "william-caroline-bridge",
+      "name": "William St & Caroline St (Bridge End)",
+      "type": "street_point",
+      "address": "William St corridor, Downtown Fredericksburg, VA",
+      "lat": null,
+      "lng": null,
+      "aliases": ["Downtown choke point", "Caroline William corridor"],
+      "tags": ["downtown", "traffic", "high_incident"],
+      "todo": "TODO: verify precise coordinates"
+    },
+    {
+      "id": "route-3-gateway",
+      "name": "Route 3 & Gateway Blvd",
+      "type": "intersection",
+      "address": "Plank Rd (Route 3) & Gateway Blvd, Fredericksburg, VA",
+      "lat": null,
+      "lng": null,
+      "aliases": ["Route 3 and Gateway", "Gateway and Plank"],
+      "tags": ["central_park", "traffic", "high_incident"],
+      "todo": "TODO: verify precise coordinates"
+    },
+    {
+      "id": "route-3-carl-d-silver",
+      "name": "Route 3 & Carl D Silver Pkwy",
+      "type": "intersection",
+      "address": "Plank Rd (Route 3) & Carl D Silver Pkwy, Fredericksburg, VA",
+      "lat": null,
+      "lng": null,
+      "aliases": ["Route 3 and Carl D Silver", "Plank and Carl D Silver"],
+      "tags": ["central_park", "traffic", "high_incident"],
+      "todo": "TODO: verify precise coordinates"
+    },
+    {
+      "id": "route-3-walmart-drive",
+      "name": "Route 3 & Walmart Dr",
+      "type": "intersection",
+      "address": "Plank Rd (Route 3) & Walmart Dr, Fredericksburg, VA",
+      "lat": null,
+      "lng": null,
+      "aliases": ["Central Park Walmart intersection"],
+      "tags": ["central_park", "traffic"],
+      "todo": "TODO: verify precise coordinates"
+    },
+    {
+      "id": "route-3-central-park-blvd",
+      "name": "Route 3 & Central Park Blvd",
+      "type": "intersection",
+      "address": "Plank Rd (Route 3) & Central Park Blvd, Fredericksburg, VA",
+      "lat": null,
+      "lng": null,
+      "aliases": ["Central Park Blvd and Route 3"],
+      "tags": ["central_park", "traffic", "high_incident"],
+      "todo": "TODO: verify precise coordinates"
+    },
+    {
+      "id": "riverfront-park",
+      "name": "Riverfront Park",
+      "type": "park",
+      "address": "701 Sophia St, Fredericksburg, VA 22401",
+      "lat": 38.2985,
+      "lng": -77.4689,
+      "aliases": ["City Dock", "FXBG Riverfront"],
+      "tags": ["downtown"]
+    },
+    {
+      "id": "hurkamp-park",
+      "name": "Hurkamp Park",
+      "type": "park",
+      "address": "Hurkamp Park, Prince Edward St, Fredericksburg, VA 22401",
+      "lat": null,
+      "lng": null,
+      "aliases": ["Farmer's Market Park"],
+      "tags": ["downtown"],
+      "todo": "TODO: verify precise coordinates"
+    },
+    {
+      "id": "kenmore-park",
+      "name": "Kenmore Park",
+      "type": "park",
+      "address": "Kenmore Ave, Fredericksburg, VA 22401",
+      "lat": null,
+      "lng": null,
+      "aliases": ["Kenmore neighborhood park"],
+      "tags": ["downtown"],
+      "todo": "TODO: verify precise coordinates"
+    },
+    {
+      "id": "fxbg-train-station",
+      "name": "Fredericksburg Train Station",
+      "type": "facility",
+      "address": "200 Lafayette Blvd, Fredericksburg, VA 22401",
+      "lat": 38.2995,
+      "lng": -77.4586,
+      "aliases": ["Downtown Station", "VRE Station", "Amtrak Station"],
+      "tags": ["downtown", "facility", "traffic"]
+    },
+    {
+      "id": "city-hall",
+      "name": "Fredericksburg City Hall",
+      "type": "facility",
+      "address": "715 Princess Anne St, Fredericksburg, VA 22401",
+      "lat": 38.3032,
+      "lng": -77.4605,
+      "aliases": ["City Hall", "FXBG City Hall"],
+      "tags": ["downtown", "facility"]
+    },
+    {
+      "id": "fxbg-courthouse",
+      "name": "Fredericksburg Circuit Courthouse",
+      "type": "facility",
+      "address": "701 Princess Anne St, Fredericksburg, VA 22401",
+      "lat": 38.3015,
+      "lng": -77.4596,
+      "aliases": ["Courthouse", "Circuit Court"],
+      "tags": ["downtown", "facility"]
+    },
+    {
+      "id": "fxbg-police-hq",
+      "name": "Fredericksburg Police Headquarters",
+      "type": "facility",
+      "address": "2200 Cowan Blvd, Fredericksburg, VA 22401",
+      "lat": 38.3043,
+      "lng": -77.4607,
+      "aliases": ["Police HQ", "FXBG PD", "Police Department"],
+      "tags": ["downtown", "facility", "high_incident"]
+    },
+    {
+      "id": "fire-station-1",
+      "name": "Fredericksburg Fire Station 1",
+      "type": "facility",
+      "address": "601 Princess Anne St, Fredericksburg, VA 22401",
+      "lat": 38.3021,
+      "lng": -77.46,
+      "aliases": ["Station 1", "Downtown Fire Station"],
+      "tags": ["downtown", "facility"]
+    },
+    {
+      "id": "fire-station-2",
+      "name": "Fredericksburg Fire Station 2",
+      "type": "facility",
+      "address": "4100 Carl D Silver Pkwy, Fredericksburg, VA 22401",
+      "lat": 38.2806,
+      "lng": -77.5052,
+      "aliases": ["Station 2", "Carl D Silver Fire"],
+      "tags": ["central_park", "facility"]
+    },
+    {
+      "id": "mary-washington-hospital",
+      "name": "Mary Washington Hospital",
+      "type": "hospital",
+      "address": "1001 Sam Perry Blvd, Fredericksburg, VA 22401",
+      "lat": 38.3092,
+      "lng": -77.4838,
+      "aliases": ["MW Hospital", "MWH", "Mary Washington"],
+      "tags": ["downtown", "facility", "high_incident"]
+    },
+    {
+      "id": "umw-main-campus",
+      "name": "University of Mary Washington",
+      "type": "campus",
+      "address": "1301 College Ave, Fredericksburg, VA 22401",
+      "lat": 38.3012,
+      "lng": -77.4769,
+      "aliases": ["UMW", "Mary Washington University"],
+      "tags": ["downtown", "school"]
+    },
+    {
+      "id": "germanna-central-park-center",
+      "name": "Germanna Community College - Fredericksburg Center for Advanced Technology",
+      "type": "school",
+      "address": "1325 Central Park Blvd, Fredericksburg, VA 22401",
+      "lat": null,
+      "lng": null,
+      "aliases": ["Germanna Central Park", "GC3 ATC"],
+      "tags": ["central_park", "school"],
+      "todo": "TODO: verify precise coordinates"
+    },
+    {
+      "id": "central-park-mall",
+      "name": "Central Park",
+      "type": "mall",
+      "address": "Central Park Blvd, Fredericksburg, VA 22401",
+      "lat": 38.3002,
+      "lng": -77.4677,
+      "aliases": ["Central Park Mall", "Central Park Shopping", "Celebrate Virginia North"],
+      "tags": ["central_park", "traffic", "high_incident"]
+    },
+    {
+      "id": "central-park-target",
+      "name": "Target - Central Park",
+      "type": "poi",
+      "address": "Central Park Blvd, Fredericksburg, VA 22401",
+      "lat": null,
+      "lng": null,
+      "aliases": ["Central Park Target", "Target Fredericksburg"],
+      "tags": ["central_park", "traffic"],
+      "todo": "TODO: verify precise coordinates"
+    },
+    {
+      "id": "central-park-walmart",
+      "name": "Walmart Supercenter - Central Park",
+      "type": "poi",
+      "address": "1800 Carl D Silver Pkwy, Fredericksburg, VA 22401",
+      "lat": null,
+      "lng": null,
+      "aliases": ["Central Park Walmart", "Walmart Central Park"],
+      "tags": ["central_park", "traffic", "high_incident"],
+      "todo": "TODO: verify precise coordinates"
+    },
+    {
+      "id": "central-park-costco-wegmans-area",
+      "name": "Costco / Wegmans Corridor",
+      "type": "street_point",
+      "address": "Carl D Silver Pkwy corridor, Fredericksburg, VA 22401",
+      "lat": null,
+      "lng": null,
+      "aliases": ["Costco area", "Wegmans area", "Costco Wegmans"],
+      "tags": ["central_park", "traffic", "high_incident"],
+      "todo": "TODO: verify precise coordinates"
+    },
+    {
+      "id": "central-park-hotel-corridor",
+      "name": "Central Park Hotel Corridor",
+      "type": "facility",
+      "address": "Plank Rd and Carl D Silver Pkwy hotel zone, Fredericksburg, VA",
+      "lat": null,
+      "lng": null,
+      "aliases": ["Central Park hotels", "Route 3 hotel row"],
+      "tags": ["central_park", "facility"],
+      "todo": "TODO: verify precise coordinates"
+    },
+    {
+      "id": "downtown-parking-garages",
+      "name": "Downtown Parking Garages",
+      "type": "facility",
+      "address": "Downtown Fredericksburg, VA 22401",
+      "lat": null,
+      "lng": null,
+      "aliases": ["Downtown garages", "City garage"],
+      "tags": ["downtown", "traffic", "facility"],
+      "todo": "TODO: map each garage entrance coordinate"
+    }
+  ]
+}
