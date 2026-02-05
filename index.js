@@ -4985,17 +4985,31 @@
     const crimePanel = $("crimePanel");
     const reportPanel = $("reportPanel");
     const diagnosticsDrawer = $("diagnosticsDrawer");
+    const timelinePanel = $("timelinePanel");
     const newsHidden = newsPanel?.classList.contains("newsFlashPanel--hidden") ?? true;
     const radioHidden = radioPanel?.classList.contains("radioPanel--hidden") ?? true;
     const crimeHidden = crimePanel?.classList.contains("crimePanel--hidden") ?? true;
     const reportHidden = reportPanel?.classList.contains("reportPanel--hidden") ?? true;
     const diagnosticsHidden = diagnosticsDrawer?.classList.contains("diagnosticsDrawer--hidden") ?? true;
+    const timelineHidden = timelinePanel?.classList.contains("timelinePanel--hidden") ?? true;
     const dockOpen = dockState?.isOpen ?? false;
 
-    // If both panels are hidden AND dock is closed, restore the header
-    if (newsHidden && radioHidden && crimeHidden && reportHidden && diagnosticsHidden && !dockOpen) {
+    // If all panels are hidden AND dock is closed, restore the header
+    if (newsHidden && radioHidden && crimeHidden && reportHidden && diagnosticsHidden && timelineHidden && !dockOpen) {
       setMobileHeaderCollapsed(false);
     }
+  }
+
+  // Close all panels at once (used for Escape key, etc.)
+  function closeAllPanels() {
+    $("newsFlashPanel")?.classList.add("newsFlashPanel--hidden");
+    $("radioPanel")?.classList.add("radioPanel--hidden");
+    $("crimePanel")?.classList.add("crimePanel--hidden");
+    $("reportPanel")?.classList.add("reportPanel--hidden");
+    $("diagnosticsDrawer")?.classList.add("diagnosticsDrawer--hidden");
+    $("diagnosticsOverlay")?.classList.add("diagnosticsOverlay--hidden");
+    $("timelinePanel")?.classList.add("timelinePanel--hidden");
+    restoreHeaderIfNoBlockingPanels();
   }
 
   // Ensure panel close button is always visible and tappable
@@ -5267,8 +5281,202 @@
     },
     diagnostics: {
       rss: {}  // Keyed by source.id: { ok, httpStatus, itemsParsed, itemsIngested, error, timestamp }
+    },
+    // Timeline state for IndexedDB + event normalization
+    timeline: {
+      events: [],
+      filters: { hours: 24, reports: true, crime: true, system: true, actions: true },
+      isOffline: false,
+      lastSync: {}
     }
   };
+
+  // -----------------------------
+  // IndexedDB wrapper for offline persistence
+  // -----------------------------
+  const IDB_NAME = 'fxbg_city_manager';
+  const IDB_VERSION = 1;
+  let idb = null;
+
+  async function initIDB() {
+    return new Promise((resolve, reject) => {
+      const req = indexedDB.open(IDB_NAME, IDB_VERSION);
+      req.onerror = () => reject(req.error);
+      req.onsuccess = () => { idb = req.result; resolve(idb); };
+      req.onupgradeneeded = (e) => {
+        const database = e.target.result;
+        if (!database.objectStoreNames.contains('events')) {
+          const events = database.createObjectStore('events', { keyPath: 'id' });
+          events.createIndex('ts', 'ts', { unique: false });
+        }
+        if (!database.objectStoreNames.contains('reports')) {
+          const reports = database.createObjectStore('reports', { keyPath: 'id' });
+          reports.createIndex('ts', 'ts', { unique: false });
+        }
+        if (!database.objectStoreNames.contains('meta')) {
+          database.createObjectStore('meta', { keyPath: 'key' });
+        }
+      };
+    });
+  }
+
+  async function idbSaveEvents(events) {
+    if (!idb) return;
+    const tx = idb.transaction('events', 'readwrite');
+    const store = tx.objectStore('events');
+    for (const evt of events) {
+      store.put(evt);
+    }
+    return new Promise((resolve, reject) => {
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  }
+
+  async function idbGetEvents() {
+    if (!idb) return [];
+    const tx = idb.transaction('events', 'readonly');
+    const store = tx.objectStore('events');
+    return new Promise((resolve, reject) => {
+      const req = store.getAll();
+      req.onsuccess = () => resolve(req.result || []);
+      req.onerror = () => reject(req.error);
+    });
+  }
+
+  async function idbSaveMeta(key, value) {
+    if (!idb) return;
+    const tx = idb.transaction('meta', 'readwrite');
+    const store = tx.objectStore('meta');
+    store.put({ key, value });
+    return new Promise((resolve, reject) => {
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  }
+
+  async function idbGetMeta(key) {
+    if (!idb) return null;
+    const tx = idb.transaction('meta', 'readonly');
+    const store = tx.objectStore('meta');
+    return new Promise((resolve, reject) => {
+      const req = store.get(key);
+      req.onsuccess = () => resolve(req.result?.value);
+      req.onerror = () => reject(req.error);
+    });
+  }
+
+  async function idbSaveReports(reports) {
+    if (!idb) return;
+    const tx = idb.transaction('reports', 'readwrite');
+    const store = tx.objectStore('reports');
+    for (const r of reports) {
+      store.put(r);
+    }
+    return new Promise((resolve, reject) => {
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  }
+
+  async function idbGetReports() {
+    if (!idb) return [];
+    const tx = idb.transaction('reports', 'readonly');
+    const store = tx.objectStore('reports');
+    return new Promise((resolve, reject) => {
+      const req = store.getAll();
+      req.onsuccess = () => resolve(req.result || []);
+      req.onerror = () => reject(req.error);
+    });
+  }
+
+  // -----------------------------
+  // Event normalization functions
+  // -----------------------------
+  function fromReportToEvent(report) {
+    return {
+      id: `report_${report.id}`,
+      ts: new Date(report.createdAt).getTime(),
+      kind: 'report',
+      title: report.type || 'Field Report',
+      summary: report.note?.substring(0, 100),
+      lat: report.lat,
+      lng: report.lng,
+      severity: report.severity,
+      source: { name: 'Field Reports', id: report.id },
+      freshness: { state: 'live' },
+      pendingSync: report.pendingSync || false,
+      raw: report
+    };
+  }
+
+  function fromCrimeToEvent(crime) {
+    return {
+      id: `crime_${crime.IncidentNumber}`,
+      ts: new Date(crime.DateReported || crime.DateOccurred).getTime(),
+      kind: 'crime',
+      title: crime.Offense || 'Crime Incident',
+      summary: `${crime.Category || ''} - ${crime.Address || ''}`.trim(),
+      lat: crime.Latitude,
+      lng: crime.Longitude,
+      severity: 3,
+      source: { name: 'FXBG Crime', id: crime.IncidentNumber },
+      freshness: { state: 'live' },
+      raw: crime
+    };
+  }
+
+  function fromHealthToEvent(health) {
+    return {
+      id: `system_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+      ts: Date.now(),
+      kind: 'system',
+      title: health.title || 'System Event',
+      summary: health.message,
+      severity: health.severity || 2,
+      source: { name: 'System' },
+      freshness: { state: 'live' }
+    };
+  }
+
+  // -----------------------------
+  // Timeline rendering
+  // -----------------------------
+  function renderTimeline() {
+    const container = $("timelineList");
+    if (!container) return;
+
+    const filters = store.timeline.filters;
+    const cutoff = Date.now() - (filters.hours * 60 * 60 * 1000);
+
+    let events = store.timeline.events.filter(e => {
+      if (e.ts < cutoff) return false;
+      if (e.kind === 'report' && !filters.reports) return false;
+      if (e.kind === 'crime' && !filters.crime) return false;
+      if (e.kind === 'system' && !filters.system) return false;
+      if (e.kind === 'action' && !filters.actions) return false;
+      return true;
+    });
+
+    events.sort((a, b) => b.ts - a.ts);
+
+    if (events.length === 0) {
+      container.innerHTML = '<div class="timelineEmpty">No events in selected timeframe</div>';
+      return;
+    }
+
+    container.innerHTML = events.map(e => `
+      <div class="timelineItem timelineItem--${e.kind}" data-id="${e.id}">
+        <div class="timelineItem__time">${new Date(e.ts).toLocaleString()}</div>
+        <div class="timelineItem__title">${escapeHtml(e.title)}</div>
+        ${e.summary ? `<div class="timelineItem__summary">${escapeHtml(e.summary)}</div>` : ''}
+        <div class="timelineItem__meta">
+          <span class="timelineItem__kind">${e.kind}</span>
+          ${e.pendingSync ? '<span class="timelineItem__pending">⏳ Pending sync</span>' : ''}
+        </div>
+      </div>
+    `).join('');
+  }
 
   // Photo preview race condition fix: track current FileReader to abort on rapid file changes
   let __reportPhotoReader = null;
@@ -10095,6 +10303,119 @@
   });
 
   // -----------------------------
+  // Timeline Panel Event Listeners
+  // -----------------------------
+  const timelinePanelClose = $("timelinePanelClose");
+  if (timelinePanelClose) {
+    timelinePanelClose.addEventListener("click", () => {
+      playClickSound('close');
+      $("timelinePanel")?.classList.add("timelinePanel--hidden");
+      restoreHeaderIfNoBlockingPanels();
+    });
+  }
+
+  // Timeline filter checkboxes
+  const filterReports = $("filterReports");
+  const filterCrime = $("filterCrime");
+  const filterSystem = $("filterSystem");
+  const filterActions = $("filterActions");
+  const timelineRange = $("timelineRange");
+
+  if (filterReports) {
+    filterReports.addEventListener("change", (e) => {
+      store.timeline.filters.reports = e.target.checked;
+      renderTimeline();
+    });
+  }
+  if (filterCrime) {
+    filterCrime.addEventListener("change", (e) => {
+      store.timeline.filters.crime = e.target.checked;
+      renderTimeline();
+    });
+  }
+  if (filterSystem) {
+    filterSystem.addEventListener("change", (e) => {
+      store.timeline.filters.system = e.target.checked;
+      renderTimeline();
+    });
+  }
+  if (filterActions) {
+    filterActions.addEventListener("change", (e) => {
+      store.timeline.filters.actions = e.target.checked;
+      renderTimeline();
+    });
+  }
+  if (timelineRange) {
+    timelineRange.addEventListener("change", (e) => {
+      store.timeline.filters.hours = parseInt(e.target.value, 10);
+      renderTimeline();
+    });
+  }
+
+  // Sync pack export/import
+  const btnExportSyncPack = $("btnExportSyncPack");
+  const btnImportSyncPack = $("btnImportSyncPack");
+  const syncPackInput = $("syncPackInput");
+
+  if (btnExportSyncPack) {
+    btnExportSyncPack.addEventListener("click", async () => {
+      try {
+        const events = await idbGetEvents();
+        const reports = await idbGetReports();
+        const deviceId = await idbGetMeta('deviceId');
+        const syncPack = {
+          version: 1,
+          exportedAt: new Date().toISOString(),
+          deviceId,
+          events,
+          reports
+        };
+        const blob = new Blob([JSON.stringify(syncPack, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `fxbg-sync-pack-${new Date().toISOString().slice(0,10)}.json`;
+        a.click();
+        URL.revokeObjectURL(url);
+      } catch (err) {
+        console.error('Export sync pack failed:', err);
+        alert('Failed to export sync pack');
+      }
+    });
+  }
+
+  if (btnImportSyncPack && syncPackInput) {
+    btnImportSyncPack.addEventListener("click", () => {
+      syncPackInput.click();
+    });
+
+    syncPackInput.addEventListener("change", async (e) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      try {
+        const text = await file.text();
+        const syncPack = JSON.parse(text);
+        if (syncPack.events) {
+          await idbSaveEvents(syncPack.events);
+          store.timeline.events = await idbGetEvents();
+        }
+        if (syncPack.reports) {
+          await idbSaveReports(syncPack.reports);
+        }
+        renderTimeline();
+        const timelineLastSync = $("timelineLastSync");
+        if (timelineLastSync) {
+          timelineLastSync.textContent = `Imported: ${new Date().toLocaleTimeString()}`;
+        }
+      } catch (err) {
+        console.error('Import sync pack failed:', err);
+        alert('Failed to import sync pack');
+      }
+      syncPackInput.value = '';
+    });
+  }
+
+  // -----------------------------
   // Crime Reports Panel Event Listeners
   // -----------------------------
   $("crimeClose").addEventListener("click", closeCrimeMenuPanel);
@@ -12128,6 +12449,35 @@
       console.warn('[UI] Missing element: #btnRadioScanner');
     }
 
+    // Timeline button - use parent-aware selectors to avoid ID conflicts during mobile/desktop transitions
+    const btnTimeline = IS_MOBILE_UI
+      ? (document.querySelector('.mobile-only #btnTimelineMobile') ||
+         document.querySelector('.mobile-only #btnTimeline') ||
+         document.getElementById("btnTimeline"))
+      : (document.querySelector('.desktop-only #btnTimeline') ||
+         document.getElementById("btnTimeline"));
+    if (btnTimeline) {
+      btnTimeline.addEventListener("click", () => {
+        const panel = $("timelinePanel");
+        if (!panel) return;
+        const isHidden = panel.classList.contains("timelinePanel--hidden");
+
+        if (isHidden) {
+          playClickSound('open');
+          panel.classList.remove("timelinePanel--hidden");
+          renderTimeline();
+          ensurePanelCloseVisible(panel);
+          setMobileHeaderCollapsed(true); // Collapse mobile header when opening
+        } else {
+          playClickSound('close');
+          panel.classList.add("timelinePanel--hidden");
+          restoreHeaderIfNoBlockingPanels(); // Restore header if no other panels are open
+        }
+      });
+    } else if (CONFIG.debug?.uiSanity) {
+      console.warn('[UI] Missing element: #btnTimeline');
+    }
+
     // Header chips to dock tabs - use parent-aware selectors to avoid ID conflicts during mobile/desktop transitions
     const chipLive = IS_MOBILE_UI
       ? document.querySelector('.mobile-only #chipLive') || $("chipLive")
@@ -12326,6 +12676,46 @@
 
   // Set a short timeout to ensure chips update even if refreshAll hangs
   setTimeout(ensureChipsHaveState, 10000); // 10 seconds after boot
+
+  // Initialize IndexedDB for offline persistence
+  (async () => {
+    try {
+      await initIDB();
+      const deviceId = await idbGetMeta('deviceId') || crypto.randomUUID();
+      await idbSaveMeta('deviceId', deviceId);
+
+      // Load cached events
+      const cachedEvents = await idbGetEvents();
+      store.timeline.events = cachedEvents;
+      renderTimeline();
+
+      // Load cached reports and merge if needed
+      const cachedReports = await idbGetReports();
+      if (cachedReports.length > 0) {
+        // Merge cached reports with store (avoid duplicates)
+        const existingIds = new Set(store.reports.items.map(r => r.id));
+        for (const r of cachedReports) {
+          if (!existingIds.has(r.id)) {
+            store.reports.items.push(r);
+          }
+        }
+      }
+
+      // Update last sync display
+      const timelineLastSync = $("timelineLastSync");
+      if (timelineLastSync) {
+        timelineLastSync.textContent = `Last sync: ${new Date().toLocaleTimeString()}`;
+      }
+
+      console.log('[IDB] Initialized with deviceId:', deviceId);
+    } catch (err) {
+      console.warn('[IDB] Init failed:', err);
+      const timelineOfflineStatus = $("timelineOfflineStatus");
+      if (timelineOfflineStatus) {
+        timelineOfflineStatus.textContent = '⚠️ Offline storage unavailable';
+      }
+    }
+  })();
 
   refreshAll();
   if (CONFIG.alertRules?.enabled) {
