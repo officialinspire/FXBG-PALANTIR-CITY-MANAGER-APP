@@ -741,10 +741,10 @@
 
     // CDC Data API - Health/disease surveillance data
     cdc: {
-      enabled: true,
+      enabled: false,
       // CDC Wonder API - locality-specific health data
-      wonderApiUrl: "https://data.cdc.gov/api/v3/views/psx4-wq38/query.json",
-      wonderFallbackUrl: "https://data.cdc.gov/resource/psx4-wq38.json?$limit=50",
+      wonderApiUrl: "/api/cdc/wonder",
+      wonderFallbackUrl: "",
       maxAgeHours: 168  // Cache for 7 days
     },
 
@@ -3593,6 +3593,52 @@
     return [...BUILTIN_PLACES_GAZETTEER, ...runtime];
   }
 
+  function normalizeAddressKey(address, city, state, zip) {
+    return [address, city, state, zip]
+      .map(v => String(v || '').trim().toLowerCase())
+      .filter(Boolean)
+      .join(', ')
+      .replace(/\s+/g, ' ');
+  }
+
+  function buildPlacesIndex(items) {
+    const byKey = new Map();
+    for (const place of (Array.isArray(items) ? items : [])) {
+      const keys = [place.id, place.name, ...(Array.isArray(place.aliases) ? place.aliases : [])]
+        .map(v => String(v || '').trim().toLowerCase())
+        .filter(Boolean);
+      const addrKey = normalizeAddressKey(place.address, place.city, place.state, place.zip);
+      if (addrKey) keys.push(addrKey);
+      for (const k of keys) byKey.set(k, place);
+    }
+    return byKey;
+  }
+
+  function resolvePlaceOverride({ id, name, address, city, state, zip, lat, lon, lng }) {
+    const idx = store?.placesIndex;
+    if (!idx || idx.size === 0) return null;
+    const keys = [id, name, normalizeAddressKey(address, city, state, zip)]
+      .map(v => String(v || '').trim().toLowerCase())
+      .filter(Boolean);
+    const hit = keys.map(k => idx.get(k)).find(Boolean);
+    if (!hit) return null;
+
+    if (Number.isFinite(hit.lat) && Number.isFinite(hit.lng)) {
+      return { lat: Number(hit.lat), lon: Number(hit.lng), confidence: 98, method: 'places_dataset', approximate: false };
+    }
+
+    const inputAddressKey = normalizeAddressKey(address, city, state, zip);
+    const cachedGeo = inputAddressKey ? geocodeCache.get(inputAddressKey) : null;
+    if (cachedGeo && Number.isFinite(cachedGeo.lat) && Number.isFinite(cachedGeo.lon)) {
+      return { lat: Number(cachedGeo.lat), lon: Number(cachedGeo.lon), confidence: 80, method: 'address_geocache', approximate: false };
+    }
+
+    if (Number.isFinite(lat) && Number.isFinite(lon ?? lng)) {
+      return { lat: Number(lat), lon: Number(lon ?? lng), confidence: 40, method: 'upstream_coords', approximate: true };
+    }
+    return { lat: null, lon: null, confidence: 10, method: 'unknown_address', approximate: true };
+  }
+
   /**
    * Collect location candidates from text
    * @param {string} text - The text to extract locations from
@@ -5765,6 +5811,8 @@
     diagnostics: {
       rss: {}  // Keyed by source.id: { ok, httpStatus, itemsParsed, itemsIngested, error, timestamp }
     },
+    places: [],
+    placesIndex: new Map(),
     // Timeline state for IndexedDB + event normalization
     timeline: {
       events: [],
@@ -8038,23 +8086,13 @@
     // Try primary endpoint first, then fallback if it fails
     const incidentsEndpoints = [
       { url: CONFIG.va511.incidentsGeojson, format: 'json', name: 'primary' },
-      { url: CONFIG.va511.incidentsGeojsonFallback, format: 'jsonp', name: 'fallback' }
+      { url: '/api/va511/icons-metadata', format: 'json', name: 'icons-metadata' }
     ];
 
     for (const endpoint of incidentsEndpoints) {
       if (incidentsLoaded) break;
 
-      // For Iteris CDN fallback, try both https and http variants
-      const fallbackVariants = [];
-      if (endpoint.name === 'fallback' && endpoint.url.includes('iteriscdn.com')) {
-        // Try https first (already in config), then http as fallback
-        fallbackVariants.push(endpoint.url);
-        if (endpoint.url.startsWith('https://')) {
-          fallbackVariants.push(endpoint.url.replace('https://', 'http://'));
-        }
-      } else {
-        fallbackVariants.push(endpoint.url);
-      }
+      const fallbackVariants = [endpoint.url];
 
       for (const urlVariant of fallbackVariants) {
         if (incidentsLoaded) break;
@@ -8078,7 +8116,13 @@
         });
 
         // Parse response based on format
-        const inc = endpoint.format === 'jsonp' ? parseJsonp(response) : response;
+        let inc = endpoint.format === 'jsonp' ? parseJsonp(response) : response;
+        if (endpoint.name === 'icons-metadata') {
+          if (inc?.ok === false && inc?.degraded) {
+            setI95Indicator(null, { degraded: true, cached: Boolean(inc.cached) });
+          }
+          inc = inc?.data || null;
+        }
 
         // Validate that we got actual GeoJSON
         if (inc && (inc.type === "FeatureCollection" || Array.isArray(inc.features))) {
@@ -8096,7 +8140,7 @@
         } catch (e) {
           // Try next URL variant or next endpoint if available
           console.warn(`[VA511 Incidents] ${endpoint.name} (${urlVariant}) failed: ${e.message}, trying next variant/endpoint...`);
-          if (endpoint.name === 'fallback' && urlVariant === fallbackVariants[fallbackVariants.length - 1]) {
+          if (endpoint.name === 'icons-metadata' && urlVariant === fallbackVariants[fallbackVariants.length - 1]) {
             // Last variant of fallback endpoint failed - record failure
             recordSourceFailure('va511-incidents', 'fetch_error');
             recordFeedError('va511-incidents');
@@ -8303,8 +8347,18 @@
     let added = 0;
 
     for (const cam of cameras) {
-      const lat = Number(cam.lat);
-      const lon = Number(cam.lon);
+      const override = resolvePlaceOverride({
+        id: cam.id,
+        name: cam.name,
+        address: cam.address,
+        city: cam.city,
+        state: cam.state,
+        zip: cam.zip,
+        lat: cam.lat,
+        lon: cam.lon
+      });
+      const lat = Number(override?.lat ?? cam.lat);
+      const lon = Number(override?.lon ?? cam.lon);
       if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
 
       const key = `ext_cam::${cam.id}::${lat.toFixed(5)},${lon.toFixed(5)}`;
@@ -8575,7 +8629,7 @@
         message,
         panelHtml,
         source: { id: sourceId, name: sourceName, category, url: cam.url },
-        meta: isPoi ? { isPoi: true, poiType: cam.type } : undefined
+        meta: isPoi ? { isPoi: true, poiType: cam.type, locationMethod: override?.method || 'manual', locationConfidence: override?.confidence ?? 90, approximate: Boolean(override?.approximate) } : undefined
       };
 
       registerEvent(item);
@@ -8663,8 +8717,21 @@
     }
 
     for (const school of schools) {
-      // Use normalized helper for coordinate extraction
-      const ll = getSchoolLatLng(school);
+      const override = resolvePlaceOverride({
+        id: school.id || school.ncesId,
+        name: school.name,
+        address: school.address,
+        city: school.city,
+        state: school.state,
+        zip: school.zip,
+        lat: school.lat ?? school.latitude ?? school.LAT ?? school.y,
+        lon: school.lon ?? school.lng ?? school.longitude ?? school.LON ?? school.x
+      });
+
+      // Address-first placement: prefer places dataset override when available
+      const ll = (override && Number.isFinite(override.lat) && Number.isFinite(override.lon))
+        ? [override.lat, override.lon]
+        : getSchoolLatLng(school);
       if (!ll) {
         // Determine if invalid coords or out of bounds for logging
         const rawLat = Number(school.lat ?? school.latitude ?? school.LAT ?? school.y);
@@ -8725,7 +8792,7 @@
 
       schoolDetails += `</div>`;
 
-      const summary = [school.grades, school.address].filter(Boolean).join(' | ') || 'School';
+      const summary = [school.grades, school.address, (override?.approximate ? 'Approximate location' : null)].filter(Boolean).join(' | ') || 'School';
 
       const item = {
         id: key,
@@ -8744,7 +8811,14 @@
         message: summary,
         panelHtml: schoolDetails,
         source: { id: "schools-nces", name: "Schools (NCES)", category: "school" },
-        meta: { isPoi: true, poiType: "school", nces: true }
+        meta: {
+          isPoi: true,
+          poiType: "school",
+          nces: true,
+          locationMethod: override?.method || 'nces',
+          locationConfidence: override?.confidence ?? 90,
+          approximate: Boolean(override?.approximate)
+        }
       };
 
       registerEvent(item);
@@ -8824,15 +8898,41 @@
     };
 
     for (const college of colleges) {
-      const lat = Number(college.lat ?? college.latitude ?? college.LAT);
-      const lon = Number(college.lng ?? college.lon ?? college.longitude ?? college.LON);
-      if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
+      const override = resolvePlaceOverride({
+        id: college.id,
+        name: college.name,
+        address: college.address,
+        city: college.city,
+        state: college.state,
+        zip: college.zip,
+        lat: college.lat ?? college.latitude ?? college.LAT,
+        lon: college.lng ?? college.lon ?? college.longitude ?? college.LON
+      });
+      let lat = Number(override?.lat ?? college.lat ?? college.latitude ?? college.LAT);
+      let lon = Number(override?.lon ?? college.lng ?? college.lon ?? college.longitude ?? college.LON);
+      let approximate = Boolean(override?.approximate);
+
+      if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+        const cityKey = String(college.city || '').toLowerCase();
+        if (cityKey.includes('fredericksburg')) {
+          lat = 38.3032;
+          lon = -77.4605;
+          approximate = true;
+        } else if (cityKey.includes('locust grove')) {
+          lat = 38.3350;
+          lon = -77.7620;
+          approximate = true;
+        } else {
+          continue;
+        }
+      }
 
       const key = `college::${college.id || college.name}::${lat.toFixed(5)},${lon.toFixed(5)}`;
       if (store.seenKeys.has(key)) continue;
       store.seenKeys.add(key);
 
       const summaryParts = [college.kind, college.city].filter(Boolean);
+      if (approximate) summaryParts.push('Approximate location');
       const summary = summaryParts.join(" | ") || "College/University";
       const url = college.url || defaultUrls[college.id] || "https://www.umw.edu/";
 
@@ -8870,7 +8970,7 @@
         message: summary,
         panelHtml: collegeDetails,
         source: { id: "colleges", name: "Colleges/Universities", category: "college" },
-        meta: { isPoi: true, poiType: "college" }
+        meta: { isPoi: true, poiType: "college", locationMethod: override?.method || (approximate ? 'city_fallback' : 'dataset'), locationConfidence: override?.confidence ?? (approximate ? 10 : 90), approximate }
       };
 
       registerEvent(item);
@@ -8905,6 +9005,26 @@
       console.log(`[Colleges] Loaded ${result.added} colleges/universities (${result.total} total in file)`);
     } catch (e) {
       console.warn("[Colleges] Failed to load:", e.message);
+    }
+  }
+
+  async function loadPlacesDataset() {
+    try {
+      const response = await fetch('/api/places');
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const payload = await response.json();
+      const items = Array.isArray(payload?.items) ? payload.items : [];
+      store.places = items;
+      store.placesIndex = buildPlacesIndex(items);
+      await idbSaveMeta('placesDataset', payload);
+      console.log(`[Places] Loaded ${items.length} entries`);
+      return;
+    } catch (err) {
+      const cached = await idbGetMeta('placesDataset');
+      const items = Array.isArray(cached?.items) ? cached.items : [];
+      store.places = items;
+      store.placesIndex = buildPlacesIndex(items);
+      console.warn(`[Places] Using cached dataset (${items.length} entries): ${err.message}`);
     }
   }
 
@@ -9562,29 +9682,23 @@
     }
 
     try {
-      // Fetch CDC health surveillance data (locality-specific)
-      // Try primary endpoint first, fallback to secondary if 403
-      let data;
-      try {
-        data = await fetchWithProxies(CONFIG.cdc.wonderApiUrl, {
-          expect: "json",
-          headers: {
-            "Accept": "application/json"
-          }
-        });
-      } catch (primaryErr) {
-        if (primaryErr.message?.includes("403") || primaryErr.message?.includes("Forbidden")) {
-          console.warn("[CDC] Primary endpoint returned 403, trying fallback...");
-          data = await fetchWithProxies(CONFIG.cdc.wonderFallbackUrl, {
-            expect: "json",
-            headers: {
-              "Accept": "application/json"
-            }
-          });
-        } else {
-          throw primaryErr;
+      const cdcResponse = await fetchWithProxies(CONFIG.cdc.wonderApiUrl, {
+        expect: "json",
+        headers: {
+          "Accept": "application/json"
+        },
+        skipProxy: true
+      });
+
+      if (cdcResponse?.disabled) {
+        if (!store._cdcDisabledLogged) {
+          console.warn(`[CDC] Disabled: ${cdcResponse.reason || 'not configured'}`);
+          store._cdcDisabledLogged = true;
         }
+        return;
       }
+
+      const data = cdcResponse?.data;
 
       if (!data || !Array.isArray(data)) {
         console.warn("[CDC] No valid health data received");
@@ -9745,9 +9859,12 @@
   // -----------------------------
   // I‑95 indicator
   // -----------------------------
-  function setI95Indicator(i95Incidents) {
+  function setI95Indicator(i95Incidents, options = {}) {
     const el = getChipElement("trafficText");
     let status = "NO DATA";
+    if (options.degraded) {
+      status = options.cached ? "DEGRADED (cached)" : "DEGRADED";
+    }
     if (typeof i95Incidents === "number") {
       if (i95Incidents === 0) status = "NORMAL";
       else if (i95Incidents <= 2) status = `SLOWING (${i95Incidents})`;
@@ -10535,6 +10652,8 @@
       console.warn("[RefreshAll] Fallback timeout reached (30s) - ensuring chip states are set");
       ensureChipsHaveState();
     }, 30000); // 30 second fallback
+
+    await loadPlacesDataset().catch(() => {});
 
     // Load RSS feeds and other APIs first (in parallel)
     await Promise.allSettled([
@@ -14147,6 +14266,8 @@
       if (freshnessTracker && Array.isArray(freshnessMeta)) {
         freshnessTracker.hydrate(freshnessMeta);
       }
+
+      await loadPlacesDataset();
 
       // Load cached reports and merge if needed
       const cachedReports = await idbGetReports();

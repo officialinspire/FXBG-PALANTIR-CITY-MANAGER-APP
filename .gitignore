@@ -8,6 +8,7 @@ data/*
 !data/schools_fxbg.json
 !data/intersections.json
 !data/gazetteer.json
+!data/places.json
 
 # Logs
 *.log
