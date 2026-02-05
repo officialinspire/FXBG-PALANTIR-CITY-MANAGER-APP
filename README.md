@@ -255,4 +255,49 @@ If your org/repo has a ruleset that rejects binary files in pull requests, remov
 git diff --name-only --cached
 ```
 
-This repo uses `favicon.svg`, so do not add `favicon.ico` back into commits.
+This repo uses `favicon.svg`; avoid committing binary icon assets when PR rules reject binaries.
+
+## 📦 PWA Offline Install + Cache Behavior
+
+The app now ships with a Progressive Web App setup for installability and faster offline reloads.
+
+### Installability
+- A web manifest is available at `/manifest.webmanifest`.
+- Install metadata is provided by `manifest.webmanifest` and existing SVG favicon assets (no binary icon files required).
+- Theme/background colors match the existing dark UI (`#0b1220`).
+- On supported browsers/devices, you can use **Add to Home Screen** (or install from browser menu).
+
+### Service Worker behavior
+- Service worker file: `/sw.js`.
+- Versioned caches use `CACHE_VERSION` so updates can safely rotate old caches.
+- App shell is pre-cached:
+  - `/`
+  - `/index.html`
+  - `/index.js`
+  - `/styles.css`
+  - `/favicon.svg`
+  - manifest metadata
+
+### Runtime API caching (stale-while-revalidate)
+For local `GET /api/*` requests, the service worker serves cached data immediately (if present) while fetching fresh data in the background.
+This improves reload speed and keeps timeline/report data available during intermittent connectivity.
+
+Included endpoints:
+- `/api/health`
+- `/api/reports`
+- `/api/reports/export.geojson`
+- `/api/fxbg/crime-reports/incidents` (including default query usage)
+- Other app timeline/report API sources fetched by `index.js`
+
+### Cache growth control
+- API cache is capped to the latest 100 entries.
+- `/proxy?url=...` is not cached by the service worker, preventing unbounded proxy-response growth.
+
+### UI indicators
+Header chip states show service worker lifecycle:
+- `📦 Cached` when active
+- `⬇️ Installing…` while installing
+- `⬆️ Update available` when a new worker is waiting
+
+When first install caching completes, a subtle **Offline ready** toast appears.
+If an update is waiting, an **Update** button posts `skipWaiting` and reloads after activation.

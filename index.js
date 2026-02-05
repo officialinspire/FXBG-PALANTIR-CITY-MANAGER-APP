@@ -12583,6 +12583,11 @@
           <span class="dot" id="camerasDot"></span>
           <span id="camerasText">Cameras: …</span>
         </div>
+
+        <div class="chip chip--sw" id="swStatusChipDesktop" title="Offline cache status">
+          <span class="chip__text" id="swStatusTextDesktop">📦 Cached</span>
+          <button class="btn btn--ghost swUpdateBtn swUpdateBtn--hidden" id="swUpdateBtnDesktop" type="button">Update</button>
+        </div>
       </div>
 
       <div class="topbar__right">
@@ -12963,6 +12968,110 @@
     __chromeHeightTimer = setTimeout(updateChromeHeights, 150);
   }
 
+
+  function initServiceWorkerUI() {
+    const state = { status: 'cached', waitingWorker: null };
+
+    const statusLabel = {
+      cached: '📦 Cached',
+      installing: '⬇️ Installing…',
+      waiting: '⬆️ Update available'
+    };
+
+    function getStatusElements() {
+      return [
+        document.getElementById('swStatusTextMobile'),
+        document.getElementById('swStatusTextDesktop')
+      ].filter(Boolean);
+    }
+
+    function getUpdateButtons() {
+      return [
+        document.getElementById('swUpdateBtnMobile'),
+        document.getElementById('swUpdateBtnDesktop')
+      ].filter(Boolean);
+    }
+
+    function applyStatus() {
+      const label = statusLabel[state.status] || statusLabel.cached;
+      getStatusElements().forEach((el) => {
+        el.textContent = label;
+      });
+      const shouldShowUpdate = state.status === 'waiting';
+      getUpdateButtons().forEach((btn) => {
+        btn.classList.toggle('swUpdateBtn--hidden', !shouldShowUpdate);
+      });
+    }
+
+    function showOfflineReadyToast() {
+      const toast = document.getElementById('offlineToast');
+      if (!toast) return;
+      toast.classList.remove('offlineToast--hidden');
+      clearTimeout(window.__offlineToastTimer);
+      window.__offlineToastTimer = setTimeout(() => {
+        toast.classList.add('offlineToast--hidden');
+      }, 2800);
+    }
+
+    window.__registerSW = async function registerSW() {
+      if (!('serviceWorker' in navigator)) return;
+      try {
+        const registration = await navigator.serviceWorker.register('/sw.js');
+
+        const wireUpdateButtons = () => {
+          getUpdateButtons().forEach((btn) => {
+            if (btn.dataset.swBound === '1') return;
+            btn.dataset.swBound = '1';
+            btn.addEventListener('click', () => {
+              const waiting = registration.waiting || state.waitingWorker;
+              if (waiting) {
+                waiting.postMessage({ type: 'SKIP_WAITING' });
+              }
+            });
+          });
+        };
+
+        wireUpdateButtons();
+
+        if (registration.waiting) {
+          state.status = 'waiting';
+          state.waitingWorker = registration.waiting;
+          applyStatus();
+        }
+
+        registration.addEventListener('updatefound', () => {
+          const installingWorker = registration.installing;
+          if (!installingWorker) return;
+          state.status = 'installing';
+          applyStatus();
+
+          installingWorker.addEventListener('statechange', () => {
+            if (installingWorker.state === 'installed') {
+              if (navigator.serviceWorker.controller) {
+                state.status = 'waiting';
+                state.waitingWorker = registration.waiting || installingWorker;
+              } else {
+                state.status = 'cached';
+                showOfflineReadyToast();
+              }
+              applyStatus();
+            }
+          });
+        });
+
+        navigator.serviceWorker.addEventListener('controllerchange', () => {
+          window.location.reload();
+        });
+
+        applyStatus();
+      } catch (error) {
+        console.warn('[SW] Registration failed', error);
+      }
+    };
+
+    applyStatus();
+  }
+
   window.addEventListener("resize", () => {
     scheduleSyncUiMode();
     scheduleChromeHeightUpdate();
@@ -12998,6 +13107,7 @@
   }
   fetchReports({ sinceDays: 90 });
 
+  initServiceWorkerUI();
   syncUiMode();
   updateChromeHeights();
   updateCrimeButtonActiveState();

@@ -35,9 +35,10 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0b1220" />
   <title>CITY MANAGER — FXBG-PALANTIR</title>
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
-  <link rel="icon" href="data:,">
+  <link rel="manifest" href="/manifest.webmanifest">
 
   <!-- Leaflet + MarkerCluster (CDN) -->
   <link rel="preconnect" href="https://unpkg.com" />
@@ -95,6 +96,11 @@
         <div class="chip" id="chipCameras" title="VA 511 Traffic Camera Status">
           <span class="dot" id="camerasDot"></span>
           <span id="camerasText">Cameras: …</span>
+        </div>
+
+        <div class="chip chip--sw" id="swStatusChipMobile" title="Offline cache status">
+          <span class="chip__text" id="swStatusTextMobile">📦 Cached</span>
+          <button class="btn btn--ghost swUpdateBtn swUpdateBtn--hidden" id="swUpdateBtnMobile" type="button">Update</button>
         </div>
       </div>
 
@@ -546,6 +552,7 @@
     </div>
   </aside>
   <div id="diagnosticsOverlay" class="diagnosticsOverlay diagnosticsOverlay--hidden" aria-hidden="true"></div>
+  <div id="offlineToast" class="offlineToast offlineToast--hidden" role="status" aria-live="polite">Offline ready</div>
 
   <footer class="bottombar">
     <div class="dock" id="dock">
@@ -576,5 +583,8 @@
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
   <script src="./index.js"></script>
+  <script>
+    window.__registerSW && window.__registerSW();
+  </script>
 </body>
 </html>
