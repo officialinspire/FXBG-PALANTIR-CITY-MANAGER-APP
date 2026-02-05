@@ -209,8 +209,61 @@ const REPORT_NOTE_LIMIT = 2000;
 const HUB_CLIENTS_FILE = path.join(__dirname, "data", "clients.json");
 const HUB_CLIENTS_FLUSH_MS = 5 * 1000;
 const HUB_CLIENTS_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+const GEO_DATA_CACHE_TTL_MS = 60 * 1000;
+const GAZETTEER_FILE = path.join(__dirname, "data", "gazetteer.json");
+const INTERSECTIONS_FILE = path.join(__dirname, "data", "intersections.json");
+const geoDataCache = new Map();
 const hubClients = new Map();
 let hubClientsFlushTimer = null;
+
+function defaultGeoDataset() {
+  return {
+    version: 1,
+    items: []
+  };
+}
+
+async function readOrInitGeoDataset(filePath, context) {
+  const now = Date.now();
+  const cached = geoDataCache.get(filePath);
+  if (cached && (now - cached.ts) <= GEO_DATA_CACHE_TTL_MS) {
+    return cached.value;
+  }
+
+  const dir = path.dirname(filePath);
+  await fsp.mkdir(dir, { recursive: true });
+
+  try {
+    await fsp.access(filePath, fs.constants.F_OK);
+  } catch {
+    const emptyPayload = defaultGeoDataset();
+    await fsp.writeFile(filePath, JSON.stringify(emptyPayload, null, 2), "utf8");
+  }
+
+  let raw = "";
+  try {
+    raw = await fsp.readFile(filePath, "utf8");
+  } catch (err) {
+    logApp({
+      level: "WARN",
+      kind: "geo_dataset_read_failed",
+      msg: `Failed reading ${context}`,
+      errorCode: err.message
+    });
+    const fallback = defaultGeoDataset();
+    geoDataCache.set(filePath, { value: fallback, ts: now });
+    return fallback;
+  }
+
+  const parsed = safeJsonParse(raw, defaultGeoDataset(), context);
+  const normalized = {
+    version: Number(parsed?.version) || 1,
+    items: Array.isArray(parsed?.items) ? parsed.items : []
+  };
+
+  geoDataCache.set(filePath, { value: normalized, ts: now });
+  return normalized;
+}
 
 async function ensureReportsFile() {
   const dir = path.dirname(REPORTS_FILE);
@@ -3017,6 +3070,17 @@ const server = http.createServer(async (req, res) => {
       };
 
       return send(res, 200, JSON.stringify(health, null, 2), { "Content-Type": "application/json" });
+    }
+
+
+    if (urlObj.pathname === "/api/geo/gazetteer" && req.method === "GET") {
+      const payload = await readOrInitGeoDataset(GAZETTEER_FILE, "gazetteer");
+      return send(res, 200, JSON.stringify(payload, null, 2), { "Content-Type": "application/json" });
+    }
+
+    if (urlObj.pathname === "/api/geo/intersections" && req.method === "GET") {
+      const payload = await readOrInitGeoDataset(INTERSECTIONS_FILE, "intersections");
+      return send(res, 200, JSON.stringify(payload, null, 2), { "Content-Type": "application/json" });
     }
 
     if (urlObj.pathname === "/api/location/address" || urlObj.pathname === "/api/location/intersection" || urlObj.pathname === "/api/location/alias") {

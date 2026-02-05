@@ -1,7 +1,10 @@
 (() => {
   const DB_NAME = 'fxbg_city_manager';
-  const DB_VERSION = 2;
+  const DB_VERSION = 3;
   const STORE_NAME = 'geocache';
+  const GAZETTEER_STORE = 'gazetteer';
+  const INTERSECTIONS_STORE = 'intersections';
+  const DATASET_KEY = 'default';
   const TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
   const STREET_CENTERLINES = {
@@ -15,14 +18,14 @@
     'plank rd': { lat: 38.2984, lng: -77.5061 }
   };
 
-  const INTERSECTIONS = {
+  const FALLBACK_INTERSECTIONS = {
     'caroline st & william st': { lat: 38.3026, lng: -77.4582, label: 'Caroline St & William St' },
     'caroline st & princess anne st': { lat: 38.3017, lng: -77.4590, label: 'Caroline St & Princess Anne St' },
     'william st & george st': { lat: 38.3040, lng: -77.4578, label: 'William St & George St' },
     'lafayette blvd & route 1': { lat: 38.2919, lng: -77.4530, label: 'Lafayette Blvd & Route 1' }
   };
 
-  const POI_ALIASES = {
+  const FALLBACK_POI_ALIASES = {
     'city hall': { lat: 38.3032, lng: -77.4605, label: 'Fredericksburg City Hall' },
     'fredericksburg city hall': { lat: 38.3032, lng: -77.4605, label: 'Fredericksburg City Hall' },
     'mary washington hospital': { lat: 38.3092, lng: -77.4838, label: 'Mary Washington Hospital' },
@@ -30,6 +33,11 @@
     'fredericksburg vre station': { lat: 38.2995, lng: -77.4586, label: 'Fredericksburg VRE Station' },
     'downtown fredericksburg': { lat: 38.3029, lng: -77.4596, label: 'Downtown Fredericksburg' },
     'central park': { lat: 38.3002, lng: -77.4677, label: 'Central Park' }
+  };
+
+  const localDatasets = {
+    gazetteer: { version: 1, items: [] },
+    intersections: { version: 1, items: [] }
   };
 
   function normalizeLocationText(text) {
@@ -40,8 +48,13 @@
       .replace(/\b(near|at|around|by|the|in|on)\b/g, ' ')
       .replace(/[^a-z0-9&/@\-\s]/g, ' ')
       .replace(/\b(street)\b/g, 'st')
+      .replace(/\b(st\.)\b/g, 'st')
       .replace(/\b(avenue)\b/g, 'ave')
+      .replace(/\b(ave\.)\b/g, 'ave')
       .replace(/\b(boulevard)\b/g, 'blvd')
+      .replace(/\b(blvd\.)\b/g, 'blvd')
+      .replace(/\b(road)\b/g, 'rd')
+      .replace(/\b(rd\.)\b/g, 'rd')
       .replace(/\b(route)\b/g, 'route')
       .replace(/\s+/g, ' ')
       .trim();
@@ -58,8 +71,95 @@
           const store = db.createObjectStore(STORE_NAME, { keyPath: 'normalizedQuery' });
           store.createIndex('timestamp', 'timestamp', { unique: false });
         }
+        if (!db.objectStoreNames.contains(GAZETTEER_STORE)) {
+          db.createObjectStore(GAZETTEER_STORE, { keyPath: 'key' });
+        }
+        if (!db.objectStoreNames.contains(INTERSECTIONS_STORE)) {
+          db.createObjectStore(INTERSECTIONS_STORE, { keyPath: 'key' });
+        }
       };
     });
+  }
+
+  async function loadDatasetFromIDB(storeName) {
+    try {
+      const db = await openDb();
+      const tx = db.transaction(storeName, 'readonly');
+      const req = tx.objectStore(storeName).get(DATASET_KEY);
+      const row = await new Promise((resolve, reject) => {
+        req.onsuccess = () => resolve(req.result || null);
+        req.onerror = () => reject(req.error);
+      });
+      return row?.value || null;
+    } catch {
+      return null;
+    }
+  }
+
+  async function saveDatasetToIDB(storeName, value) {
+    try {
+      const db = await openDb();
+      const tx = db.transaction(storeName, 'readwrite');
+      tx.objectStore(storeName).put({ key: DATASET_KEY, value, timestamp: Date.now() });
+    } catch {
+      // noop
+    }
+  }
+
+  async function fetchJsonWithTimeout(url, timeoutMs = 2500) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const res = await fetch(url, { signal: controller.signal });
+      if (!res.ok) return null;
+      return await res.json();
+    } catch {
+      return null;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  function sanitizeDataset(payload) {
+    return {
+      version: Number(payload?.version) || 1,
+      items: Array.isArray(payload?.items) ? payload.items : []
+    };
+  }
+
+  async function warmDataset(kind, endpoint, storeName) {
+    const remote = await fetchJsonWithTimeout(endpoint);
+    if (remote) {
+      const normalized = sanitizeDataset(remote);
+      localDatasets[kind] = normalized;
+      await saveDatasetToIDB(storeName, normalized);
+      return;
+    }
+    const cached = await loadDatasetFromIDB(storeName);
+    localDatasets[kind] = cached ? sanitizeDataset(cached) : { version: 1, items: [] };
+  }
+
+  async function hydrateGeoDatasets() {
+    await Promise.all([
+      warmDataset('gazetteer', '/api/geo/gazetteer', GAZETTEER_STORE),
+      warmDataset('intersections', '/api/geo/intersections', INTERSECTIONS_STORE)
+    ]);
+  }
+
+  async function getGazetteer() {
+    if (!Array.isArray(localDatasets.gazetteer.items) || localDatasets.gazetteer.items.length === 0) {
+      const cached = await loadDatasetFromIDB(GAZETTEER_STORE);
+      if (cached) localDatasets.gazetteer = sanitizeDataset(cached);
+    }
+    return localDatasets.gazetteer;
+  }
+
+  async function getIntersections() {
+    if (!Array.isArray(localDatasets.intersections.items) || localDatasets.intersections.items.length === 0) {
+      const cached = await loadDatasetFromIDB(INTERSECTIONS_STORE);
+      if (cached) localDatasets.intersections = sanitizeDataset(cached);
+    }
+    return localDatasets.intersections;
   }
 
   async function readCache(normalizedQuery) {
@@ -123,18 +223,45 @@
     return [s1, s2].sort().join(' & ');
   }
 
-  async function tryPlaceholderEndpoint(path, params = {}) {
-    try {
-      const url = new URL(path, window.location.origin);
-      Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v));
-      const res = await fetch(url.toString());
-      if (!res.ok) return null;
-      const payload = await res.json();
-      if (!payload || !Number.isFinite(payload.lat) || !Number.isFinite(payload.lng)) return null;
-      return payload;
-    } catch {
-      return null;
+  function intersectionItemKey(item) {
+    const a = normalizeLocationText(item?.a || '');
+    const b = normalizeLocationText(item?.b || '');
+    if (!a || !b) return null;
+    return [a, b].sort().join(' & ');
+  }
+
+  function findGazetteerHit(normalizedQuery, items) {
+    for (const item of items || []) {
+      if (!Number.isFinite(Number(item?.lat)) || !Number.isFinite(Number(item?.lng))) continue;
+      const name = normalizeLocationText(item?.name || '');
+      if (name && (normalizedQuery.includes(name) || name.includes(normalizedQuery))) {
+        return { lat: Number(item.lat), lng: Number(item.lng), label: item.name || normalizedQuery };
+      }
+      const aliases = Array.isArray(item?.aliases) ? item.aliases : [];
+      for (const alias of aliases) {
+        const normAlias = normalizeLocationText(alias);
+        if (!normAlias) continue;
+        if (normalizedQuery.includes(normAlias) || normAlias.includes(normalizedQuery)) {
+          return { lat: Number(item.lat), lng: Number(item.lng), label: item.name || alias || normalizedQuery };
+        }
+      }
     }
+    return null;
+  }
+
+  function findIntersectionHit(key, items) {
+    for (const item of items || []) {
+      if (!Number.isFinite(Number(item?.lat)) || !Number.isFinite(Number(item?.lng))) continue;
+      const itemKey = intersectionItemKey(item);
+      if (itemKey && itemKey === key) {
+        return {
+          lat: Number(item.lat),
+          lng: Number(item.lng),
+          label: `${item.a} & ${item.b}`
+        };
+      }
+    }
+    return null;
   }
 
   async function resolveLocation({ text, cityHint = 'Fredericksburg, VA', defaultCenter } = {}) {
@@ -149,28 +276,25 @@
       return buildResult({ ...cached });
     }
 
+    const gazetteer = await getGazetteer();
+    const intersections = await getIntersections();
     let best = buildResult({ lat: fallbackCenter.lat, lng: fallbackCenter.lng, confidence: 10, method: 'fallback_center', label: cityHint || 'Default center', normalizedQuery });
 
     const address = parseAddress(normalizedQuery);
     if (address) {
-      const endpoint = await tryPlaceholderEndpoint('/api/location/address', { q: `${address.houseNumber} ${address.streetName}`, city: cityHint || '' });
-      if (endpoint) {
-        best = buildResult({ lat: endpoint.lat, lng: endpoint.lng, confidence: 95, method: 'address_exact', label: endpoint.label || `${address.houseNumber} ${address.streetName}`, normalizedQuery });
-      } else {
-        const localStreet = Object.entries(STREET_CENTERLINES).find(([name]) => address.streetName.includes(name));
-        if (localStreet) {
-          const base = localStreet[1];
-          const jitter = (Number(address.houseNumber) % 20) * 0.00005;
-          best = buildResult({ lat: base.lat + jitter, lng: base.lng, confidence: 95, method: 'address_exact', label: `${address.houseNumber} ${localStreet[0]}`, normalizedQuery });
-        }
+      const localStreet = Object.entries(STREET_CENTERLINES).find(([name]) => address.streetName.includes(name));
+      if (localStreet) {
+        const base = localStreet[1];
+        const jitter = (Number(address.houseNumber) % 20) * 0.00005;
+        best = buildResult({ lat: base.lat + jitter, lng: base.lng, confidence: 95, method: 'address_exact', label: `${address.houseNumber} ${localStreet[0]}`, normalizedQuery });
       }
     }
 
     if (best.confidence < 90) {
       const intersectionKey = intersectionLookupKey(normalizedQuery);
       if (intersectionKey) {
-        const endpoint = await tryPlaceholderEndpoint('/api/location/intersection', { q: intersectionKey, city: cityHint || '' });
-        const hit = endpoint || INTERSECTIONS[intersectionKey];
+        const fromDataset = findIntersectionHit(intersectionKey, intersections.items);
+        const hit = fromDataset || FALLBACK_INTERSECTIONS[intersectionKey];
         if (hit) {
           best = buildResult({ lat: hit.lat, lng: hit.lng, confidence: 90, method: 'intersection', label: hit.label || intersectionKey, normalizedQuery });
         }
@@ -178,11 +302,11 @@
     }
 
     if (best.confidence < 85) {
-      const endpoint = await tryPlaceholderEndpoint('/api/location/alias', { q: normalizedQuery, city: cityHint || '' });
-      if (endpoint) {
-        best = buildResult({ lat: endpoint.lat, lng: endpoint.lng, confidence: 85, method: 'poi_alias', label: endpoint.label || normalizedQuery, normalizedQuery });
+      const hit = findGazetteerHit(normalizedQuery, gazetteer.items);
+      if (hit) {
+        best = buildResult({ lat: hit.lat, lng: hit.lng, confidence: 85, method: 'gazetteer', label: hit.label, normalizedQuery });
       } else {
-        const poiEntry = Object.entries(POI_ALIASES).find(([alias]) => normalizedQuery.includes(alias));
+        const poiEntry = Object.entries(FALLBACK_POI_ALIASES).find(([alias]) => normalizedQuery.includes(alias));
         if (poiEntry) {
           best = buildResult({ lat: poiEntry[1].lat, lng: poiEntry[1].lng, confidence: 85, method: 'poi_alias', label: poiEntry[1].label, normalizedQuery });
         }
@@ -200,8 +324,12 @@
     return best;
   }
 
+  hydrateGeoDatasets();
+
   window.FXBGGeocode = {
     normalizeLocationText,
-    resolveLocation
+    resolveLocation,
+    getGazetteer,
+    getIntersections
   };
 })();

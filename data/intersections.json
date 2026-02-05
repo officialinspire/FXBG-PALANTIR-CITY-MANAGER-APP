@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "items": [
+    { "a": "Caroline St", "b": "William St", "lat": 38.3026, "lng": -77.4582 },
+    { "a": "Caroline St", "b": "Princess Anne St", "lat": 38.3017, "lng": -77.4590 },
+    { "a": "Caroline St", "b": "George St", "lat": 38.3041, "lng": -77.4587 },
+    { "a": "Caroline St", "b": "Charlotte St", "lat": 38.3052, "lng": -77.4583 },
+    { "a": "Caroline St", "b": "Hanover St", "lat": 38.3064, "lng": -77.4580 },
+    { "a": "Princess Anne St", "b": "George St", "lat": 38.3040, "lng": -77.4603 },
+    { "a": "Princess Anne St", "b": "William St", "lat": 38.3024, "lng": -77.4601 },
+    { "a": "Princess Anne St", "b": "Charlotte St", "lat": 38.3051, "lng": -77.4608 },
+    { "a": "William St", "b": "George St", "lat": 38.3040, "lng": -77.4578 },
+    { "a": "William St", "b": "Lafayette Blvd", "lat": 38.2926, "lng": -77.4584 },
+    { "a": "William St", "b": "Blue and Gray Pkwy", "lat": 38.2959, "lng": -77.4592 },
+    { "a": "George St", "b": "Charlotte St", "lat": 38.3051, "lng": -77.4597 },
+    { "a": "George St", "b": "Hanover St", "lat": 38.3063, "lng": -77.4594 },
+    { "a": "Lafayette Blvd", "b": "Route 1", "lat": 38.2919, "lng": -77.4530 },
+    { "a": "Plank Rd", "b": "Route 1", "lat": 38.2998, "lng": -77.4608 },
+    { "a": "Fall Hill Ave", "b": "Carl D Silver Pkwy", "lat": 38.2928, "lng": -77.4841 }
+  ]
+}
