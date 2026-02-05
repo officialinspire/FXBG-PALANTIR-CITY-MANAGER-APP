@@ -5,13 +5,17 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APP_DIR="${APP_DIR:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 cd "$APP_DIR"
 
-GLOBAL_ENV_DIR="$HOME/.config/fxbg-palantir"
+GLOBAL_ENV_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/fxbg-palantir"
 GLOBAL_ENV="$GLOBAL_ENV_DIR/.env"
+LEGACY_ANDROID_ENV="$HOME/.fxbg-palantir/.env"
 
 mkdir -p "$GLOBAL_ENV_DIR"
 
 if [ -f "$GLOBAL_ENV" ]; then
   echo "[install-env] Global env already exists: $GLOBAL_ENV"
+elif [ -f "$LEGACY_ANDROID_ENV" ]; then
+  GLOBAL_ENV="$LEGACY_ANDROID_ENV"
+  echo "[install-env] Using legacy Android env: $GLOBAL_ENV"
 else
   if [ -f .env.example ]; then
     cp .env.example "$GLOBAL_ENV"

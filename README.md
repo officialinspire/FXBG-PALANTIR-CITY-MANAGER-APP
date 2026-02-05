@@ -37,6 +37,15 @@ npm run dev    # Starts on port 8000
 npm start      # Uses PORT from .env or default 8000
 ```
 
+### Android (Termux) Quick Start
+```bash
+pkg install nodejs
+npm install
+./scripts/up.sh
+```
+
+`./scripts/up.sh` now detects Android/Termux and uses an Android-safe global env path when needed. Open `http://127.0.0.1:8000` from the same device browser.
+
 ### 5. Open in Browser
 ```
 http://localhost:8000
@@ -237,3 +246,13 @@ If markers still don't load after following this guide:
 **Version**: 14
 **Last Updated**: 2026-01-02
 **Author**: FXBG-PALANTIR Team
+
+
+### PR blocked by "Binary Files are Not Allowed"
+If your org/repo has a ruleset that rejects binary files in pull requests, remove binary assets from the diff before pushing.
+
+```bash
+git diff --name-only --cached
+```
+
+This repo uses `favicon.svg`, so do not add `favicon.ico` back into commits.

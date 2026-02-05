@@ -5,6 +5,12 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APP_DIR="${APP_DIR:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 cd "$APP_DIR"
 
+OS_NAME="$(uname -s 2>/dev/null || echo unknown)"
+ANDROID_ENV="0"
+if [ "$OS_NAME" = "Android" ] || [ -n "${ANDROID_ROOT:-}" ] || [ -d "/data/data/com.termux" ]; then
+  ANDROID_ENV="1"
+fi
+
 echo "[up] cwd: $(pwd)"
 
 # 1) Ensure deps
@@ -19,7 +25,10 @@ fi
 mkdir -p data
 
 # 3) Ensure .env exists (portable)
-GLOBAL_ENV="$HOME/.config/fxbg-palantir/.env"
+GLOBAL_ENV="${XDG_CONFIG_HOME:-$HOME/.config}/fxbg-palantir/.env"
+if [ "$ANDROID_ENV" = "1" ] && [ ! -f "$GLOBAL_ENV" ] && [ -f "$HOME/.fxbg-palantir/.env" ]; then
+  GLOBAL_ENV="$HOME/.fxbg-palantir/.env"
+fi
 if [ ! -f .env ]; then
   if [ -f "$GLOBAL_ENV" ]; then
     echo "[up] Using GLOBAL env: $GLOBAL_ENV"
@@ -41,17 +50,31 @@ echo "== .env Provenance =="
 ENV_ABS_PATH="$(cd "$(dirname .env)" && pwd)/$(basename .env)"
 echo "[env] Path: $ENV_ABS_PATH"
 
-# Get file stats (portable across Linux/macOS)
-if command -v stat >/dev/null 2>&1; then
-  if stat --version 2>/dev/null | grep -q GNU; then
-    # GNU stat (Linux)
-    ENV_MTIME=$(stat -c '%y' .env 2>/dev/null | cut -d. -f1)
-    ENV_SIZE=$(stat -c '%s' .env 2>/dev/null)
+file_mtime() {
+  local path="$1"
+  if stat -c '%y' "$path" >/dev/null 2>&1; then
+    stat -c '%y' "$path" 2>/dev/null | cut -d. -f1
+  elif stat -f '%Sm' -t '%Y-%m-%d %H:%M:%S' "$path" >/dev/null 2>&1; then
+    stat -f '%Sm' -t '%Y-%m-%d %H:%M:%S' "$path" 2>/dev/null
   else
-    # BSD stat (macOS)
-    ENV_MTIME=$(stat -f '%Sm' -t '%Y-%m-%d %H:%M:%S' .env 2>/dev/null)
-    ENV_SIZE=$(stat -f '%z' .env 2>/dev/null)
+    echo "unknown"
   fi
+}
+
+file_size() {
+  local path="$1"
+  if stat -c '%s' "$path" >/dev/null 2>&1; then
+    stat -c '%s' "$path" 2>/dev/null
+  elif stat -f '%z' "$path" >/dev/null 2>&1; then
+    stat -f '%z' "$path" 2>/dev/null
+  else
+    wc -c < "$path" 2>/dev/null | tr -d ' '
+  fi
+}
+
+if command -v stat >/dev/null 2>&1; then
+  ENV_MTIME="$(file_mtime .env)"
+  ENV_SIZE="$(file_size .env)"
   echo "[env] Modified: $ENV_MTIME"
   echo "[env] Size: ${ENV_SIZE} bytes"
 fi
@@ -67,6 +90,11 @@ fi
 
 # 5) Check API key presence (length only, no secrets)
 echo ""
+
+if [ "$ANDROID_ENV" = "1" ]; then
+  echo "[up] Android/Termux environment detected"
+  echo "[up] Tip: open http://127.0.0.1:${PORT:-8000} from the same device/browser"
+fi
 echo "== API Key Check (length only) =="
 
 # Helper function to get env value from .env file
@@ -153,13 +181,8 @@ else
     # Report result
     if [ -f data/schools_fxbg.json ]; then
       if command -v stat >/dev/null 2>&1; then
-        if stat --version 2>/dev/null | grep -q GNU; then
-          SCHOOLS_MTIME=$(stat -c '%y' data/schools_fxbg.json 2>/dev/null | cut -d. -f1)
-          SCHOOLS_SIZE=$(stat -c '%s' data/schools_fxbg.json 2>/dev/null)
-        else
-          SCHOOLS_MTIME=$(stat -f '%Sm' -t '%Y-%m-%d %H:%M:%S' data/schools_fxbg.json 2>/dev/null)
-          SCHOOLS_SIZE=$(stat -f '%z' data/schools_fxbg.json 2>/dev/null)
-        fi
+        SCHOOLS_MTIME="$(file_mtime data/schools_fxbg.json)"
+        SCHOOLS_SIZE="$(file_size data/schools_fxbg.json)"
         echo "[schools] OK: data/schools_fxbg.json"
         echo "[schools] Modified: $SCHOOLS_MTIME"
         echo "[schools] Size: ${SCHOOLS_SIZE} bytes"
