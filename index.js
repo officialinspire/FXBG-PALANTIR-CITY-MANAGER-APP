@@ -4521,10 +4521,16 @@
     spiderfyOnMaxZoom: true,
     maxClusterRadius: 46
   });
+  const markerLayer = L.layerGroup();
   map.addLayer(clusters);
 
   const reportsLayer = L.layerGroup().addTo(map);
   let storeReady = false;
+
+  const DOWNTOWN_AUTO_ZOOM = 15;
+  const DECLUTTER_STACK_ZOOM = 13;
+  const STACK_RADIUS_METERS = 30;
+  const TAP_IDENTIFY_RADIUS_METERS = 60;
 
   // -----------------------------
   // Location Awareness
@@ -5751,6 +5757,11 @@
       pickMode: false,
       pickMarker: null
     },
+    mapUi: {
+      forceDowntownMode: false,
+      tapToIdentify: false,
+      lastVisibleItems: []
+    },
     diagnostics: {
       rss: {}  // Keyed by source.id: { ok, httpStatus, itemsParsed, itemsIngested, error, timestamp }
     },
@@ -6744,15 +6755,47 @@
     return SOURCE_TYPE_COLORS['rss'];
   }
 
-  function makeEmojiIcon(emoji, tone = "warn", sourceId = null, geocodeMeta = null) {
+  function getMarkerPrecisionClass(geocodeMeta = null) {
+    const confidence = Number.isFinite(geocodeMeta?.confidence) ? geocodeMeta.confidence : null;
+    if (confidence === null) return "marker--unknown";
+    if (confidence >= 85) return "marker--precise";
+    if (confidence >= 60) return "marker--unknown";
+    return "marker--approx";
+  }
+
+  function makeEmojiIcon(emoji, tone = "warn", sourceId = null, geocodeMeta = null, options = {}) {
     const sourceColor = getSourceTypeColor(sourceId);
+    const markerClass = getMarkerPrecisionClass(geocodeMeta);
+    const stackBadge = Number.isFinite(options.stackCount) && options.stackCount > 1
+      ? `<span class="emojiMarker__stackCount">${Math.min(options.stackCount, 99)}</span>`
+      : "";
+
     return L.divIcon({
       className: "",
-      html: `<div class="emojiMarker${Number.isFinite(geocodeMeta?.confidence) && geocodeMeta.confidence < 70 ? ' emojiMarker--lowConfidence' : ''}" data-tone="${tone}" data-source-type="${sourceId || 'unknown'}" data-geocode-confidence="${Number.isFinite(geocodeMeta?.confidence) ? Math.round(geocodeMeta.confidence) : ''}" style="--source-color: ${sourceColor}">${emoji}</div>`,
+      html: `<div class="emojiMarker ${markerClass}${Number.isFinite(geocodeMeta?.confidence) && geocodeMeta.confidence < 70 ? ' emojiMarker--lowConfidence' : ''}" data-tone="${tone}" data-source-type="${sourceId || 'unknown'}" data-geocode-confidence="${Number.isFinite(geocodeMeta?.confidence) ? Math.round(geocodeMeta.confidence) : ''}" style="--source-color: ${sourceColor}">${emoji}${stackBadge}</div>`,
       iconSize: [36, 36],
       iconAnchor: [18, 18],
       popupAnchor: [0, -12]
     });
+  }
+
+  function isDowntownModeEnabled() {
+    return store.mapUi.forceDowntownMode || map.getZoom() >= DOWNTOWN_AUTO_ZOOM;
+  }
+
+  function shouldUseDeclutterStacking() {
+    return map.getZoom() < DECLUTTER_STACK_ZOOM;
+  }
+
+  function getCollisionOffsets(count) {
+    if (count <= 1) return [{ lat: 0, lon: 0 }];
+    const ringMeters = 10;
+    const out = [];
+    for (let i = 0; i < count; i++) {
+      const a = (Math.PI * 2 * i) / count;
+      out.push({ lat: (Math.sin(a) * ringMeters) / 111111, lon: (Math.cos(a) * ringMeters) / 111111 });
+    }
+    return out;
   }
 
   function renderPopup(item) {
@@ -6766,7 +6809,7 @@
            <img src="${escapeAttr(item.media.src)}"
                 alt="${escapeAttr(item.media.alt || item.title)}"
                 style="width: 100%; height: auto; display: block; cursor: pointer;"
-                onerror="this.parentElement.innerHTML='<div style=\\'padding: 20px; text-align: center; color: rgba(255,255,255,0.5);\\'>📷<br><small>Snapshot unavailable</small></div>';" />
+                onerror="this.parentElement.innerHTML='<div style=\'padding: 20px; text-align: center; color: rgba(255,255,255,0.5);\'>📷<br><small>Snapshot unavailable</small></div>';" />
            <div style="position: absolute; bottom: 4px; right: 4px; background: rgba(0,0,0,0.7); color: white; padding: 2px 6px; border-radius: 3px; font-size: 10px; font-weight: 600;">
              LIVE
            </div>
@@ -6776,10 +6819,15 @@
          </div>`
       : "";
 
+    const downtownMeta = item._downtownMeta?.originalLatLng
+      ? `<div style="margin-top:2px;">Original: ${item._downtownMeta.originalLatLng.lat.toFixed(5)}, ${item._downtownMeta.originalLatLng.lon.toFixed(5)}</div>`
+      : "";
+
     const locationInfo = item.sourceType === "rss"
       ? `<div style="font-size:11px; color:rgba(255,255,255,0.78); margin-top:8px; padding-top:6px; border-top:1px solid rgba(255,255,255,0.08);">
            <div>📍 ${item.locationText ? escapeHtml(item.locationText) : "Unknown location"}</div>
            <div style="margin-top:2px;">Location: ${escapeHtml((item._geocode && item._geocode.label) || item.locationText || "Unknown location")} (confidence: ${Number.isFinite(item.locationConfidence) ? Math.round(item.locationConfidence) : 0}, method: ${escapeHtml((item._geocode && item._geocode.method) || item.locationMethod || "unknown")})</div>
+           ${downtownMeta}
          </div>`
       : "";
 
@@ -6805,14 +6853,47 @@
     `;
   }
 
-  function attachMarker(item) {
-    // Use fallback pattern: prefer lon, fall back to lng for API compatibility
-    const lng = item.lon ?? item.lng;
-    const m = L.marker([item.lat, lng], { icon: makeEmojiIcon(item.emoji, item.tone, item.sourceId, item._geocode) });
+  function attachMarker(item, renderLat = null, renderLon = null, options = {}) {
+    const markerLat = Number.isFinite(renderLat) ? renderLat : item.lat;
+    const markerLon = Number.isFinite(renderLon) ? renderLon : (item.lon ?? item.lng);
+    const markerMeta = options.originalLatLon ? { originalLatLng: options.originalLatLon } : null;
+
+    const m = L.marker([markerLat, markerLon], {
+      icon: makeEmojiIcon(item.emoji, item.tone, item.sourceId, item._geocode, { stackCount: options.stackCount })
+    });
+
+    if (markerMeta) m.__downtownMeta = markerMeta;
     m.on("click", () => selectItem(item.id));
-    m.bindPopup(renderPopup(item), { closeButton: false });
-    clusters.addLayer(m);
+    m.bindPopup(renderPopup({ ...item, _downtownMeta: markerMeta }), { closeButton: false });
+    if (options.useClusters !== false) {
+      clusters.addLayer(m);
+    } else {
+      markerLayer.addLayer(m);
+    }
     store.markersById.set(item.id, m);
+  }
+
+  function attachStackMarker(items) {
+    if (!items?.length) return;
+    const base = items[0];
+    const marker = L.marker([base.lat, base.lon ?? base.lng], {
+      icon: makeEmojiIcon("📍", "warn", "stack", { confidence: null }, { stackCount: items.length })
+    });
+    marker.bindPopup(`<div style="min-width:200px;"><strong>${items.length} incidents in this area</strong><div style="margin-top:6px;font-size:12px;opacity:.85;">Zoom in for exact marker placement.</div></div>`, { closeButton: false });
+    markerLayer.addLayer(marker);
+  }
+
+  function buildDeclutterStacks(items) {
+    const latCell = STACK_RADIUS_METERS / 111111;
+    const bins = new Map();
+    for (const item of items) {
+      const lng = item.lon ?? item.lng;
+      const lonCell = STACK_RADIUS_METERS / (111111 * Math.max(0.2, Math.cos((item.lat * Math.PI) / 180)));
+      const key = `${Math.round(item.lat / latCell)}:${Math.round(lng / lonCell)}`;
+      if (!bins.has(key)) bins.set(key, []);
+      bins.get(key).push(item);
+    }
+    return Array.from(bins.values());
   }
 
   function formatProxyError(response) {
@@ -7140,10 +7221,14 @@
   function redrawImmediate() {
     enforceCaps();
     clusters.clearLayers();
+    markerLayer.clearLayers();
+    if (map.hasLayer(clusters)) map.removeLayer(clusters);
+    if (map.hasLayer(markerLayer)) map.removeLayer(markerLayer);
     store.markersById.clear();
 
     let markerCount = 0;
     let filtered = { category: 0, bbox: 0, crime: 0 };
+    const visibleItems = [];
 
     for (const item of store.itemsById.values()) {
       if (!activeCategories.has(item.category)) {
@@ -7158,11 +7243,57 @@
         filtered.crime++;
         continue;
       }
-      attachMarker(item);
-      markerCount++;
+      visibleItems.push(item);
     }
 
-    console.log(`Redraw complete: ${markerCount} markers visible (${store.itemsById.size} total items, ${filtered.category} filtered by category, ${filtered.bbox} outside bbox, ${filtered.crime} crime hidden)`);
+    const downtownMode = isDowntownModeEnabled();
+    const useStacks = shouldUseDeclutterStacking();
+
+    if (useStacks) {
+      for (const stack of buildDeclutterStacks(visibleItems)) {
+        if (stack.length === 1) {
+          attachMarker(stack[0], null, null, { useClusters: false });
+        } else {
+          attachStackMarker(stack);
+        }
+        markerCount++;
+      }
+      map.addLayer(markerLayer);
+    } else {
+      if (downtownMode) {
+        const byExact = new Map();
+        for (const item of visibleItems) {
+          const lng = item.lon ?? item.lng;
+          const key = `${item.lat.toFixed(6)}:${lng.toFixed(6)}`;
+          if (!byExact.has(key)) byExact.set(key, []);
+          byExact.get(key).push(item);
+        }
+        for (const group of byExact.values()) {
+          const offsets = getCollisionOffsets(group.length);
+          for (let i = 0; i < group.length; i++) {
+            const item = group[i];
+            const lng = item.lon ?? item.lng;
+            const off = offsets[i] || { lat: 0, lon: 0 };
+            attachMarker(item, item.lat + off.lat, lng + off.lon, {
+              useClusters: false,
+              originalLatLon: { lat: item.lat, lon: lng }
+            });
+            markerCount++;
+          }
+        }
+        map.addLayer(markerLayer);
+      } else {
+        for (const item of visibleItems) {
+          attachMarker(item, null, null, { useClusters: true });
+          markerCount++;
+        }
+        map.addLayer(clusters);
+      }
+    }
+
+    store.mapUi.lastVisibleItems = visibleItems;
+
+    console.log(`Redraw complete: ${markerCount} markers visible (${store.itemsById.size} total items, ${filtered.category} filtered by category, ${filtered.bbox} outside bbox, ${filtered.crime} crime hidden, downtownMode=${downtownMode}, stacks=${useStacks})`);
 
     // Update News Flash panel if it's open
     const newsPanel = document.getElementById("newsFlashPanel");
@@ -11704,7 +11835,90 @@
     });
   }
 
+
+  function renderTapIdentifyPanel(candidates, latlng) {
+    let panel = document.getElementById("tapIdentifyPanel");
+    if (!panel) {
+      panel = document.createElement("div");
+      panel.id = "tapIdentifyPanel";
+      panel.className = "tapIdentifyPanel";
+      document.body.appendChild(panel);
+    }
+    if (!candidates.length) {
+      panel.innerHTML = `<div class="tapIdentifyPanel__title">Tap identify</div><div class="tapIdentifyPanel__muted">No markers within ${TAP_IDENTIFY_RADIUS_METERS}m.</div>`;
+      return;
+    }
+    const rows = candidates.slice(0, 8).map(({ item, distance }) => {
+      const label = item._geocode?.label || item.locationText || "Unknown";
+      return `<button class="tapIdentifyPanel__row" data-item-id="${escapeAttr(item.id)}">${item.emoji} ${escapeHtml(item.title)} <span>${Math.round(distance)}m • ${escapeHtml(label)}</span></button>`;
+    }).join("");
+    panel.innerHTML = `<div class="tapIdentifyPanel__title">Nearest markers (${latlng.lat.toFixed(5)}, ${latlng.lng.toFixed(5)})</div>${rows}`;
+    panel.querySelectorAll("[data-item-id]").forEach((btn) => {
+      btn.addEventListener("click", () => selectItem(btn.getAttribute("data-item-id")));
+    });
+  }
+
+  function runTapIdentify(latlng) {
+    const candidates = [];
+    for (const item of store.mapUi.lastVisibleItems || []) {
+      const lng = item.lon ?? item.lng;
+      const distance = haversineDistance(latlng.lat, latlng.lng, item.lat, lng);
+      if (distance <= TAP_IDENTIFY_RADIUS_METERS) {
+        candidates.push({ item, distance });
+      }
+    }
+    candidates.sort((a, b) => a.distance - b.distance);
+    renderTapIdentifyPanel(candidates, latlng);
+  }
+
+  const downtownToggleControl = L.control({ position: "topright" });
+  downtownToggleControl.onAdd = function onAdd() {
+    const wrap = L.DomUtil.create("div", "leaflet-bar precisionControls");
+    wrap.innerHTML = `
+      <button type="button" id="downtownModeToggle" class="precisionControls__btn" title="Toggle Downtown Mode">Downtown: Auto</button>
+      <button type="button" id="tapIdentifyToggle" class="precisionControls__btn" title="Tap to identify nearest markers">Tap identify: Off</button>
+    `;
+    L.DomEvent.disableClickPropagation(wrap);
+    return wrap;
+  };
+  downtownToggleControl.addTo(map);
+
+  function syncPrecisionControlLabels() {
+    const downtownBtn = document.getElementById("downtownModeToggle");
+    const tapBtn = document.getElementById("tapIdentifyToggle");
+    if (downtownBtn) {
+      const mode = store.mapUi.forceDowntownMode ? "On" : (map.getZoom() >= DOWNTOWN_AUTO_ZOOM ? "Auto-On" : "Auto");
+      downtownBtn.textContent = `Downtown: ${mode}`;
+      downtownBtn.classList.toggle("is-on", isDowntownModeEnabled());
+    }
+    if (tapBtn) {
+      tapBtn.textContent = `Tap identify: ${store.mapUi.tapToIdentify ? "On" : "Off"}`;
+      tapBtn.classList.toggle("is-on", store.mapUi.tapToIdentify);
+    }
+  }
+
+  document.addEventListener("click", (event) => {
+    if (event.target?.id === "downtownModeToggle") {
+      store.mapUi.forceDowntownMode = !store.mapUi.forceDowntownMode;
+      syncPrecisionControlLabels();
+      redraw();
+    }
+    if (event.target?.id === "tapIdentifyToggle") {
+      store.mapUi.tapToIdentify = !store.mapUi.tapToIdentify;
+      syncPrecisionControlLabels();
+    }
+  });
+
+  map.on("zoomend", () => {
+    syncPrecisionControlLabels();
+    redraw();
+  });
+  syncPrecisionControlLabels();
+
   map.on("click", (event) => {
+    if (store.mapUi.tapToIdentify) {
+      runTapIdentify(event.latlng);
+    }
     if (!store.reports || !store.reports.pickMode) return;
     setReportLocation({
       lat: event.latlng.lat,
