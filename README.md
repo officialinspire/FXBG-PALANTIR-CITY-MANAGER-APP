@@ -162,6 +162,28 @@ Share timeline data between devices:
 - `T` - Toggle Timeline panel
 - (See existing shortcuts with `?`)
 
+
+## 🗺️ Offline Map Tiles
+
+The app now supports runtime tile caching through the Service Worker (no Leaflet core changes):
+
+- **Cache tiles while browsing** (default ON) via the **Offline Map** control on the map.
+- **Prefetch area** downloads tiles around current map center.
+  - Radius options: 1km / 3km / 5km / 10km
+  - Zoom options: current zoom through +2 levels (capped at z18)
+- Cache storage stats are shown in the control:
+  - `Tiles cached: N`
+  - `Approx MB: ...` (rough estimate)
+
+### Limits + behavior
+
+- Hard cap of ~2000 tile entries is enforced for runtime tile cache with LRU-like refresh behavior.
+- Runtime tile caching targets supported dark basemaps used by this app:
+  - CARTO Dark (`basemaps.cartocdn.com`)
+  - Esri Dark Gray base/reference (fallback)
+- If offline and a tile is not in cache, a clear in-app message appears: **"Tiles not cached for this area"** and a readable fallback tile is returned.
+- OSM/debug basemap tiles are not part of offline caching strategy by default.
+
 ## ⚠️ Troubleshooting
 
 ### Markers/Waypoints Not Loading?

@@ -1,7 +1,14 @@
 const CACHE_VERSION = 'fxbg-v1';
 const SHELL_CACHE = `${CACHE_VERSION}-shell`;
 const API_CACHE = `${CACHE_VERSION}-api`;
+const TILE_CACHE = `${CACHE_VERSION}-tiles`;
 const API_CACHE_MAX_ENTRIES = 100;
+const TILE_CACHE_MAX_ENTRIES = 2000;
+
+const tileRuntimeSettings = {
+  enabled: true,
+  activeProvider: 'carto'
+};
 
 const PRECACHE_URLS = [
   '/',
@@ -26,7 +33,7 @@ self.addEventListener('activate', (event) => {
     const keys = await caches.keys();
     await Promise.all(
       keys
-        .filter((key) => ![SHELL_CACHE, API_CACHE].includes(key))
+        .filter((key) => ![SHELL_CACHE, API_CACHE, TILE_CACHE].includes(key))
         .map((key) => caches.delete(key))
     );
     await self.clients.claim();
@@ -36,12 +43,34 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('message', (event) => {
   if (event.data?.type === 'SKIP_WAITING') {
     self.skipWaiting();
+    return;
+  }
+
+  if (event.data?.type === 'OFFLINE_TILE_SETTINGS') {
+    tileRuntimeSettings.enabled = event.data.enabled !== false;
+    tileRuntimeSettings.activeProvider = event.data.activeProvider === 'esri' ? 'esri' : 'carto';
+    return;
+  }
+
+  if (event.data?.type === 'TILE_CACHE_STATS') {
+    event.waitUntil((async () => {
+      const cache = await caches.open(TILE_CACHE);
+      const keys = await cache.keys();
+      const count = keys.length;
+      const approxMB = Number(((count * 60) / 1024).toFixed(1));
+      event.source?.postMessage({ type: 'TILE_CACHE_STATS', count, approxMB });
+    })());
   }
 });
 
 self.addEventListener('fetch', (event) => {
   if (event.request.method !== 'GET') return;
   const url = new URL(event.request.url);
+
+  if (isTileRequest(url)) {
+    event.respondWith(handleTileRequest(event.request, url));
+    return;
+  }
 
   if (url.origin !== self.location.origin) return;
 
@@ -65,6 +94,27 @@ function isShellRequest(url) {
     url.pathname === '/manifest.webmanifest' ||
     url.pathname === '/client/idb.js'
   );
+}
+
+function isTileRequest(url) {
+  return isCartoTile(url) || isEsriTile(url);
+}
+
+function isCartoTile(url) {
+  return /^(a|b|c|d)\.basemaps\.cartocdn\.com$/i.test(url.hostname)
+    && /^\/dark_all\/\d+\/\d+\/\d+(@2x)?\.png$/i.test(url.pathname);
+}
+
+function isEsriTile(url) {
+  return url.hostname === 'server.arcgisonline.com'
+    && /^\/ArcGIS\/rest\/services\/Canvas\/World_Dark_Gray_(Base|Reference)\/MapServer\/tile\/\d+\/\d+\/\d+$/i.test(url.pathname);
+}
+
+function tileMatchesActiveProvider(url) {
+  if (tileRuntimeSettings.activeProvider === 'esri') {
+    return isEsriTile(url);
+  }
+  return isCartoTile(url);
 }
 
 function isApiRequest(url) {
@@ -111,6 +161,55 @@ async function staleWhileRevalidate(request) {
   });
 }
 
+async function handleTileRequest(request, url) {
+  if (!tileRuntimeSettings.enabled || !tileMatchesActiveProvider(url)) {
+    try {
+      return await fetch(request);
+    } catch {
+      return createOfflineTileResponse();
+    }
+  }
+
+  const cache = await caches.open(TILE_CACHE);
+  const cached = await cache.match(request);
+
+  if (cached) {
+    await cache.put(request, cached.clone());
+    return cached;
+  }
+
+  try {
+    const network = await fetch(request);
+    if (network.ok) {
+      await cache.put(request, network.clone());
+      await trimTileCache(cache, TILE_CACHE_MAX_ENTRIES);
+    }
+    return network;
+  } catch {
+    return createOfflineTileResponse();
+  }
+}
+
+async function trimTileCache(cache, maxEntries) {
+  const keys = await cache.keys();
+  if (keys.length <= maxEntries) return;
+  const deleteCount = keys.length - maxEntries;
+  for (let i = 0; i < deleteCount; i += 1) {
+    await cache.delete(keys[i]);
+  }
+}
+
+function createOfflineTileResponse() {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256"><rect width="256" height="256" fill="#121a2f"/><g fill="#9db1d0" font-family="system-ui,sans-serif" text-anchor="middle"><text x="128" y="118" font-size="13">Offline tile</text><text x="128" y="138" font-size="12">not cached</text></g></svg>`;
+  return new Response(svg, {
+    status: 200,
+    headers: {
+      'Content-Type': 'image/svg+xml',
+      'Cache-Control': 'no-store'
+    }
+  });
+}
+
 async function trimCache(cache, maxEntries) {
   const keys = await cache.keys();
   if (keys.length <= maxEntries) return;
@@ -129,4 +228,3 @@ async function trimCache(cache, maxEntries) {
     await cache.delete(dated[i].request);
   }
 }
-

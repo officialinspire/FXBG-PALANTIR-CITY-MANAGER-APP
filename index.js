@@ -4138,9 +4138,280 @@
           position: newPos,
           collapsed: true
         }).addTo(map);
+        if (offlineMapControl) {
+          offlineMapControl.remove();
+          offlineMapControl = createOfflineMapControl();
+          offlineMapControl.setPosition(newPos);
+          offlineMapControl.addTo(map);
+        }
       }
     }, 150);
   });
+
+  const OFFLINE_TILE_PREF_KEY = 'fxbg-offline-tile-cache-enabled';
+  let activeTileProvider = 'carto';
+  let tileStats = { count: 0, approxMB: 0 };
+  let tileStatusEls = { count: null, mb: null };
+  let lastOfflineTileToastAt = 0;
+
+  function readOfflineTilePref() {
+    try {
+      const stored = localStorage.getItem(OFFLINE_TILE_PREF_KEY);
+      if (stored === null) return true;
+      return stored === 'true';
+    } catch {
+      return true;
+    }
+  }
+
+  function persistOfflineTilePref(enabled) {
+    try {
+      localStorage.setItem(OFFLINE_TILE_PREF_KEY, String(enabled));
+    } catch {}
+  }
+
+  let offlineTileCachingEnabled = readOfflineTilePref();
+
+  function updateTileStatsUI() {
+    if (tileStatusEls.count) tileStatusEls.count.textContent = `Tiles cached: ${tileStats.count}`;
+    if (tileStatusEls.mb) tileStatusEls.mb.textContent = `Approx MB: ${tileStats.approxMB}`;
+  }
+
+  function postSWMessage(msg) {
+    if (!('serviceWorker' in navigator)) return;
+    if (navigator.serviceWorker.controller) {
+      navigator.serviceWorker.controller.postMessage(msg);
+    }
+  }
+
+  function sendOfflineTileSettings() {
+    postSWMessage({
+      type: 'OFFLINE_TILE_SETTINGS',
+      enabled: offlineTileCachingEnabled,
+      activeProvider: activeTileProvider
+    });
+  }
+
+  function requestTileCacheStats() {
+    postSWMessage({ type: 'TILE_CACHE_STATS' });
+  }
+
+  function showOfflineTileMissToast() {
+    const now = Date.now();
+    if (now - lastOfflineTileToastAt < 2500) return;
+    lastOfflineTileToastAt = now;
+    const toast = document.getElementById('offlineToast');
+    if (!toast) return;
+    toast.textContent = 'Tiles not cached for this area';
+    toast.classList.remove('offlineToast--hidden');
+    clearTimeout(window.__offlineToastTimer);
+    window.__offlineToastTimer = setTimeout(() => {
+      toast.textContent = 'Offline ready';
+      toast.classList.add('offlineToast--hidden');
+    }, 2800);
+  }
+
+  function destinationLatLng(lat, lng, bearingDeg, distanceKm) {
+    const R = 6371;
+    const brng = bearingDeg * (Math.PI / 180);
+    const lat1 = lat * (Math.PI / 180);
+    const lon1 = lng * (Math.PI / 180);
+    const dR = distanceKm / R;
+
+    const lat2 = Math.asin(Math.sin(lat1) * Math.cos(dR) + Math.cos(lat1) * Math.sin(dR) * Math.cos(brng));
+    const lon2 = lon1 + Math.atan2(
+      Math.sin(brng) * Math.sin(dR) * Math.cos(lat1),
+      Math.cos(dR) - Math.sin(lat1) * Math.sin(lat2)
+    );
+
+    return {
+      lat: lat2 * (180 / Math.PI),
+      lng: ((lon2 * (180 / Math.PI) + 540) % 360) - 180
+    };
+  }
+
+  function lngToTileX(lng, zoom) {
+    return Math.floor(((lng + 180) / 360) * (2 ** zoom));
+  }
+
+  function latToTileY(lat, zoom) {
+    const clamped = Math.max(-85.05112878, Math.min(85.05112878, lat));
+    const rad = clamped * (Math.PI / 180);
+    return Math.floor(((1 - Math.log(Math.tan(rad) + (1 / Math.cos(rad))) / Math.PI) / 2) * (2 ** zoom));
+  }
+
+  function getTileUrlsForBounds(bounds, zoom, provider) {
+    const n = 2 ** zoom;
+    const xMinRaw = lngToTileX(bounds.west, zoom);
+    const xMaxRaw = lngToTileX(bounds.east, zoom);
+    const yMin = Math.max(0, Math.min(n - 1, latToTileY(bounds.north, zoom)));
+    const yMax = Math.max(0, Math.min(n - 1, latToTileY(bounds.south, zoom)));
+    const urls = [];
+
+    for (let x = xMinRaw; x <= xMaxRaw; x += 1) {
+      const wrappedX = ((x % n) + n) % n;
+      for (let y = yMin; y <= yMax; y += 1) {
+        if (provider === 'esri') {
+          urls.push(`https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/${zoom}/${y}/${wrappedX}`);
+          if (map.hasLayer(esriRefLayer)) {
+            urls.push(`https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Reference/MapServer/tile/${zoom}/${y}/${wrappedX}`);
+          }
+        } else {
+          urls.push(`https://a.basemaps.cartocdn.com/dark_all/${zoom}/${wrappedX}/${y}.png`);
+        }
+      }
+    }
+
+    return urls;
+  }
+
+  function createOfflineMapControl() {
+    const Control = L.Control.extend({
+      options: { position: getControlPosition() },
+      onAdd() {
+        const container = L.DomUtil.create('div', 'offlineMapControl');
+        container.innerHTML = `
+          <div class="offlineMapControl__title">Offline Map</div>
+          <label class="offlineMapControl__row">
+            <span>Cache tiles while browsing</span>
+            <input type="checkbox" id="offlineTileCacheToggle" ${offlineTileCachingEnabled ? 'checked' : ''}>
+          </label>
+          <button class="btn offlineMapControl__btn" id="offlineMapPrefetchBtn" type="button">Prefetch area</button>
+          <div class="offlineMapControl__stats">
+            <div id="offlineMapTilesCached">Tiles cached: 0</div>
+            <div id="offlineMapApproxMb">Approx MB: 0</div>
+          </div>
+        `;
+
+        L.DomEvent.disableClickPropagation(container);
+        L.DomEvent.disableScrollPropagation(container);
+
+        const toggle = container.querySelector('#offlineTileCacheToggle');
+        const prefetchBtn = container.querySelector('#offlineMapPrefetchBtn');
+        tileStatusEls.count = container.querySelector('#offlineMapTilesCached');
+        tileStatusEls.mb = container.querySelector('#offlineMapApproxMb');
+        updateTileStatsUI();
+
+        toggle?.addEventListener('change', (event) => {
+          offlineTileCachingEnabled = !!event.target.checked;
+          persistOfflineTilePref(offlineTileCachingEnabled);
+          sendOfflineTileSettings();
+        });
+
+        prefetchBtn?.addEventListener('click', () => openOfflineMapModal());
+
+        return container;
+      }
+    });
+
+    return new Control();
+  }
+
+  let offlineMapControl = createOfflineMapControl().addTo(map);
+
+  function getActiveTileProvider() {
+    if (map.hasLayer(esriBaseLayer)) return 'esri';
+    return 'carto';
+  }
+
+  function refreshOfflineProvider() {
+    activeTileProvider = getActiveTileProvider();
+    sendOfflineTileSettings();
+  }
+
+  map.on('baselayerchange', () => {
+    refreshOfflineProvider();
+  });
+
+  [cartoLayer, esriBaseLayer, esriRefLayer].forEach((layer) => {
+    layer.on('tileerror', () => {
+      if (!navigator.onLine) {
+        showOfflineTileMissToast();
+      }
+    });
+  });
+
+  function openOfflineMapModal() {
+    const modal = document.getElementById('offlineMapModal');
+    const zoomRange = document.getElementById('offlineMapZoomRange');
+    const progress = document.getElementById('offlineMapProgress');
+    if (!modal || !zoomRange || !progress) return;
+
+    const startZoom = Math.round(map.getZoom());
+    const endZoom = Math.min(18, startZoom + 2);
+    zoomRange.textContent = `${startZoom} to ${endZoom}`;
+    progress.textContent = 'Downloading 0/0 tiles…';
+    modal.classList.remove('offlineMapModal--hidden');
+  }
+
+  function closeOfflineMapModal() {
+    const modal = document.getElementById('offlineMapModal');
+    modal?.classList.add('offlineMapModal--hidden');
+  }
+
+  async function prefetchOfflineTiles() {
+    const radiusEl = document.getElementById('offlineMapRadius');
+    const progressEl = document.getElementById('offlineMapProgress');
+    const startBtn = document.getElementById('offlineMapStartPrefetch');
+    if (!radiusEl || !progressEl || !startBtn) return;
+
+    const radiusKm = Number(radiusEl.value || 3);
+    const center = map.getCenter();
+    const north = destinationLatLng(center.lat, center.lng, 0, radiusKm).lat;
+    const south = destinationLatLng(center.lat, center.lng, 180, radiusKm).lat;
+    const east = destinationLatLng(center.lat, center.lng, 90, radiusKm).lng;
+    const west = destinationLatLng(center.lat, center.lng, 270, radiusKm).lng;
+
+    const startZoom = Math.round(map.getZoom());
+    const endZoom = Math.min(18, startZoom + 2);
+    const provider = getActiveTileProvider();
+    const allUrls = [];
+
+    for (let z = startZoom; z <= endZoom; z += 1) {
+      allUrls.push(...getTileUrlsForBounds({ north, south, east, west }, z, provider));
+    }
+
+    const urls = [...new Set(allUrls)];
+    let done = 0;
+
+    startBtn.disabled = true;
+    progressEl.textContent = `Downloading ${done}/${urls.length} tiles…`;
+
+    const concurrency = 8;
+    let index = 0;
+
+    async function worker() {
+      while (index < urls.length) {
+        const current = urls[index];
+        index += 1;
+        try {
+          await fetch(current, { mode: 'no-cors', cache: 'no-store' });
+        } catch {}
+        done += 1;
+        progressEl.textContent = `Downloading ${done}/${urls.length} tiles…`;
+      }
+    }
+
+    await Promise.all(Array.from({ length: Math.min(concurrency, urls.length || 1) }, () => worker()));
+    startBtn.disabled = false;
+    progressEl.textContent = `Downloading ${done}/${urls.length} tiles… Done`;
+    requestTileCacheStats();
+  }
+
+  function bindOfflineMapModalEvents() {
+    const closeBtn = document.getElementById('offlineMapModalClose');
+    const startBtn = document.getElementById('offlineMapStartPrefetch');
+    const modal = document.getElementById('offlineMapModal');
+
+    closeBtn?.addEventListener('click', closeOfflineMapModal);
+    startBtn?.addEventListener('click', prefetchOfflineTiles);
+    modal?.addEventListener('click', (event) => {
+      if (event.target === modal) closeOfflineMapModal();
+    });
+  }
+
+  bindOfflineMapModalEvents();
+  refreshOfflineProvider();
 
   // Reference marker at downtown Fredericksburg for basemap alignment sanity check
   const refIcon = L.divIcon({
@@ -13063,6 +13334,19 @@
           window.location.reload();
         });
 
+        navigator.serviceWorker.addEventListener('message', (event) => {
+          if (event.data?.type === 'TILE_CACHE_STATS') {
+            tileStats.count = Number(event.data.count || 0);
+            tileStats.approxMB = Number(event.data.approxMB || 0);
+            updateTileStatsUI();
+          }
+        });
+
+        navigator.serviceWorker.ready.then(() => {
+          sendOfflineTileSettings();
+          requestTileCacheStats();
+        }).catch(() => {});
+
         applyStatus();
       } catch (error) {
         console.warn('[SW] Registration failed', error);
@@ -13108,6 +13392,7 @@
   fetchReports({ sinceDays: 90 });
 
   initServiceWorkerUI();
+  setInterval(requestTileCacheStats, 30000);
   syncUiMode();
   updateChromeHeights();
   updateCrimeButtonActiveState();
