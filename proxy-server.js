@@ -16,6 +16,7 @@ const fs = require("fs");
 const fsp = require("fs/promises");
 const path = require("path");
 const os = require("os");
+const { Writable } = require("stream");
 const crypto = require("crypto");
 const dotenv = require("dotenv");
 const { upstreamFetch } = require("./server/upstreamFetch");
@@ -27,7 +28,9 @@ const { createCache } = require("./server/cache");
 const ENV_PATH = path.join(__dirname, ".env");
 dotenv.config({ path: ENV_PATH });
 
-const REQUIRED_ENV = ["LOG_DIR"];
+const REQUIRED_ENV = [];
+
+const DEFAULT_LOG_DIR = "logs";
 
 function validateConfig() {
   const missing = REQUIRED_ENV.filter((key) => !process.env[key]);
@@ -36,6 +39,11 @@ function validateConfig() {
     const message = `Missing required environment variables: ${missing.join(", ")}. Set them in .env or export them before starting.`;
     console.error(`[config] ${message}`);
     process.exit(1);
+  }
+
+  if (!process.env.LOG_DIR || !String(process.env.LOG_DIR).trim()) {
+    process.env.LOG_DIR = DEFAULT_LOG_DIR;
+    console.warn(`[config] LOG_DIR not set. Defaulting to \"${DEFAULT_LOG_DIR}\".`);
   }
 
   // PORT is optional, default to 8000
@@ -48,22 +56,61 @@ function validateConfig() {
 }
 
 const PORT = validateConfig();
-const LOG_DIR = path.resolve(__dirname, process.env.LOG_DIR);
-const APP_LOG_PATH = path.join(LOG_DIR, "app.log");
-const UPSTREAM_LOG_PATH = path.join(LOG_DIR, "upstreams.log");
+let LOG_DIR = path.resolve(__dirname, process.env.LOG_DIR || DEFAULT_LOG_DIR);
+
+function createNoopStream(name) {
+  return new Writable({
+    write(_chunk, _encoding, callback) {
+      callback();
+    }
+  });
+}
 
 function ensureLogDir() {
   try {
     fs.mkdirSync(LOG_DIR, { recursive: true });
+    return LOG_DIR;
   } catch (err) {
-    console.warn("[logs] Failed to ensure log directory:", err.message);
+    const fallbackDir = path.join(os.tmpdir(), "fxbg-palantir-logs");
+    console.warn(`[logs] Failed to ensure log directory \"${LOG_DIR}\": ${err.message}`);
+    console.warn(`[logs] Falling back to temporary log directory: ${fallbackDir}`);
+
+    try {
+      fs.mkdirSync(fallbackDir, { recursive: true });
+      LOG_DIR = fallbackDir;
+      process.env.LOG_DIR = fallbackDir;
+      return LOG_DIR;
+    } catch (fallbackErr) {
+      console.warn(`[logs] Failed to ensure fallback log directory \"${fallbackDir}\": ${fallbackErr.message}`);
+      return null;
+    }
   }
 }
 
-ensureLogDir();
+const resolvedLogDir = ensureLogDir();
+const APP_LOG_PATH = resolvedLogDir ? path.join(resolvedLogDir, "app.log") : null;
+const UPSTREAM_LOG_PATH = resolvedLogDir ? path.join(resolvedLogDir, "upstreams.log") : null;
 
-const appLogStream = fs.createWriteStream(APP_LOG_PATH, { flags: "a" });
-const upstreamLogStream = fs.createWriteStream(UPSTREAM_LOG_PATH, { flags: "a" });
+function createSafeLogStream(logPath, label) {
+  if (!logPath) {
+    console.warn(`[logs] ${label} disabled (no writable log directory).`);
+    return createNoopStream(label);
+  }
+
+  try {
+    const stream = fs.createWriteStream(logPath, { flags: "a" });
+    stream.on("error", (err) => {
+      console.warn(`[logs] ${label} stream error (${logPath}): ${err.message}. Falling back to console-only logging.`);
+    });
+    return stream;
+  } catch (err) {
+    console.warn(`[logs] Failed to create ${label} stream (${logPath}): ${err.message}. Falling back to console-only logging.`);
+    return createNoopStream(label);
+  }
+}
+
+const appLogStream = createSafeLogStream(APP_LOG_PATH, "app log");
+const upstreamLogStream = createSafeLogStream(UPSTREAM_LOG_PATH, "upstream log");
 
 function writeLog(stream, payload) {
   const entry = {
@@ -2233,7 +2280,8 @@ async function runUpstreamFetch(name, url, options = {}) {
     method: options.method,
     includeBodyText: options.includeBodyText,
     includeBodyBuffer: options.includeBodyBuffer,
-    cacheState: options.cacheState || "miss"
+    cacheState: options.cacheState || "miss",
+    logger: logUpstream
   });
 
   updateUpstreamStatus(name, {
@@ -4129,6 +4177,15 @@ async function startServer() {
   runAllowlistSanityCheck();
   await validateRequiredUpstreams();
   await loadHubClients();
+
+  server.on("error", (err) => {
+    if (err && err.code === "EADDRINUSE") {
+      console.error(`[startup] Port ${PORT} already in use. Try: PORT=${PORT + 1} node proxy-server.js`);
+      process.exit(1);
+    }
+    console.error("[startup] Server error:", err);
+    process.exit(1);
+  });
 
   server.listen(PORT, HOST, () => {
     console.log(`\n🧠 CITY MANAGER server running on ${HOST}:${PORT}\n`);
