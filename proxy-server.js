@@ -1020,6 +1020,27 @@ function checkUrlAllowed(targetUrl) {
   }
 }
 
+function isProxyRecursionTarget(targetUrl, req) {
+  try {
+    const parsed = new URL(targetUrl);
+    const host = parsed.hostname.toLowerCase();
+    const localHosts = new Set(['localhost', '127.0.0.1', '0.0.0.0', '::1']);
+    if (localHosts.has(host)) return true;
+
+    const forwardedHost = String(req.headers['x-forwarded-host'] || '').trim();
+    const hostHeader = String(forwardedHost || req.headers.host || '').trim();
+    if (!hostHeader) return false;
+
+    const hostWithoutPort = normalizeHost(hostHeader.split(':')[0] || '');
+    const requestPort = hostHeader.includes(':') ? hostHeader.split(':').pop() : String(PORT);
+    const targetPort = parsed.port || (parsed.protocol === 'https:' ? '443' : '80');
+
+    return normalizeHost(host) === hostWithoutPort && String(targetPort) === String(requestPort);
+  } catch {
+    return false;
+  }
+}
+
 function send(res, status, body, headers = {}) {
   const buffer = Buffer.isBuffer(body) ? body : Buffer.from(body || "");
   res.writeHead(status, {
@@ -4116,6 +4137,14 @@ const server = http.createServer(async (req, res) => {
       const target = urlObj.searchParams.get("url");
       if (!target) return send(res, 400, "Missing url param");
       if (!/^https?:\/\//i.test(target)) return send(res, 400, "Only http/https URLs are allowed");
+
+      if (isProxyRecursionTarget(target, req)) {
+        return send(res, 400, JSON.stringify({
+          ok: false,
+          error: "proxy_recursion_blocked",
+          message: "Do not proxy local URLs; call /api/* directly."
+        }), { "Content-Type": "application/json" });
+      }
 
       // Security: Check if target URL is allowed
       const urlCheck = checkUrlAllowed(target);
