@@ -4,6 +4,7 @@ const API_CACHE = `${CACHE_VERSION}-api`;
 const TILE_CACHE = `${CACHE_VERSION}-tiles`;
 const API_CACHE_MAX_ENTRIES = 100;
 const TILE_CACHE_MAX_ENTRIES = 2000;
+const DEBUG_SW = false;
 
 const tileRuntimeSettings = {
   enabled: true,
@@ -64,25 +65,54 @@ self.addEventListener('message', (event) => {
 });
 
 self.addEventListener('fetch', (event) => {
-  if (event.request.method !== 'GET') return;
-  const url = new URL(event.request.url);
+  try {
+    if (event.request.method !== 'GET') return;
+    const url = new URL(event.request.url);
 
-  if (isTileRequest(url)) {
-    event.respondWith(handleTileRequest(event.request, url));
-    return;
-  }
+    if (shouldBypassMapAssets(event.request, url)) {
+      event.respondWith(fetch(event.request));
+      return;
+    }
 
-  if (url.origin !== self.location.origin) return;
+    if (isTileRequest(url)) {
+      event.respondWith(handleTileRequest(event.request, url));
+      return;
+    }
 
-  if (isShellRequest(url)) {
-    event.respondWith(cacheFirst(event.request));
-    return;
-  }
+    if (url.origin !== self.location.origin) return;
 
-  if (isApiRequest(url)) {
-    event.respondWith(staleWhileRevalidate(event.request));
+    if (isShellRequest(url)) {
+      event.respondWith(cacheFirst(event.request));
+      return;
+    }
+
+    if (isApiRequest(url)) {
+      event.respondWith(staleWhileRevalidate(event.request));
+    }
+  } catch (error) {
+    debugLog('Fetch handler fallback to network', error);
+    event.respondWith(fetch(event.request));
   }
 });
+
+function debugLog(...args) {
+  if (!DEBUG_SW) return;
+  console.log('[SW]', ...args);
+}
+
+function shouldBypassMapAssets(request, url) {
+  if (request.url.includes('basemaps.cartocdn.com')) {
+    debugLog('Bypassing cache for carto basemap tile', request.url);
+    return true;
+  }
+
+  if (/\/\d+\/\d+\/\d+(@2x)?\.png$/i.test(url.pathname)) {
+    debugLog('Bypassing cache for tile pattern', request.url);
+    return true;
+  }
+
+  return false;
+}
 
 function isShellRequest(url) {
   return (
@@ -128,7 +158,7 @@ async function cacheFirst(request) {
   const cached = await cache.match(request);
   if (cached) return cached;
   const network = await fetch(request);
-  if (network.ok) {
+  if (canCacheResponse(request, network)) {
     cache.put(request, network.clone());
   }
   return network;
@@ -140,7 +170,7 @@ async function staleWhileRevalidate(request) {
 
   const networkPromise = fetch(request)
     .then(async (response) => {
-      if (response.ok) {
+      if (canCacheResponse(request, response)) {
         await cache.put(request, response.clone());
         await trimCache(cache, API_CACHE_MAX_ENTRIES);
       }
@@ -174,13 +204,12 @@ async function handleTileRequest(request, url) {
   const cached = await cache.match(request);
 
   if (cached) {
-    await cache.put(request, cached.clone());
     return cached;
   }
 
   try {
     const network = await fetch(request);
-    if (network.ok) {
+    if (canCacheResponse(request, network)) {
       await cache.put(request, network.clone());
       await trimTileCache(cache, TILE_CACHE_MAX_ENTRIES);
     }
@@ -188,6 +217,12 @@ async function handleTileRequest(request, url) {
   } catch {
     return createOfflineTileResponse();
   }
+}
+
+function canCacheResponse(request, response) {
+  if (!response || !response.ok) return false;
+  const requestUrl = new URL(request.url);
+  return requestUrl.origin === self.location.origin;
 }
 
 async function trimTileCache(cache, maxEntries) {
