@@ -4,11 +4,15 @@ This document describes known issues with external data sources and how to addre
 
 ## Known Issues (as of January 2026)
 
-### 0. Missing API Keys (Startup Failure)
+### 0. Missing API Keys (Optional Features Only)
 
-**Issue:** Proxy server exits immediately with missing environment variable errors.
+**Issue:** Some external data features (UV/AQI) are unavailable.
 
-**Root Cause:** `.env` file or environment variables are missing required API keys.
+**Root Cause:** `.env` file or environment variables are missing optional API keys.
+
+**Important behavior:**
+- Missing `OPENUV_API_KEY` and/or `WAQI_TOKEN` should **not** prevent server startup.
+- Missing `LOG_DIR` should **not** prevent startup; server defaults to `logs` and can fall back to OS temp logs if needed.
 
 **Fix (recommended - persistent across repo downloads):**
 1. Create a global env file once:

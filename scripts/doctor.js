@@ -133,17 +133,6 @@ function checkLogDir() {
   // Check if directory exists
   if (fs.existsSync(absoluteLogDir)) {
     ok(`Log directory exists`);
-
-    // Check if writable
-    try {
-      const testFile = path.join(absoluteLogDir, ".doctor-test");
-      fs.writeFileSync(testFile, "test");
-      fs.unlinkSync(testFile);
-      ok(`Log directory is writable`);
-    } catch (e) {
-      fail(`Log directory is not writable: ${e.message}`);
-      hasBlockingErrors = true;
-    }
   } else {
     // Try to create it
     try {
@@ -152,7 +141,21 @@ function checkLogDir() {
     } catch (e) {
       fail(`Cannot create log directory: ${e.message}`);
       hasBlockingErrors = true;
+      return;
     }
+  }
+
+  // Check if writable by creating a temp probe file
+  try {
+    const probeName = `.doctor-write-probe-${Date.now()}-${Math.random().toString(16).slice(2)}.tmp`;
+    const probePath = path.join(absoluteLogDir, probeName);
+    fs.writeFileSync(probePath, "probe");
+    fs.unlinkSync(probePath);
+    ok(`LOG_DIR is writable`);
+  } catch (e) {
+    fail(`LOG_DIR is not writable: ${e.message}`);
+    info(`Fix: chmod/chown the directory, or set LOG_DIR to a writable path (example: LOG_DIR=/tmp/fxbg-palantir-logs).`);
+    hasBlockingErrors = true;
   }
 }
 
@@ -237,21 +240,23 @@ function checkRequiredEnvVars() {
 
   const envSource = resolveEnvSource();
   const envVars = loadEnvFile(envSource.path);
-  const required = ["LOG_DIR"];
+  const required = [];
 
   for (const key of required) {
     const value = envVars[key] || process.env[key];
     if (value) {
       ok(`${key} is set`);
     } else {
-      // LOG_DIR has a default
-      if (key === "LOG_DIR") {
-        warn(`${key} not set, will default to "./logs"`);
-      } else {
-        fail(`${key} is required but not set`);
-        hasBlockingErrors = true;
-      }
+      fail(`${key} is required but not set`);
+      hasBlockingErrors = true;
     }
+  }
+
+  const hasLogDir = Boolean(envVars.LOG_DIR || process.env.LOG_DIR);
+  if (hasLogDir) {
+    ok("LOG_DIR is set");
+  } else {
+    warn("LOG_DIR not set; server defaults to ./logs and may fall back to OS temp if needed.");
   }
 }
 
