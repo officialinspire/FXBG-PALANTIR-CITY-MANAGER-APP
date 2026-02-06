@@ -73,6 +73,23 @@
     trackCache: []
   };
 
+  const qa = {
+    missing: [],
+    warnings: [],
+    lastRunTs: Date.now(),
+    quickSmokeReport: []
+  };
+
+  function bind(id, event, handler) {
+    const el = document.getElementById(id);
+    if (!el) {
+      qa.missing.push(id);
+      return null;
+    }
+    el.addEventListener(event, handler);
+    return el;
+  }
+
   function vibe(p) {
     if (!trackState.haptics || !navigator.vibrate) return;
     navigator.vibrate(p);
@@ -10972,6 +10989,8 @@
     ensureChipsHaveState();
 
     if (liveTextEl) liveTextEl.textContent = "Live";
+    store.lastRefreshAllTs = Date.now();
+    qa.lastRunTs = Date.now();
     setLastUpdate();
     updateGlobalStatusRibbon();
     renderFreshnessBadges();
@@ -13445,10 +13464,46 @@
     return html;
   }
 
+  function formatQaSmokeLines(lines) {
+    if (!Array.isArray(lines) || !lines.length) return '<div class="dockMetaText">No smoke test run yet.</div>';
+    return lines.map(line => `<div class="dockRowMeta">${escapeHtml(line)}</div>`).join('');
+  }
+
+  async function runQuickSmoke() {
+    const lines = [];
+    const runStep = async (label, fn) => {
+      const start = Date.now();
+      try {
+        await fn();
+        lines.push(`✅ ${label} (${Date.now() - start}ms)`);
+      } catch (err) {
+        const msg = err?.message || String(err);
+        lines.push(`❌ ${label}: ${msg}`);
+        qa.warnings.push(`Smoke failure: ${label}`);
+      }
+    };
+
+    await runStep('Refresh RSS', () => pollRSS());
+    await runStep('Refresh Crime Status', () => pollFxbgCrimeReports());
+    if (CONFIG.va511?.enabled) {
+      await runStep('Refresh VA511', () => pollVa511());
+    } else {
+      lines.push('⚠️ Refresh VA511 skipped (disabled)');
+    }
+
+    qa.quickSmokeReport = lines;
+    qa.lastRunTs = Date.now();
+    if (dockState?.isOpen && dockState.tab === 'system') renderDock();
+    return lines;
+  }
+
   // Render System tab
   function renderSystemHTML() {
     const health = healthTracker.computeHealth();
     const staleCount = healthTracker.staleDataCount;
+    const uniqueMissing = Array.from(new Set(qa.missing));
+    const lastRefreshLabel = store.lastRefreshAllTs ? formatRelativeTime(store.lastRefreshAllTs) : 'Never';
+    const lastAuditLabel = qa.lastRunTs ? formatRelativeTime(qa.lastRunTs) : 'Never';
 
     let html = `<div class="dockCard">`;
     html += `<div class="dockRow">`;
@@ -13557,6 +13612,25 @@
       });
     }
 
+    if (uniqueMissing.length > 0) {
+      const warningMsg = `Critical UI bindings missing: ${uniqueMissing.join(', ')}`;
+      if (!qa.warnings.includes(warningMsg)) qa.warnings.push(warningMsg);
+    }
+
+    const upstreamSummary = `${health.status.toUpperCase()} • stale ${staleCount} • recent errors ${healthTracker.recentErrors.size}`;
+    html += `<div class="dockSectionTitle">QA / Smoke</div>`;
+    html += `<div class="dockCard">`;
+    html += `<div class="dockRow"><div class="dockRowLeft"><div class="dockRowTitle">Missing bindings</div></div><div class="dockBadge ${uniqueMissing.length ? 'status-error' : 'status-ok'}">${uniqueMissing.length}</div></div>`;
+    html += `<div class="dockRow"><div class="dockRowLeft"><div class="dockRowTitle">Last refreshAll</div><div class="dockRowMeta">${escapeHtml(lastRefreshLabel)}</div></div></div>`;
+    html += `<div class="dockRow"><div class="dockRowLeft"><div class="dockRowTitle">Last binding audit</div><div class="dockRowMeta">${escapeHtml(lastAuditLabel)}</div></div></div>`;
+    html += `<div class="dockRow"><div class="dockRowLeft"><div class="dockRowTitle">Upstream Health</div><div class="dockRowMeta">${escapeHtml(upstreamSummary)}</div></div></div>`;
+    if (qa.warnings.length > 0) {
+      html += `<div class="dockRowMeta" style="color:var(--warn);margin:6px 0;">${escapeHtml(qa.warnings[qa.warnings.length - 1])}</div>`;
+    }
+    html += `<button class="dockBtnSmall" id="dockRunQuickSmoke">Run Quick Smoke</button>`;
+    html += `<div id="dockQuickSmokeReport" style="margin-top:8px;">${formatQaSmokeLines(qa.quickSmokeReport)}</div>`;
+    html += `</div>`;
+
     return html;
   }
 
@@ -13594,6 +13668,8 @@
 
   // Render dock content
   function renderDock() {
+    qa.missing = [];
+    qa.lastRunTs = Date.now();
     dockPanelTitle.textContent = titleForTab(dockState.tab);
     dockPanelBody.innerHTML = htmlForDockTab(dockState.tab);
 
@@ -13608,21 +13684,15 @@
 
     // Re-bind click handlers for rendered content
     if (dockState.tab === "overview") {
-      const refreshBtn = document.getElementById("dockRefreshAll");
-      if (refreshBtn) {
-        refreshBtn.addEventListener("click", () => {
-          closeDock();
-          refreshAll();
-        });
-      }
+      bind("dockRefreshAll", "click", () => {
+        closeDock();
+        refreshAll();
+      });
 
-      const resetBtn = document.getElementById("dockResetFilters");
-      if (resetBtn) {
-        resetBtn.addEventListener("click", () => {
-          resetCategoryFilters();
-          renderDock(); // Re-render to show updated counts
-        });
-      }
+      bind("dockResetFilters", "click", () => {
+        resetCategoryFilters();
+        renderDock(); // Re-render to show updated counts
+      });
 
       // Bind newest item click
       const newestRow = dockPanelBody.querySelector('[data-item-id]');
@@ -13636,13 +13706,10 @@
     }
 
     if (dockState.tab === "categories") {
-      const resetBtn = document.getElementById("dockResetFiltersTop");
-      if (resetBtn) {
-        resetBtn.addEventListener("click", () => {
-          resetCategoryFilters();
-          renderDock();
-        });
-      }
+      bind("dockResetFiltersTop", "click", () => {
+        resetCategoryFilters();
+        renderDock();
+      });
 
       // Bind category rows
       dockPanelBody.querySelectorAll('[data-category]').forEach(row => {
@@ -13655,6 +13722,8 @@
     }
 
     if (dockState.tab === "system") {
+      bind("dockRunQuickSmoke", "click", () => runQuickSmoke());
+
       // Bind GIS overlay toggles
       dockPanelBody.querySelectorAll('input[data-overlay-id]').forEach(checkbox => {
         checkbox.addEventListener("change", async (e) => {
@@ -13694,14 +13763,11 @@
     }
 
     if (dockState.tab === "nearest") {
-      const toggle = document.getElementById("locationToggle");
-      if (toggle) {
-        toggle.addEventListener("click", () => {
-          setLocationEnabled(!locationEnabled);
-          toggle.classList.toggle("isOn", locationEnabled);
-          updateNearestPanel();
-        });
-      }
+      const toggle = bind("locationToggle", "click", () => {
+        setLocationEnabled(!locationEnabled);
+        toggle?.classList.toggle("isOn", locationEnabled);
+        updateNearestPanel();
+      });
       updateNearestPanel();
     }
 
@@ -13714,14 +13780,10 @@
     }
 
     if (dockState.tab === "tracks") {
-      const startBtn = document.getElementById('trackStartBtn');
-      const stopBtn = document.getElementById('trackStopBtn');
-      const hideBtn = document.getElementById('trackHideBtn');
-      const hapticsBtn = document.getElementById('trackHapticsBtn');
-      startBtn?.addEventListener('click', () => startTrack());
-      stopBtn?.addEventListener('click', () => stopTrack());
-      hideBtn?.addEventListener('click', () => hideTrack());
-      hapticsBtn?.addEventListener('click', () => {
+      bind('trackStartBtn', 'click', () => startTrack());
+      bind('trackStopBtn', 'click', () => stopTrack());
+      bind('trackHideBtn', 'click', () => hideTrack());
+      bind('trackHapticsBtn', 'click', () => {
         trackState.haptics = !trackState.haptics;
         try { localStorage.setItem(STORAGE_KEYS.TRACK_HAPTICS, String(trackState.haptics)); } catch {}
         renderDock();
@@ -13739,23 +13801,34 @@
     }
 
     if (dockState.tab === "sync") {
-      const pullBtn = document.getElementById("hubPullNow");
-      const pushBtn = document.getElementById("hubPushNow");
-      const statusBtn = document.getElementById("hubStatusNow");
-      pullBtn?.addEventListener("click", async () => {
+      bind("hubPullNow", "click", async () => {
         await refreshAll();
         await refreshHubClients();
       });
-      pushBtn?.addEventListener("click", async () => {
+      bind("hubPushNow", "click", async () => {
         await syncPendingReports();
         await refreshHubClients();
         renderDock();
       });
-      statusBtn?.addEventListener("click", async () => {
+      bind("hubStatusNow", "click", async () => {
         await pingHub();
         await refreshHubClients();
         renderDock();
       });
+    }
+
+    const criticalBindingsByTab = {
+      overview: ['dockRefreshAll', 'dockResetFilters'],
+      system: ['dockRunQuickSmoke'],
+      sync: ['hubPullNow', 'hubPushNow', 'hubStatusNow'],
+      tracks: ['trackStartBtn', 'trackStopBtn']
+    };
+    const expectedCritical = criticalBindingsByTab[dockState.tab] || [];
+    const missingCritical = expectedCritical.filter(id => qa.missing.includes(id));
+    if (missingCritical.length) {
+      const warningMsg = `Critical binding audit failed (${dockState.tab}): ${missingCritical.join(', ')}`;
+      if (!qa.warnings.includes(warningMsg)) qa.warnings.push(warningMsg);
+      console.warn('[QA] ' + warningMsg);
     }
 
     updateBarActualHeights();
