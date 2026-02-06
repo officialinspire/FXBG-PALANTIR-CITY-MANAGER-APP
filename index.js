@@ -5506,6 +5506,17 @@
     root.style.setProperty("--topH", `${Math.max(0, Math.round(top))}px`);
   }
 
+  function updateBarActualHeights() {
+    const root = document.documentElement;
+    if (!root) return;
+    const topbar = document.querySelector(".topbar");
+    const bottombar = document.querySelector(".bottombar");
+    const topH = topbar ? topbar.getBoundingClientRect().height : 0;
+    const botH = bottombar ? bottombar.getBoundingClientRect().height : 0;
+    root.style.setProperty("--topbarActual", `${Math.max(0, Math.round(topH))}px`);
+    root.style.setProperty("--bottombarActual", `${Math.max(0, Math.round(botH))}px`);
+  }
+
   // Mobile header collapse helper (for NewsFlash/Radio panels)
   function setMobileHeaderCollapsed(collapsed) {
     if (!IS_MOBILE_UI) return;
@@ -5513,6 +5524,7 @@
     if (!el) return;
     el.classList.toggle("mobileHeader--collapsed", !!collapsed);
     updateChromeHeights();
+    updateBarActualHeights();
   }
 
   // Helper to restore header if no blocking panels are open
@@ -5547,6 +5559,7 @@
     $("diagnosticsOverlay")?.classList.add("diagnosticsOverlay--hidden");
     $("timelinePanel")?.classList.add("timelinePanel--hidden");
     restoreHeaderIfNoBlockingPanels();
+    updateBarActualHeights();
   }
 
   // Ensure panel close button is always visible and tappable
@@ -10449,6 +10462,7 @@
     playClickSound('close');
     panel.classList.add("crimePanel--hidden");
     restoreHeaderIfNoBlockingPanels();
+    updateBarActualHeights();
   }
 
   /**
@@ -13743,6 +13757,8 @@
         renderDock();
       });
     }
+
+    updateBarActualHeights();
   }
 
   // Open dock
@@ -13769,6 +13785,7 @@
     });
 
     renderDock();
+    updateBarActualHeights();
     ensurePanelCloseVisible(dockPanel);
   }
 
@@ -13788,6 +13805,7 @@
 
     // Restore mobile header if no other panels are blocking
     restoreHeaderIfNoBlockingPanels();
+    updateBarActualHeights();
   }
 
   // Toggle dock
@@ -13817,6 +13835,7 @@
     });
 
     renderDock();
+    updateBarActualHeights();
   }
 
   // Filter helpers
@@ -13964,6 +13983,7 @@
     if (mqlMobileLandscape.matches && dockPanelBody) {
       setTimeout(() => {
         dockPanelBody.scrollTop = 0;
+        updateBarActualHeights();
       }, 50);
     }
   };
@@ -13977,6 +13997,7 @@
     if (mqlMobileLandscape.matches && dockPanelBody) {
       setTimeout(() => {
         dockPanelBody.scrollTop = 0;
+        updateBarActualHeights();
       }, 50);
     }
   };
@@ -14568,6 +14589,7 @@
       }
       renderFreshnessBadges();
       updateChromeHeights();
+      updateBarActualHeights();
       runUiSanityCheck("syncUiMode");
       return;
     }
@@ -14581,6 +14603,7 @@
     attachHeaderEventListeners();
     renderFreshnessBadges();
     updateChromeHeights();
+    updateBarActualHeights();
     runUiSanityCheck("syncUiMode");
   }
 
@@ -14591,7 +14614,10 @@
 
   function scheduleChromeHeightUpdate() {
     clearTimeout(__chromeHeightTimer);
-    __chromeHeightTimer = setTimeout(updateChromeHeights, 150);
+    __chromeHeightTimer = setTimeout(() => {
+      updateChromeHeights();
+      updateBarActualHeights();
+    }, 150);
   }
 
 
@@ -14714,10 +14740,12 @@
   window.addEventListener("resize", () => {
     scheduleSyncUiMode();
     scheduleChromeHeightUpdate();
+    updateBarActualHeights();
   });
   window.addEventListener("orientationchange", () => {
     scheduleSyncUiMode();
     scheduleChromeHeightUpdate();
+    updateBarActualHeights();
   });
 
   // -----------------------------
@@ -14752,6 +14780,7 @@
   setBodyUiMode(readStoredUiMode());
   wireUiModeToggle();
   updateChromeHeights();
+  updateBarActualHeights();
   updateCrimeButtonActiveState();
   ensureOverlayLegendControl();
   runUiSanityCheck("boot");
