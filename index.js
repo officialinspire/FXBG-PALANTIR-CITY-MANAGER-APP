@@ -3765,38 +3765,27 @@
     return null;
   }
 
-  async function resolveLatLngForPlace(item, category) {
+  async function resolveLatLngForPlace(item, category, opts = {}) {
+    const allowFallbackCenter = opts.allowFallbackCenter !== false;
     const fallbackCenter = { lat: CONFIG.center.lat, lng: CONFIG.center.lon };
     const placeOverride = resolvePlaceOverride(item || {});
     if (placeOverride && Number.isFinite(placeOverride.lat) && Number.isFinite(placeOverride.lon)) {
       return { lat: placeOverride.lat, lon: placeOverride.lon, method: placeOverride.method || 'precision_pack', confidence: placeOverride.confidence ?? 98, approximate: Boolean(placeOverride.approximate) };
     }
 
-    const addressText = [item?.address, item?.city, item?.state, item?.zip].filter(Boolean).join(', ');
-
-    // Schools: prefer validated NCES dataset coordinates, only override with high-confidence address geocode.
     if (category === 'school') {
       const schoolCoords = getSchoolLatLng(item || {});
-      const datasetBaseline = schoolCoords
-        ? { lat: schoolCoords[0], lon: schoolCoords[1], method: 'nces_dataset', confidence: 70, approximate: false }
-        : null;
-
-      if (addressText && window.FXBGGeocode?.resolveLocation) {
-        const resolved = await resolveWithPrecisionGeocoder({ text: addressText, cityHint: 'Fredericksburg, VA', defaultCenter: fallbackCenter });
-        const confidence = Number.isFinite(resolved?.locationConfidence) ? resolved.locationConfidence : 0;
-        if (resolved && Number.isFinite(resolved.lat) && Number.isFinite(resolved.lon) && confidence >= 88) {
-          return {
-            lat: resolved.lat,
-            lon: resolved.lon,
-            method: resolved.locationMethod || 'address_precision',
-            confidence,
-            approximate: false
-          };
-        }
+      if (schoolCoords) {
+        return { lat: schoolCoords[0], lon: schoolCoords[1], method: 'nces_dataset', confidence: 95, approximate: false };
       }
-
-      return datasetBaseline;
     }
+
+    const directCoords = getAnyLatLng(item || {});
+    if (directCoords && category !== 'school') {
+      return { lat: directCoords[0], lon: directCoords[1], method: 'direct_coords', confidence: 92, approximate: false };
+    }
+
+    const addressText = [item?.address, item?.city, item?.state, item?.zip].filter(Boolean).join(', ');
 
     if (addressText && window.FXBGGeocode?.resolveLocation) {
       const resolved = await resolveWithPrecisionGeocoder({ text: addressText, cityHint: 'Fredericksburg, VA', defaultCenter: fallbackCenter });
@@ -3804,7 +3793,7 @@
         return {
           lat: resolved.lat,
           lon: resolved.lon,
-          method: resolved.locationMethod || 'address',
+          method: resolved.locationMethod || 'address_precision',
           confidence: Number.isFinite(resolved.locationConfidence) ? resolved.locationConfidence : 85,
           approximate: false
         };
@@ -3819,15 +3808,7 @@
       }
     }
 
-    const prefersAddress = Boolean(CONFIG.geocode?.preferAddressFor?.[category]);
-    const hasAddress = Boolean(String(item?.address || '').trim());
-    const allowUpstream = !prefersAddress || !hasAddress || Boolean(CONFIG.geocode?.allowNCESFallback);
-    const inputLat = Number(item?.lat ?? item?.latitude ?? item?.LAT ?? item?.y);
-    const inputLon = Number(item?.lon ?? item?.lng ?? item?.longitude ?? item?.LON ?? item?.x);
-    if (allowUpstream && Number.isFinite(inputLat) && Number.isFinite(inputLon)) {
-      return { lat: inputLat, lon: inputLon, method: 'nces_fallback', confidence: CONFIG.geocode?.ncesFallbackMinConfidence ?? 0, approximate: true };
-    }
-
+    if (!allowFallbackCenter) return null;
     return { lat: fallbackCenter.lat, lon: fallbackCenter.lng, method: 'fallback_center', confidence: 10, approximate: true };
   }
 
@@ -6058,6 +6039,12 @@
       tapToIdentify: false,
       lastVisibleItems: []
     },
+    markerDiagnostics: {
+      attemptedMarkers: 0,
+      placedMarkers: 0,
+      skippedNoCoords: 0,
+      warningShown: false
+    },
     diagnostics: {
       rss: {}  // Keyed by source.id: { ok, httpStatus, itemsParsed, itemsIngested, error, timestamp }
     },
@@ -7594,8 +7581,16 @@
     let markerCount = 0;
     let filtered = { category: 0, bbox: 0, crime: 0 };
     const visibleItems = [];
+    const rssMarkerStats = { attemptedMarkers: 0, placedMarkers: 0, skippedNoCoords: 0 };
 
     for (const item of store.itemsById.values()) {
+      const isRssLike = item.sourceType === 'rss' || item.category === 'alerts' || item.category === 'incident' || item.category === 'incidents';
+      if (isRssLike) {
+        rssMarkerStats.attemptedMarkers++;
+        if (!Number.isFinite(item.lat) || !Number.isFinite(item.lon ?? item.lng)) {
+          rssMarkerStats.skippedNoCoords++;
+        }
+      }
       if (!activeCategories.has(item.category)) {
         filtered.category++;
         continue;
@@ -7618,6 +7613,7 @@
       for (const stack of buildDeclutterStacks(visibleItems)) {
         if (stack.length === 1) {
           attachMarker(stack[0], null, null, { useClusters: false });
+          if (stack[0].sourceType === 'rss' || stack[0].category === 'alerts' || stack[0].category === 'incident' || stack[0].category === 'incidents') rssMarkerStats.placedMarkers++;
         } else {
           attachStackMarker(stack);
         }
@@ -7643,6 +7639,7 @@
               useClusters: false,
               originalLatLon: { lat: item.lat, lon: lng }
             });
+            if (item.sourceType === 'rss' || item.category === 'alerts' || item.category === 'incident' || item.category === 'incidents') rssMarkerStats.placedMarkers++;
             markerCount++;
           }
         }
@@ -7650,6 +7647,7 @@
       } else {
         for (const item of visibleItems) {
           attachMarker(item, null, null, { useClusters: true });
+          if (item.sourceType === 'rss' || item.category === 'alerts' || item.category === 'incident' || item.category === 'incidents') rssMarkerStats.placedMarkers++;
           markerCount++;
         }
         map.addLayer(clusters);
@@ -7657,6 +7655,18 @@
     }
 
     store.mapUi.lastVisibleItems = visibleItems;
+    store.markerDiagnostics.attemptedMarkers = rssMarkerStats.attemptedMarkers;
+    store.markerDiagnostics.placedMarkers = rssMarkerStats.placedMarkers;
+    store.markerDiagnostics.skippedNoCoords = rssMarkerStats.skippedNoCoords;
+
+    if (rssMarkerStats.attemptedMarkers > 0 && rssMarkerStats.placedMarkers === 0) {
+      if (!store.markerDiagnostics.warningShown) {
+        console.warn('[Markers] Markers suppressed: check coordinate resolver', rssMarkerStats);
+        store.markerDiagnostics.warningShown = true;
+      }
+    } else {
+      store.markerDiagnostics.warningShown = false;
+    }
 
     console.log(`Redraw complete: ${markerCount} markers visible (${store.itemsById.size} total items, ${filtered.category} filtered by category, ${filtered.bbox} outside bbox, ${filtered.crime} crime hidden, downtownMode=${downtownMode}, stacks=${useStacks})`);
 
@@ -8978,6 +8988,28 @@
   }
 
   /**
+   * Extracts lat/lon from common coordinate keys.
+   * Handles lat/lon, latitude/longitude, LAT/LON, and x/y variants.
+   * Returns [lat, lon] or null when invalid.
+   */
+  function getAnyLatLng(item) {
+    const latRaw = Number(item?.lat ?? item?.latitude ?? item?.LAT ?? item?.y);
+    const lonRaw = Number(item?.lon ?? item?.lng ?? item?.longitude ?? item?.LON ?? item?.x);
+    if (!Number.isFinite(latRaw) || !Number.isFinite(lonRaw)) return null;
+
+    let lat = latRaw;
+    let lon = lonRaw;
+    if (Math.abs(lat) > 90 && Math.abs(lon) <= 90) {
+      lat = lonRaw;
+      lon = latRaw;
+    }
+
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+    if (Math.abs(lat) > 90 || Math.abs(lon) > 180) return null;
+    return [lat, lon];
+  }
+
+  /**
    * Normalize school coordinates from various possible field names.
    * Handles lat/lon, latitude/longitude, LAT/LON, y/x, and lng variants.
    * Detects and corrects swapped coordinates (when lat looks like longitude and vice versa).
@@ -9053,8 +9085,8 @@
         lon: enrichedSchool.lon ?? enrichedSchool.lng ?? enrichedSchool.longitude ?? enrichedSchool.LON ?? enrichedSchool.x
       });
 
-      const resolved = await resolveLatLngForPlace(enrichedSchool, 'school');
-      if (!resolved || resolved.method === 'fallback_center') {
+      const resolved = await resolveLatLngForPlace(enrichedSchool, 'school', { allowFallbackCenter: false });
+      if (!resolved) {
         skippedInvalid++;
         continue;
       }
@@ -13611,6 +13643,8 @@
     const uniqueMissing = Array.from(new Set(qa.missing));
     const lastRefreshLabel = store.lastRefreshAllTs ? formatRelativeTime(store.lastRefreshAllTs) : 'Never';
     const lastAuditLabel = qa.lastRunTs ? formatRelativeTime(qa.lastRunTs) : 'Never';
+    const attemptedEmojiMarkers = store.markerDiagnostics?.attemptedMarkers ?? 0;
+    const placedEmojiMarkers = store.markerDiagnostics?.placedMarkers ?? 0;
 
     let html = `<div class="dockCard">`;
     html += `<div class="dockRow">`;
@@ -13622,6 +13656,13 @@
     html += `<div class="dockRowLeft"><div class="dockRowTitle">Stale Data Count</div></div>`;
     html += `<div class="dockBadge">${staleCount}</div>`;
     html += `</div>`;
+    html += `<div class="dockRow">`;
+    html += `<div class="dockRowLeft"><div class="dockRowTitle">Emoji markers placed</div></div>`;
+    html += `<div class="dockBadge">${placedEmojiMarkers} / ${attemptedEmojiMarkers}</div>`;
+    html += `</div>`;
+    if (attemptedEmojiMarkers > 0 && placedEmojiMarkers === 0) {
+      html += `<div class="dockRowMeta" style="margin-top:8px;color:var(--warn);">Markers suppressed: check coordinate resolver</div>`;
+    }
 
     // Air Quality status
     if (CONFIG.air.enabled && store.air.aqi !== null) {
