@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "items": [
+    {
+      "name": "UMW - Eagle Landing",
+      "address": "1301 College Ave, Fredericksburg, VA 22401",
+      "lat": 38.3006,
+      "lng": -77.4768,
+      "aliases": ["Eagle Landing", "UMW Eagle Landing"],
+      "tags": ["dorm", "umw", "downtown"]
+    },
+    {
+      "name": "UMW - Arrington Hall",
+      "address": "1312 College Ave, Fredericksburg, VA 22401",
+      "lat": 38.2999,
+      "lng": -77.4781,
+      "aliases": ["Arrington Hall"],
+      "tags": ["dorm", "umw"]
+    },
+    {
+      "name": "UMW - Framar Hall",
+      "address": "1201 William St, Fredericksburg, VA 22401",
+      "lat": 38.3011,
+      "lng": -77.4743,
+      "aliases": ["Framar Hall"],
+      "tags": ["dorm", "umw"]
+    }
+  ]
+}

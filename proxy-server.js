@@ -214,6 +214,8 @@ const GAZETTEER_FILE = path.join(__dirname, "data", "gazetteer.json");
 const INTERSECTIONS_FILE = path.join(__dirname, "data", "intersections.json");
 const PLACES_FILE = path.join(__dirname, "data", "places.json");
 const DOWNTOWN_CENTRAL_PARK_PLACES_FILE = path.join(__dirname, "data", "places-downtown-centralpark.json");
+const DORMS_FILE = path.join(__dirname, "data", "dorms_fxbg.json");
+const SCHOOLS_OVERRIDES_FILE = path.join(__dirname, "data", "schools_address_overrides.json");
 const CACHE_DIR = path.join(__dirname, "data", "cache");
 const VA511_ICONS_CACHE_FILE = path.join(CACHE_DIR, "va511-icons-metadata.json");
 const geoDataCache = new Map();
@@ -3205,6 +3207,16 @@ const server = http.createServer(async (req, res) => {
     if (urlObj.pathname === "/api/places/downtown-centralpark" && req.method === "GET") {
       const payload = await readOrInitGeoDataset(DOWNTOWN_CENTRAL_PARK_PLACES_FILE, "places_downtown_centralpark");
       return send(res, 200, JSON.stringify({ ok: true, data: payload }, null, 2), { "Content-Type": "application/json" });
+    }
+
+    if (urlObj.pathname === "/api/geo/dorms" && req.method === "GET") {
+      const payload = await readOrInitGeoDataset(DORMS_FILE, "dorms");
+      return send(res, 200, JSON.stringify(payload, null, 2), { "Content-Type": "application/json" });
+    }
+
+    if (urlObj.pathname === "/api/geo/schools-overrides" && req.method === "GET") {
+      const payload = await readOrInitGeoDataset(SCHOOLS_OVERRIDES_FILE, "schools_overrides");
+      return send(res, 200, JSON.stringify(payload, null, 2), { "Content-Type": "application/json" });
     }
 
     if (urlObj.pathname === "/api/va511/icons-metadata" && req.method === "GET") {

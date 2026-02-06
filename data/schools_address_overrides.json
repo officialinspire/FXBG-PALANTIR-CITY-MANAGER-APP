@@ -1,0 +1,555 @@
+{
+  "version": 1,
+  "items": [
+    {
+      "name": "Fredericksburg New Elementary",
+      "address": "1 Learning Lane, Fredericksburg, VA 22401",
+      "aliases": []
+    },
+    {
+      "name": "Hugh Mercer Elementary",
+      "address": "2100 Cowan Blvd, Fredericksburg, VA 22401",
+      "aliases": []
+    },
+    {
+      "name": "James Monroe High",
+      "address": "2300 Washington Ave, Fredericksburg, VA 22401",
+      "aliases": []
+    },
+    {
+      "name": "Lafayette Elementary",
+      "address": "3 Learning Lane, Fredericksburg, VA 22401",
+      "aliases": []
+    },
+    {
+      "name": "Walker-Grant Early Childhood Center",
+      "address": "210 Ferdinand Street, Fredericksburg, VA 22401",
+      "aliases": []
+    },
+    {
+      "name": "Walker-Grant Middle",
+      "address": "One Learning Lane, Fredericksburg, VA 22401",
+      "aliases": []
+    },
+    {
+      "name": "Anthony Burns Elementary",
+      "address": "16 Mine Road, Stafford, VA 22554",
+      "aliases": []
+    },
+    {
+      "name": "Aquia Elementary",
+      "address": "9 Perchwood Drive, Stafford, VA 22554",
+      "aliases": []
+    },
+    {
+      "name": "Conway Elementary",
+      "address": "1800 Dixon Street, Fredericksburg, VA 22401",
+      "aliases": []
+    },
+    {
+      "name": "Falmouth Elementary",
+      "address": "100 W. Falmouth Parkway, Fredericksburg, VA 22405",
+      "aliases": []
+    },
+    {
+      "name": "Ferry Farm Elementary",
+      "address": "40 Highlander Drive, Fredericksburg, VA 22405",
+      "aliases": []
+    },
+    {
+      "name": "Garrisonville Elementary",
+      "address": "100 Shelton Shop Road, Stafford, VA 22556",
+      "aliases": []
+    },
+    {
+      "name": "Hampton Oaks Elementary",
+      "address": "107 Kings Forest Lane, Stafford, VA 22554",
+      "aliases": []
+    },
+    {
+      "name": "Hartwood Elementary",
+      "address": "10703 Courthouse Road, Fredericksburg, VA 22407",
+      "aliases": []
+    },
+    {
+      "name": "Kate Waller Barrett Elementary",
+      "address": "150 Duffey Drive, Stafford, VA 22554",
+      "aliases": []
+    },
+    {
+      "name": "Margaret Brent Elementary",
+      "address": "2125 Mountain View Road, Stafford, VA 22556",
+      "aliases": []
+    },
+    {
+      "name": "Moncure Elementary",
+      "address": "180 Moncure Lane, Stafford, VA 22556",
+      "aliases": []
+    },
+    {
+      "name": "Park Ridge Elementary",
+      "address": "201 Park Ridge Drive, Stafford, VA 22554",
+      "aliases": []
+    },
+    {
+      "name": "Rockhill Elementary",
+      "address": "50 Rockhill Church Road, Stafford, VA 22556",
+      "aliases": []
+    },
+    {
+      "name": "Rodney E. Thompson Middle/Elementary (listed under Elementary)",
+      "address": "75 Walpole Street, Stafford, VA 22554",
+      "aliases": []
+    },
+    {
+      "name": "Shirley C. Heim Middle/Elementary (listed under Elementary)",
+      "address": "410 East Shore Drive, Stafford, VA 22554",
+      "aliases": []
+    },
+    {
+      "name": "Stafford Elementary",
+      "address": "63 Stafford Elementary Way, Stafford, VA 22554",
+      "aliases": []
+    },
+    {
+      "name": "Thelma H. Jones Elementary",
+      "address": "703 Hickory Ridge Road, Fredericksburg, VA 22407",
+      "aliases": []
+    },
+    {
+      "name": "Winding Creek Elementary",
+      "address": "475 Winding Creek Road, Stafford, VA 22554",
+      "aliases": []
+    },
+    {
+      "name": "Agnew Middle",
+      "address": "1801 Lancelot Drive, Stafford, VA 22554",
+      "aliases": []
+    },
+    {
+      "name": "Andrew G. Wright Middle",
+      "address": "10001 Courthouse Road, Stafford, VA 22556",
+      "aliases": []
+    },
+    {
+      "name": "Drew Middle",
+      "address": "6701 Stony Hill Road, Spotsylvania, VA 22553",
+      "aliases": []
+    },
+    {
+      "name": "H.H. Poole Middle",
+      "address": "800 East Gunnell Road, Stafford, VA 22554",
+      "aliases": []
+    },
+    {
+      "name": "Rodney E. Thompson Middle",
+      "address": "75 Walpole Street, Stafford, VA 22554",
+      "aliases": []
+    },
+    {
+      "name": "Shirley C. Heim Middle",
+      "address": "410 East Shore Drive, Stafford, VA 22554",
+      "aliases": []
+    },
+    {
+      "name": "Stafford Middle",
+      "address": "101 Stafford Indians Lane, Stafford, VA 22554",
+      "aliases": []
+    },
+    {
+      "name": "Brooke Point High",
+      "address": "1700 Courthouse Road, Stafford, VA 22554",
+      "aliases": []
+    },
+    {
+      "name": "Colonial Forge High",
+      "address": "550 Courthouse Road, Stafford, VA 22554",
+      "aliases": []
+    },
+    {
+      "name": "Mountain View High",
+      "address": "2135 Mountain View Road, Stafford, VA 22556",
+      "aliases": []
+    },
+    {
+      "name": "North Stafford High",
+      "address": "839 Garrisonville Road, Stafford, VA 22554",
+      "aliases": []
+    },
+    {
+      "name": "Phoenix Center for Innovative Learning",
+      "address": "435 E. Hanbury Avenue, Stafford, VA 22554",
+      "aliases": []
+    },
+    {
+      "name": "Battlefield Middle",
+      "address": "2301 Battlefield Parkway, Fredericksburg, VA 22408",
+      "aliases": []
+    },
+    {
+      "name": "Berkeley Elementary",
+      "address": "8017 Lagrange Road, Spotsylvania, VA 22551",
+      "aliases": []
+    },
+    {
+      "name": "Courthouse Academy Program",
+      "address": "8100 Courthouse Rd, Spotsylvania, VA 22551",
+      "aliases": []
+    },
+    {
+      "name": "Courthouse Road Elementary",
+      "address": "9901 Courthouse Rd, Spotsylvania, VA 22553",
+      "aliases": []
+    },
+    {
+      "name": "Courtland High",
+      "address": "6701 Smith Station Road, Spotsylvania, VA 22553",
+      "aliases": []
+    },
+    {
+      "name": "Courtland Middle",
+      "address": "900 Smith Station Road, Fredericksburg, VA 22406",
+      "aliases": []
+    },
+    {
+      "name": "Dr. George E. Mellen Elementary",
+      "address": "12000 Gordon Road, Fredericksburg, VA 22407",
+      "aliases": []
+    },
+    {
+      "name": "Fred M. Lynn Middle",
+      "address": "1650 Leavells Road, Fredericksburg, VA 22407",
+      "aliases": []
+    },
+    {
+      "name": "Gayle Middle",
+      "address": "10050 Catharpin Road, Spotsylvania, VA 22551",
+      "aliases": []
+    },
+    {
+      "name": "Holbert Learning Center",
+      "address": "400 Gateway Blvd, Fredericksburg, VA 22406",
+      "aliases": []
+    },
+    {
+      "name": "Harrison Road Elementary",
+      "address": "1000 Harrison Rd, Fredericksburg, VA 22407",
+      "aliases": []
+    },
+    {
+      "name": "Lee Hill Elementary",
+      "address": "8781 Park Lane, Spotsylvania, VA 22551",
+      "aliases": []
+    },
+    {
+      "name": "Livingston Elementary",
+      "address": "100 Livingston Road, Fredericksburg, VA 22406",
+      "aliases": []
+    },
+    {
+      "name": "Massaponax High",
+      "address": "8201 Jefferson Davis Hwy, Fredericksburg, VA 22407",
+      "aliases": []
+    },
+    {
+      "name": "Massaponax Middle",
+      "address": "4701 Massaponax Church Road, Fredericksburg, VA 22408",
+      "aliases": []
+    },
+    {
+      "name": "Ni River Middle",
+      "address": "8145 Riverbend Road, Fredericksburg, VA 22407",
+      "aliases": []
+    },
+    {
+      "name": "Parkside Elementary",
+      "address": "2400 Central Park Blvd, Fredericksburg, VA 22401",
+      "aliases": []
+    },
+    {
+      "name": "Post Oak Middle",
+      "address": "4300 Panther Parkway, Spotsylvania, VA 22551",
+      "aliases": []
+    },
+    {
+      "name": "Riverbend High",
+      "address": "12301 Spotsylvania Ave., Spotsylvania, VA 22553",
+      "aliases": []
+    },
+    {
+      "name": "Riverview Elementary",
+      "address": "270 Riverview Drive, Fredericksburg, VA 22408",
+      "aliases": []
+    },
+    {
+      "name": "Salem Elementary",
+      "address": "5909 Salem Church Road, Fredericksburg, VA 22407",
+      "aliases": []
+    },
+    {
+      "name": "Salem High",
+      "address": "4800 Cecil Street, Fredericksburg, VA 22407",
+      "aliases": []
+    },
+    {
+      "name": "Spotsylvania High",
+      "address": "6971 Courthouse Road, Spotsylvania, VA 22551",
+      "aliases": []
+    },
+    {
+      "name": "Spotsylvania Middle",
+      "address": "6977 Courthouse Road, Spotsylvania, VA 22551",
+      "aliases": []
+    },
+    {
+      "name": "Spotswood Elementary",
+      "address": "7425 Brock Road, Spotsylvania, VA 22553",
+      "aliases": []
+    },
+    {
+      "name": "Spotswood High",
+      "address": "6975 Courthouse Road, Spotsylvania, VA 22551",
+      "aliases": []
+    },
+    {
+      "name": "Thornburg Middle",
+      "address": "9019 Plank Road, Spotsylvania, VA 22553",
+      "aliases": []
+    },
+    {
+      "name": "Wilderness Elementary",
+      "address": "150 Wilderness Lane, Spotsylvania, VA 22551",
+      "aliases": []
+    },
+    {
+      "name": "Wilderness School",
+      "address": "9210 Plank Road, Spotsylvania, VA 22553",
+      "aliases": []
+    },
+    {
+      "name": "Wilderness Technology Center",
+      "address": "2200 N. Courthouse Road, Spotsylvania, VA 22553",
+      "aliases": []
+    },
+    {
+      "name": "Chancellor Elementary",
+      "address": "5993 Plank Road, Fredericksburg, VA 22407",
+      "aliases": []
+    },
+    {
+      "name": "Chancellor High",
+      "address": "6300 Harrison Road, Fredericksburg, VA 22407",
+      "aliases": []
+    },
+    {
+      "name": "Chancellor Middle",
+      "address": "6300 Beard Road, Fredericksburg, VA 22407",
+      "aliases": []
+    },
+    {
+      "name": "Hawkeye Learning Center",
+      "address": "8701 Lagrange Road, Spotsylvania, VA 22551",
+      "aliases": []
+    },
+    {
+      "name": "King George Elementary",
+      "address": "10381 Ridge Road, King George, VA 22485",
+      "aliases": []
+    },
+    {
+      "name": "King George High",
+      "address": "10100 Foxes Way, King George, VA 22485",
+      "aliases": []
+    },
+    {
+      "name": "King George Middle",
+      "address": "8246 Dahlgren Road, King George, VA 22485",
+      "aliases": []
+    },
+    {
+      "name": "Potomac Elementary",
+      "address": "PO Box 314, Dahlgren, VA 22448",
+      "aliases": []
+    },
+    {
+      "name": "Sealston Elementary",
+      "address": "11048 Fletchers Chapel Rd., King George, VA 22485",
+      "aliases": []
+    },
+    {
+      "name": "A.G. Richardson Elementary",
+      "address": "18370 Simms Dr, Culpeper, VA 22701",
+      "aliases": []
+    },
+    {
+      "name": "Culpeper County High",
+      "address": "14240 Achievement Drive, Culpeper, VA 22701",
+      "aliases": []
+    },
+    {
+      "name": "Culpeper Middle",
+      "address": "14300 Achievement Dr, Culpeper, VA 22701",
+      "aliases": []
+    },
+    {
+      "name": "Eastern View High",
+      "address": "16332 Cyclone Way, Culpeper, VA 22701",
+      "aliases": []
+    },
+    {
+      "name": "Emerald Hill Elementary",
+      "address": "11245 Rixeyville Rd, Culpeper, VA 22701",
+      "aliases": []
+    },
+    {
+      "name": "Farmington Elementary",
+      "address": "500 Sunset Ln, Culpeper, VA 22701",
+      "aliases": []
+    },
+    {
+      "name": "Floyd T. Binns Middle",
+      "address": "205 Grandview Ave., Culpeper, VA 22701",
+      "aliases": []
+    },
+    {
+      "name": "Galbreath-Marshall Building",
+      "address": "1401 Old Fredericksburg Rd., Culpeper, VA 22701",
+      "aliases": []
+    },
+    {
+      "name": "Pearl Sample Elementary",
+      "address": "18480 Simms Dr, Culpeper, VA 22701",
+      "aliases": []
+    },
+    {
+      "name": "Sycamore Park Elementary",
+      "address": "451 Radio Ln, Culpeper, VA 22701",
+      "aliases": []
+    },
+    {
+      "name": "Yowell Elementary",
+      "address": "701 Yowell Drive, Culpeper, VA 22701",
+      "aliases": []
+    },
+    {
+      "name": "Alternative Education Center",
+      "address": "4484 Catlett Road, Midland, VA 22728",
+      "aliases": []
+    },
+    {
+      "name": "Auburn Middle",
+      "address": "7270 Riley Rd., Warrenton, VA 20187",
+      "aliases": []
+    },
+    {
+      "name": "C. Hunter Ritchie Elementary",
+      "address": "4416 Broad Run Church Rd, New Baltimore, VA 20187",
+      "aliases": []
+    },
+    {
+      "name": "C.M. Bradley Elementary",
+      "address": "674 Hastings Ln, Warrenton, VA 20186",
+      "aliases": []
+    },
+    {
+      "name": "Cedar Lee Middle",
+      "address": "11138 Marsh Road, Bealeton, VA 22712",
+      "aliases": []
+    },
+    {
+      "name": "Claude Thompson Elementary",
+      "address": "3284 Rectortown Rd, Marshall, VA 20115",
+      "aliases": []
+    },
+    {
+      "name": "Fauquier High",
+      "address": "705 Waterloo Rd, Warrenton, VA 20186",
+      "aliases": []
+    },
+    {
+      "name": "Grace Miller Elementary",
+      "address": "6248 Catlett Rd, Bealeton, VA 22712",
+      "aliases": []
+    },
+    {
+      "name": "Greenville Elementary",
+      "address": "7389 Academic Avenue, Nokesville, VA 20181",
+      "aliases": []
+    },
+    {
+      "name": "H.M. Pearson Elementary",
+      "address": "9347 Bastable Mill Rd, Catlett, VA 20119",
+      "aliases": []
+    },
+    {
+      "name": "James G. Brumfield Elementary",
+      "address": "550 Alwington Blvd, Warrenton, VA 20186",
+      "aliases": []
+    },
+    {
+      "name": "Kettle Run High",
+      "address": "7403 Academic Avenue, Nokesville, VA 20181",
+      "aliases": []
+    },
+    {
+      "name": "Liberty High",
+      "address": "6300 Independence Ave, Bealeton, VA 22712",
+      "aliases": []
+    },
+    {
+      "name": "Margaret M. Pierce Elementary",
+      "address": "12074 James Madison St, Remington, VA 22734",
+      "aliases": []
+    },
+    {
+      "name": "Marshall Middle",
+      "address": "4048 Zulla Road, Marshall, VA 20115",
+      "aliases": []
+    },
+    {
+      "name": "Mary Walter Elementary",
+      "address": "4529 Morrisville Road, Bealeton, VA 22712",
+      "aliases": []
+    },
+    {
+      "name": "Mountain Vista Governor's School for Math Science and Tech",
+      "address": "6480 College Street, Warrenton, VA 20187",
+      "aliases": []
+    },
+    {
+      "name": "P.B. Smith Elementary",
+      "address": "6176 Dumfries Rd, Warrenton, VA 20187",
+      "aliases": []
+    },
+    {
+      "name": "The Regional Community Alternative Ed Continuum",
+      "address": "C/O Southeastern Alt School, Midland, VA 22728",
+      "aliases": []
+    },
+    {
+      "name": "W.C. Taylor Middle",
+      "address": "244 Waterloo St, Warrenton, VA 20186",
+      "aliases": []
+    },
+    {
+      "name": "W.G. Coleman Elementary",
+      "address": "PO Box 68, Marshall, VA 20116",
+      "aliases": []
+    },
+    {
+      "name": "University of Mary Washington",
+      "address": "1301 College Avenue, Fredericksburg, VA 22401",
+      "aliases": []
+    },
+    {
+      "name": "Germanna Community College",
+      "address": "Fredericksburg Area Campus — 10000 Germanna Point Drive, Fredericksburg, VA 22408",
+      "aliases": []
+    },
+    {
+      "name": "Laurel Ridge Community College",
+      "address": "Fauquier Campus — 6480 College St., Warrenton, VA 20187",
+      "aliases": []
+    }
+  ]
+}

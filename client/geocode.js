@@ -409,4 +409,6 @@
       return snippet;
     }
   };
+
+  window.fxbgAddAnchor = (input = {}) => window.FXBGGeocode.addPlaceAnchor(input);
 })();

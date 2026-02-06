@@ -1827,6 +1827,18 @@
       cacheTtlMs: 6 * 60 * 60 * 1000  // 6 hours
     },
 
+    dorms: {
+      enabled: true,
+      url: "/api/geo/dorms",
+      cacheTtlMs: 6 * 60 * 60 * 1000
+    },
+
+    geocode: {
+      preferAddressFor: { school: true, campus: true, hospital: true, dorm: true, poi: true },
+      allowNCESFallback: false,
+      ncesFallbackMinConfidence: 0
+    },
+
     // GIS Overlays (Fredericksburg OpenData + VDOT)
     gisOverlays: {
       enabled: true,
@@ -3635,6 +3647,75 @@
       for (const k of keys) byKey.set(k, place);
     }
     return byKey;
+  }
+
+  function normalizeNameKey(value) {
+    return String(value || '').toLowerCase().trim().replace(/\s+/g, ' ');
+  }
+
+  function buildNameAddressIndex(items) {
+    const byKey = new Map();
+    for (const item of (Array.isArray(items) ? items : [])) {
+      const keys = [item.id, item.name, ...(Array.isArray(item.aliases) ? item.aliases : [])]
+        .map(normalizeNameKey)
+        .filter(Boolean);
+      for (const key of keys) byKey.set(key, item);
+    }
+    return byKey;
+  }
+
+  function findSchoolAddressOverride(school) {
+    const idx = store?.schoolOverridesIndex;
+    if (!idx || idx.size === 0) return null;
+    const keys = [school?.name, school?.id, school?.ncesId]
+      .map(normalizeNameKey)
+      .filter(Boolean);
+    for (const key of keys) {
+      const hit = idx.get(key);
+      if (hit?.address) return hit;
+    }
+    return null;
+  }
+
+  async function resolveLatLngForPlace(item, category) {
+    const fallbackCenter = { lat: CONFIG.center.lat, lng: CONFIG.center.lon };
+    const placeOverride = resolvePlaceOverride(item || {});
+    if (placeOverride && Number.isFinite(placeOverride.lat) && Number.isFinite(placeOverride.lon)) {
+      return { lat: placeOverride.lat, lon: placeOverride.lon, method: placeOverride.method || 'precision_pack', confidence: placeOverride.confidence ?? 98, approximate: Boolean(placeOverride.approximate) };
+    }
+
+    const addressText = [item?.address, item?.city, item?.state, item?.zip].filter(Boolean).join(', ');
+    if (addressText && window.FXBGGeocode?.resolveLocation) {
+      const resolved = await resolveWithPrecisionGeocoder({ text: addressText, cityHint: 'Fredericksburg, VA', defaultCenter: fallbackCenter });
+      if (resolved && Number.isFinite(resolved.lat) && Number.isFinite(resolved.lon)) {
+        return {
+          lat: resolved.lat,
+          lon: resolved.lon,
+          method: resolved.locationMethod || 'address',
+          confidence: Number.isFinite(resolved.locationConfidence) ? resolved.locationConfidence : 85,
+          approximate: false
+        };
+      }
+    }
+
+    if (addressText && item?.address) {
+      const addrKey = normalizeAddressKey(item.address, item.city, item.state, item.zip);
+      const cachedGeo = addrKey ? geocodeCache.get(addrKey) : null;
+      if (cachedGeo && Number.isFinite(cachedGeo.lat) && Number.isFinite(cachedGeo.lon)) {
+        return { lat: Number(cachedGeo.lat), lon: Number(cachedGeo.lon), method: 'address_geocache', confidence: 80, approximate: false };
+      }
+    }
+
+    const prefersAddress = Boolean(CONFIG.geocode?.preferAddressFor?.[category]);
+    const hasAddress = Boolean(String(item?.address || '').trim());
+    const allowUpstream = !prefersAddress || !hasAddress || Boolean(CONFIG.geocode?.allowNCESFallback);
+    const inputLat = Number(item?.lat ?? item?.latitude ?? item?.LAT ?? item?.y);
+    const inputLon = Number(item?.lon ?? item?.lng ?? item?.longitude ?? item?.LON ?? item?.x);
+    if (allowUpstream && Number.isFinite(inputLat) && Number.isFinite(inputLon)) {
+      return { lat: inputLat, lon: inputLon, method: 'nces_fallback', confidence: CONFIG.geocode?.ncesFallbackMinConfidence ?? 0, approximate: true };
+    }
+
+    return { lat: fallbackCenter.lat, lon: fallbackCenter.lng, method: 'fallback_center', confidence: 10, approximate: true };
   }
 
   function resolvePlaceOverride({ id, name, address, city, state, zip, lat, lon, lng }) {
@@ -5856,6 +5937,10 @@
     },
     places: [],
     placesIndex: new Map(),
+    schoolAddressOverrides: { version: 1, items: [] },
+    schoolOverridesIndex: new Map(),
+    dorms: [],
+    dormsIndex: new Map(),
     // Timeline state for IndexedDB + event normalization
     timeline: {
       events: [],
@@ -8804,7 +8889,7 @@
    * Ingest schools from NCES EDGE dataset (authoritative coordinates)
    * Data format: { schools: [{ ncesId, name, lat, lon, address, grades, ... }] }
    */
-  function ingestSchoolsNces(data) {
+  async function ingestSchoolsNces(data) {
     const schools = Array.isArray(data) ? data : (data?.schools || []);
     let added = 0;
     let skippedInvalid = 0;
@@ -8823,41 +8908,30 @@
     }
 
     for (const school of schools) {
+      const addressOverride = findSchoolAddressOverride(school);
+      const enrichedSchool = {
+        ...school,
+        address: addressOverride?.address || school.address,
+        addressSource: addressOverride?.address ? 'override' : (school.address ? 'dataset' : 'missing')
+      };
       const override = resolvePlaceOverride({
-        id: school.id || school.ncesId,
-        name: school.name,
-        address: school.address,
-        city: school.city,
-        state: school.state,
-        zip: school.zip,
-        lat: school.lat ?? school.latitude ?? school.LAT ?? school.y,
-        lon: school.lon ?? school.lng ?? school.longitude ?? school.LON ?? school.x
+        id: enrichedSchool.id || enrichedSchool.ncesId,
+        name: enrichedSchool.name,
+        address: enrichedSchool.address,
+        city: enrichedSchool.city,
+        state: enrichedSchool.state,
+        zip: enrichedSchool.zip,
+        lat: enrichedSchool.lat ?? enrichedSchool.latitude ?? enrichedSchool.LAT ?? enrichedSchool.y,
+        lon: enrichedSchool.lon ?? enrichedSchool.lng ?? enrichedSchool.longitude ?? enrichedSchool.LON ?? enrichedSchool.x
       });
 
-      // Address-first placement: prefer places dataset override when available
-      const ll = (override && Number.isFinite(override.lat) && Number.isFinite(override.lon))
-        ? [override.lat, override.lon]
-        : getSchoolLatLng(school);
-      if (!ll) {
-        // Determine if invalid coords or out of bounds for logging
-        const rawLat = Number(school.lat ?? school.latitude ?? school.LAT ?? school.y);
-        const rawLon = Number(school.lon ?? school.lng ?? school.longitude ?? school.LON ?? school.x);
-        if (!Number.isFinite(rawLat) || !Number.isFinite(rawLon)) {
-          skippedInvalid++;
-        } else {
-          skippedOutOfBounds++;
-          // Log warning with raw record for schools outside CONFIG.poiBbox
-          console.warn(`[Schools] Skipped out-of-bounds school:`, {
-            id: school.ncesId || school.id || 'unknown',
-            name: school.name,
-            lat: rawLat,
-            lon: rawLon
-          });
-        }
+      const resolved = await resolveLatLngForPlace(enrichedSchool, 'school');
+      const lat = Number(resolved?.lat);
+      const lon = Number(resolved?.lon);
+      if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+        skippedInvalid++;
         continue;
       }
-
-      const [lat, lon] = ll;
       const ncesId = school.ncesId || '';
       const key = `school_nces::${ncesId || school.name}::${lat.toFixed(5)},${lon.toFixed(5)}`;
       if (store.seenKeys.has(key)) continue;
@@ -8865,32 +8939,33 @@
 
       // Build school info panel
       let schoolDetails = `<div style="padding:12px;background:rgba(20,20,20,0.95);border-radius:8px;">
-          <h3 style="margin:0 0 12px 0;color:#FFD700;font-size:18px;font-weight:bold;text-shadow:1px 1px 2px rgba(0,0,0,0.8);">🏫 ${escapeHtml(school.name)}</h3>`;
+          <h3 style="margin:0 0 12px 0;color:#FFD700;font-size:18px;font-weight:bold;text-shadow:1px 1px 2px rgba(0,0,0,0.8);">🏫 ${escapeHtml(enrichedSchool.name)}</h3>`;
 
-      if (school.grades) {
-        schoolDetails += `<p style="margin:0 0 8px 0;color:#7FFF00;font-size:13px;"><strong style="color:#00E5FF;">📚 Grades:</strong> ${escapeHtml(school.grades)}</p>`;
+      if (enrichedSchool.grades) {
+        schoolDetails += `<p style="margin:0 0 8px 0;color:#7FFF00;font-size:13px;"><strong style="color:#00E5FF;">📚 Grades:</strong> ${escapeHtml(enrichedSchool.grades)}</p>`;
       }
 
-      if (school.address) {
-        schoolDetails += `<p style="margin:0 0 8px 0;color:#FFFFFF;font-size:13px;"><strong style="color:#00E5FF;">📍 Address:</strong> ${escapeHtml(school.address)}</p>`;
+      if (enrichedSchool.address) {
+        schoolDetails += `<p style="margin:0 0 8px 0;color:#FFFFFF;font-size:13px;"><strong style="color:#00E5FF;">📍 Address:</strong> ${escapeHtml(enrichedSchool.address)}</p>`;
       }
 
-      if (school.county) {
-        schoolDetails += `<p style="margin:0 0 8px 0;color:#FFFFFF;font-size:13px;"><strong style="color:#00E5FF;">🏛️ District:</strong> ${escapeHtml(school.county)}</p>`;
+      if (enrichedSchool.county) {
+        schoolDetails += `<p style="margin:0 0 8px 0;color:#FFFFFF;font-size:13px;"><strong style="color:#00E5FF;">🏛️ District:</strong> ${escapeHtml(enrichedSchool.county)}</p>`;
       }
 
-      if (school.phone) {
-        schoolDetails += `<p style="margin:0 0 8px 0;color:#FFFFFF;font-size:13px;"><strong style="color:#00E5FF;">📞 Phone:</strong> ${escapeHtml(school.phone)}</p>`;
+      if (enrichedSchool.phone) {
+        schoolDetails += `<p style="margin:0 0 8px 0;color:#FFFFFF;font-size:13px;"><strong style="color:#00E5FF;">📞 Phone:</strong> ${escapeHtml(enrichedSchool.phone)}</p>`;
       }
+      schoolDetails += `<p style="margin:0 0 8px 0;color:#FFFFFF;font-size:12px;"><strong style="color:#00E5FF;">🎯 Method:</strong> ${escapeHtml(resolved?.method || 'fallback')} | <strong style="color:#00E5FF;">Confidence:</strong> ${Number.isFinite(resolved?.confidence) ? Math.round(resolved.confidence) : 0}</p>`;
 
       // Debug mode: show name, lat/lon, address for verification (enabled via DEBUG_SCHOOLS or poiCoords)
       if (DEBUG_SCHOOLS || CONFIG.debug.poiCoords) {
         schoolDetails += `<div style="margin-top:10px;padding:8px;background:rgba(255,215,0,0.1);border:1px dashed #FFD700;border-radius:4px;">`;
         schoolDetails += `<p style="margin:0 0 4px 0;color:#FFD700;font-size:11px;font-weight:bold;">🔧 DEBUG INFO</p>`;
-        schoolDetails += `<p style="margin:0 0 4px 0;color:#888;font-size:11px;font-family:monospace;"><strong>Name:</strong> ${escapeHtml(school.name)}</p>`;
+        schoolDetails += `<p style="margin:0 0 4px 0;color:#888;font-size:11px;font-family:monospace;"><strong>Name:</strong> ${escapeHtml(enrichedSchool.name)}</p>`;
         schoolDetails += `<p style="margin:0 0 4px 0;color:#888;font-size:11px;font-family:monospace;"><strong>Lat/Lon:</strong> ${lat.toFixed(6)}, ${lon.toFixed(6)}</p>`;
-        if (school.address) {
-          schoolDetails += `<p style="margin:0 0 4px 0;color:#888;font-size:11px;font-family:monospace;"><strong>Address:</strong> ${escapeHtml(school.address)}</p>`;
+        if (enrichedSchool.address) {
+          schoolDetails += `<p style="margin:0 0 4px 0;color:#888;font-size:11px;font-family:monospace;"><strong>Address:</strong> ${escapeHtml(enrichedSchool.address)}</p>`;
         }
         schoolDetails += `<button onclick="navigator.clipboard.writeText('${lat.toFixed(6)}, ${lon.toFixed(6)}')" style="font-size:10px;padding:4px 8px;background:#444;color:#fff;border:none;border-radius:4px;cursor:pointer;">Copy coords</button>`;
         schoolDetails += `</div>`;
@@ -8898,12 +8973,12 @@
 
       schoolDetails += `</div>`;
 
-      const summary = [school.grades, school.address, (override?.approximate ? 'Approximate location' : null)].filter(Boolean).join(' | ') || 'School';
+      const summary = [enrichedSchool.grades, enrichedSchool.address, (resolved?.approximate ? 'Approximate location' : null)].filter(Boolean).join(' | ') || 'School';
 
       const item = {
         id: key,
         category: "school",
-        title: school.name,
+        title: enrichedSchool.name,
         summary: summary,
         sourceName: "Schools (NCES)",
         sourceId: "schools-nces",
@@ -8921,9 +8996,13 @@
           isPoi: true,
           poiType: "school",
           nces: true,
-          locationMethod: override?.method || 'nces',
-          locationConfidence: override?.confidence ?? 90,
-          approximate: Boolean(override?.approximate)
+          addressSource: enrichedSchool.addressSource,
+          resolvedByAddressFirst: true,
+          ncesLat: Number(school.lat ?? school.latitude ?? school.LAT ?? school.y),
+          ncesLon: Number(school.lon ?? school.lng ?? school.longitude ?? school.LON ?? school.x),
+          locationMethod: resolved?.method || override?.method || 'fallback',
+          locationConfidence: resolved?.confidence ?? override?.confidence ?? 10,
+          approximate: Boolean(resolved?.approximate)
         }
       };
 
@@ -8971,7 +9050,7 @@
       }
 
       const data = await response.json();
-      const result = ingestSchoolsNces(data);
+      const result = await ingestSchoolsNces(data);
       store.lastFetch.schoolsNces = now;
       console.log(`[SchoolsNCES] Loaded ${result.added} schools from NCES dataset (${result.total} total in file)`);
 
@@ -8994,7 +9073,7 @@
     }
   }
 
-  function ingestColleges(data) {
+  async function ingestColleges(data) {
     const colleges = Array.isArray(data) ? data : (data?.colleges || []);
     let added = 0;
 
@@ -9014,9 +9093,10 @@
         lat: college.lat ?? college.latitude ?? college.LAT,
         lon: college.lng ?? college.lon ?? college.longitude ?? college.LON
       });
-      let lat = Number(override?.lat ?? college.lat ?? college.latitude ?? college.LAT);
-      let lon = Number(override?.lon ?? college.lng ?? college.lon ?? college.longitude ?? college.LON);
-      let approximate = Boolean(override?.approximate);
+      const resolved = await resolveLatLngForPlace(college, 'campus');
+      let lat = Number(resolved?.lat ?? override?.lat ?? college.lat ?? college.latitude ?? college.LAT);
+      let lon = Number(resolved?.lon ?? override?.lon ?? college.lng ?? college.lon ?? college.longitude ?? college.LON);
+      let approximate = Boolean(resolved?.approximate ?? override?.approximate);
 
       if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
         const cityKey = String(college.city || '').toLowerCase();
@@ -9076,7 +9156,7 @@
         message: summary,
         panelHtml: collegeDetails,
         source: { id: "colleges", name: "Colleges/Universities", category: "college" },
-        meta: { isPoi: true, poiType: "college", locationMethod: override?.method || (approximate ? 'city_fallback' : 'dataset'), locationConfidence: override?.confidence ?? (approximate ? 10 : 90), approximate }
+        meta: { isPoi: true, poiType: "college", locationMethod: resolved?.method || override?.method || (approximate ? 'city_fallback' : 'dataset'), locationConfidence: resolved?.confidence ?? override?.confidence ?? (approximate ? 10 : 90), approximate }
       };
 
       registerEvent(item);
@@ -9106,7 +9186,7 @@
       }
 
       const data = await response.json();
-      const result = ingestColleges(data);
+      const result = await ingestColleges(data);
       store.lastFetch.colleges = now;
       console.log(`[Colleges] Loaded ${result.added} colleges/universities (${result.total} total in file)`);
     } catch (e) {
@@ -9132,6 +9212,82 @@
       store.placesIndex = buildPlacesIndex(items);
       console.warn(`[Places] Using cached dataset (${items.length} entries): ${err.message}`);
     }
+  }
+
+  async function loadSchoolsAddressOverrides() {
+    try {
+      const response = await fetch('/api/geo/schools-overrides');
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const payload = await response.json();
+      const items = Array.isArray(payload?.items) ? payload.items : [];
+      store.schoolAddressOverrides = { version: Number(payload?.version) || 1, items };
+      store.schoolOverridesIndex = buildNameAddressIndex(items);
+      await idbSaveMeta('schoolsAddressOverrides', store.schoolAddressOverrides);
+      console.log(`[Schools Overrides] Loaded ${items.length} entries`);
+      return;
+    } catch (err) {
+      const cached = await idbGetMeta('schoolsAddressOverrides');
+      const items = Array.isArray(cached?.items) ? cached.items : [];
+      store.schoolAddressOverrides = { version: Number(cached?.version) || 1, items };
+      store.schoolOverridesIndex = buildNameAddressIndex(items);
+      console.warn(`[Schools Overrides] Using cached dataset (${items.length} entries): ${err.message}`);
+    }
+  }
+
+  async function loadDormsDataset() {
+    if (!CONFIG.dorms?.enabled) return;
+    try {
+      const response = await fetch(CONFIG.dorms.url);
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const payload = await response.json();
+      const items = Array.isArray(payload) ? payload : (Array.isArray(payload?.items) ? payload.items : []);
+      store.dorms = items;
+      store.dormsIndex = buildNameAddressIndex(items);
+      await idbSaveMeta('dormsDataset', { version: 1, items });
+      console.log(`[Dorms] Loaded ${items.length} entries`);
+      return;
+    } catch (err) {
+      const cached = await idbGetMeta('dormsDataset');
+      const items = Array.isArray(cached?.items) ? cached.items : [];
+      store.dorms = items;
+      store.dormsIndex = buildNameAddressIndex(items);
+      console.warn(`[Dorms] Using cached dataset (${items.length} entries): ${err.message}`);
+    }
+  }
+
+  async function ingestDorms() {
+    let added = 0;
+    for (const dorm of (store.dorms || [])) {
+      const resolved = await resolveLatLngForPlace(dorm, 'dorm');
+      const lat = Number(resolved?.lat);
+      const lon = Number(resolved?.lon);
+      if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
+      const key = `dorm::${dorm.id || dorm.name}::${lat.toFixed(5)},${lon.toFixed(5)}`;
+      if (store.seenKeys.has(key)) continue;
+      store.seenKeys.add(key);
+      const item = {
+        id: key,
+        category: 'school',
+        title: dorm.name,
+        summary: [dorm.address, 'Dormitory'].filter(Boolean).join(' | '),
+        sourceName: 'Dorms',
+        sourceId: 'dorms',
+        timestamp: new Date().toISOString(),
+        lat,
+        lon,
+        lng: lon,
+        emoji: '🛏️',
+        tone: 'good',
+        dedupeKey: key,
+        message: dorm.address || 'Dormitory',
+        panelHtml: `<div style="padding:12px;background:rgba(20,20,20,0.95);border-radius:8px;"><h3 style="margin:0 0 10px 0;color:#FFD700;">🛏️ ${escapeHtml(dorm.name || 'Dorm')}</h3><p style="margin:0 0 8px 0;color:#fff;"><strong style="color:#00E5FF;">📍 Address:</strong> ${escapeHtml(dorm.address || 'N/A')}</p><p style="margin:0;color:#fff;"><strong style="color:#00E5FF;">🎯 Method:</strong> ${escapeHtml(resolved?.method || 'fallback')} | <strong style="color:#00E5FF;">Confidence:</strong> ${Number.isFinite(resolved?.confidence) ? Math.round(resolved.confidence) : 0}</p></div>`,
+        source: { id: 'dorms', name: 'Dorms', category: 'school' },
+        meta: { isPoi: true, poiType: 'dorm', locationMethod: resolved?.method || 'fallback', locationConfidence: resolved?.confidence ?? 10, approximate: Boolean(resolved?.approximate) }
+      };
+      registerEvent(item);
+      added++;
+    }
+    return { added, total: (store.dorms || []).length };
   }
 
 
@@ -10759,7 +10915,11 @@
       ensureChipsHaveState();
     }, 30000); // 30 second fallback
 
-    await loadPlacesDataset().catch(() => {});
+    await Promise.all([
+      loadPlacesDataset().catch(() => {}),
+      loadSchoolsAddressOverrides().catch(() => {}),
+      loadDormsDataset().catch(() => {})
+    ]);
 
     // Load RSS feeds and other APIs first (in parallel)
     await Promise.allSettled([
@@ -10772,6 +10932,7 @@
       CONFIG.externalCameras.enabled ? pollExternalCameras().catch(e => console.warn("External cameras refresh partial", e)) : Promise.resolve(),
       CONFIG.schoolsNces?.enabled ? pollSchoolsNces().catch(e => console.warn("NCES Schools refresh partial", e)) : Promise.resolve(),
       CONFIG.colleges?.enabled ? pollColleges().catch(e => console.warn("Colleges refresh partial", e)) : Promise.resolve(),
+      CONFIG.dorms?.enabled ? ingestDorms().catch(e => console.warn("Dorms refresh partial", e)) : Promise.resolve(),
       CONFIG.fxbgCrimeReports.enabled ? pollFxbgCrimeReports().catch(e => console.warn("Crime Reports refresh partial", e)) : Promise.resolve()
     ]);
 
@@ -10974,6 +11135,7 @@
   const diagnosticsRSSList = $("diagnosticsRSSList");
   const diagnosticsRefreshRSS = $("diagnosticsRefreshRSS");
   const diagnosticsRegeocodeRSS = $("diagnosticsRegeocodeRSS");
+  const diagnosticsAuditPlaces = $("diagnosticsAuditPlaces");
   const diagnosticsRSSGeoSummary = $("diagnosticsRSSGeoSummary");
   const diagnosticsRSSGeoList = $("diagnosticsRSSGeoList");
 
@@ -11611,6 +11773,15 @@
         diagnosticsRegeocodeRSS.disabled = false;
         diagnosticsRegeocodeRSS.textContent = "Re-geocode RSS";
       }
+    });
+  }
+  if (diagnosticsAuditPlaces) {
+    diagnosticsAuditPlaces.addEventListener("click", () => {
+      const schools = Array.from(store.itemsById.values()).filter(item => item.category === 'school' && Number.isFinite(item?.meta?.ncesLat) && Number.isFinite(item?.meta?.ncesLon));
+      const mismatches = schools.filter(item => haversineDistance(item.meta.ncesLat, item.meta.ncesLon, item.lat, item.lon) > 200);
+      const msg = `[Audit] Schools with >200m NCES vs resolved mismatch: ${mismatches.length}/${schools.length}`;
+      console.log(msg, mismatches.slice(0, 25).map(item => ({ name: item.title, meters: Math.round(haversineDistance(item.meta.ncesLat, item.meta.ncesLon, item.lat, item.lon)), method: item?.meta?.locationMethod, confidence: item?.meta?.locationConfidence })));
+      alert(msg);
     });
   }
   if (diagnosticsCopy) {
