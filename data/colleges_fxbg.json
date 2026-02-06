@@ -5,11 +5,28 @@
     "lat": 38.3013039,
     "lng": -77.47447,
     "city": "Fredericksburg",
-    "kind": "university"
+    "kind": "university",
+    "address": "1301 College Ave",
+    "state": "VA",
+    "zip": "22401",
+    "dorms": [
+      {
+        "name": "Eagle Landing",
+        "address": "1301 College Ave, Fredericksburg, VA 22401"
+      },
+      {
+        "name": "Arrington Hall",
+        "address": "1312 College Ave, Fredericksburg, VA 22401"
+      },
+      {
+        "name": "Framar Hall",
+        "address": "1201 William St, Fredericksburg, VA 22401"
+      }
+    ]
   },
   {
     "id": "germanna_fxbg",
-    "name": "Germanna Community College — Fredericksburg Area Campus",
+    "name": "Germanna Community College \u2014 Fredericksburg Area Campus",
     "lat": 38.301222,
     "lng": -77.5124009,
     "city": "Fredericksburg",
@@ -20,7 +37,7 @@
   },
   {
     "id": "germanna_locust_grove",
-    "name": "Germanna Community College — Locust Grove Campus",
+    "name": "Germanna Community College \u2014 Locust Grove Campus",
     "lat": null,
     "lng": null,
     "city": "Locust Grove",
