@@ -253,7 +253,8 @@ The **Report** panel supports offline-ish field notes and incident logging. Repo
 ### Usage Notes
 - Reports are stored locally on the server for resiliency if external feeds are down.
 - Use the Report panel to submit incidents, pick a map location, and export data.
-- For light operational checks, run `npm run smoke` after the server starts.
+- For light operational checks against an already running server, run `npm run smoke` (or `BASE_URL=http://host:port npm run smoke`, or `./scripts/smoke.sh http://host:port`).
+- For a one-command local validation, run `npm run smoke:local` to start the proxy, run smoke checks, and shut it down automatically.
 
 ## 📝 Notes
 
