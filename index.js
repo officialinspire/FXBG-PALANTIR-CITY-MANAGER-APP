@@ -105,10 +105,81 @@
     UI_MODE: 'fxbg.uiMode',
     ACTIVE_MISSION: 'fxbg.activeMission',
     HUB_DEVICE_ID: 'fxbg.hubDeviceId',
-    TRACK_HAPTICS: 'fxbg.trackHaptics'
+    TRACK_HAPTICS: 'fxbg.trackHaptics',
+    THEME_CURRENT: 'fxbg_theme_current',
+    THEME_RECENT: 'fxbg_theme_recent'
   };
 
   currentUiMode = readStoredUiMode();
+
+  const THEME_DEFAULT_KEY = 'city-night';
+  const THEME_REGISTRY = {
+    'artic-ops': 'ARTIC OPS',
+    'desert-ops': 'DESERT OPS',
+    'city-day': 'CITY OPS (DAY)',
+    'city-night': 'CITY OPS (NIGHT)',
+    'jungle-ops': 'JUNGLE OPS',
+    'mountain-ops': 'MOUNTAIN OPS'
+  };
+
+  function getSavedTheme() {
+    try {
+      const stored = localStorage.getItem(STORAGE_KEYS.THEME_CURRENT);
+      if (stored && THEME_REGISTRY[stored]) return stored;
+    } catch {}
+    return THEME_DEFAULT_KEY;
+  }
+
+  function loadRecentThemes() {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEYS.THEME_RECENT);
+      const parsed = JSON.parse(raw || '[]');
+      if (!Array.isArray(parsed)) return [];
+      return parsed.filter((key, idx) => THEME_REGISTRY[key] && parsed.indexOf(key) === idx).slice(0, 3);
+    } catch {}
+    return [];
+  }
+
+  function saveRecentThemes(recentThemes) {
+    try {
+      localStorage.setItem(STORAGE_KEYS.THEME_RECENT, JSON.stringify((recentThemes || []).slice(0, 3)));
+    } catch {}
+  }
+
+  function updateThemeRecent(themeKey) {
+    const next = [themeKey, ...loadRecentThemes().filter(key => key !== themeKey)].slice(0, 3);
+    saveRecentThemes(next);
+    return next;
+  }
+
+  function renderThemeRecentChips(activeTheme) {
+    const chipsRoot = document.getElementById('themeRecentChips');
+    if (!chipsRoot) return;
+    const recents = loadRecentThemes();
+    if (!recents.length) {
+      chipsRoot.innerHTML = '<div class="dockMetaText">No recent presets yet.</div>';
+      return;
+    }
+    chipsRoot.innerHTML = recents.map((key) => {
+      const isActive = key === activeTheme;
+      const activeClass = isActive ? ' isActive' : '';
+      return `<button class="themeChip${activeClass}" type="button" data-theme-chip="${escapeAttr(key)}">${escapeHtml(THEME_REGISTRY[key])}</button>`;
+    }).join('');
+  }
+
+  function applyTheme(themeKey, options = {}) {
+    const nextTheme = THEME_REGISTRY[themeKey] ? themeKey : THEME_DEFAULT_KEY;
+    document.documentElement.dataset.theme = nextTheme;
+
+    if (!options.skipPersist) {
+      try { localStorage.setItem(STORAGE_KEYS.THEME_CURRENT, nextTheme); } catch {}
+      updateThemeRecent(nextTheme);
+    }
+
+    const selectEl = document.getElementById('themeSelect');
+    if (selectEl && selectEl.value !== nextTheme) selectEl.value = nextTheme;
+    renderThemeRecentChips(nextTheme);
+  }
 
   // -----------------------------
   // Config
@@ -13670,6 +13741,27 @@
     return html;
   }
 
+  function renderSettingsHTML() {
+    const activeTheme = getSavedTheme();
+    const options = Object.entries(THEME_REGISTRY).map(([key, label]) => {
+      const selected = key === activeTheme ? 'selected' : '';
+      return `<option value="${escapeAttr(key)}" ${selected}>${escapeHtml(label)}</option>`;
+    }).join('');
+
+    let html = `<div class="dockCard settingsCard">`;
+    html += `<div class="dockSectionTitle">Theme Presets</div>`;
+    html += `<label class="dockMetaText" for="themeSelect">Choose a visual preset</label>`;
+    html += `<select id="themeSelect" class="themeSelect">${options}</select>`;
+    html += `<div class="settingsActionRow">`;
+    html += `<button class="dockBtnSmall" id="themeApplyBtn">Apply Theme</button>`;
+    html += `<button class="dockBtnSmall" id="themeReset">Reset to Default</button>`;
+    html += `</div>`;
+    html += `<div class="dockSectionTitle">Recent</div>`;
+    html += `<div id="themeRecentChips" class="themeRecentChips"></div>`;
+    html += `</div>`;
+    return html;
+  }
+
   // Main render function for dock tabs
   function htmlForDockTab(tab) {
     switch(tab) {
@@ -13681,6 +13773,7 @@
       case "alerts": return renderAlertsHTML();
       case "tracks": return renderTracksHTML();
       case "sync": return renderSyncHTML();
+      case "settings": return renderSettingsHTML();
       case "system": return renderSystemHTML();
       default: return "<p>Unknown tab</p>";
     }
@@ -13697,6 +13790,7 @@
       alerts: "Hot Alerts",
       tracks: "Tracks",
       sync: "Sync",
+      settings: "Settings",
       system: "System"
     };
     return titles[tab] || "Dock";
@@ -13755,6 +13849,27 @@
           closeDock();
         });
       });
+    }
+
+    if (dockState.tab === "settings") {
+      const themeSelect = document.getElementById("themeSelect");
+      const applySelectedTheme = () => applyTheme(themeSelect?.value || THEME_DEFAULT_KEY);
+
+      if (themeSelect) {
+        themeSelect.addEventListener("change", () => applySelectedTheme());
+      }
+
+      bind("themeApplyBtn", "click", () => applySelectedTheme());
+      bind("themeReset", "click", () => applyTheme(THEME_DEFAULT_KEY));
+
+      dockPanelBody.querySelectorAll("[data-theme-chip]").forEach((chip) => {
+        chip.addEventListener("click", () => {
+          const key = chip.dataset.themeChip;
+          applyTheme(key || THEME_DEFAULT_KEY);
+        });
+      });
+
+      renderThemeRecentChips(document.documentElement.dataset.theme || getSavedTheme() || THEME_DEFAULT_KEY);
     }
 
     if (dockState.tab === "system") {
@@ -13855,6 +13970,7 @@
 
     const criticalBindingsByTab = {
       overview: ['dockRefreshAll', 'dockResetFilters'],
+      settings: ['themeApplyBtn', 'themeReset'],
       system: ['dockRunQuickSmoke'],
       sync: ['hubPullNow', 'hubPushNow', 'hubStatusNow'],
       tracks: ['trackStartBtn', 'trackStopBtn']
@@ -14977,6 +15093,8 @@
       }
     }
   })();
+
+  applyTheme(getSavedTheme(), { skipPersist: true });
 
   refreshAll();
   if (CONFIG.alertRules?.enabled) {
