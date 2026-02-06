@@ -167,6 +167,57 @@
     }).join('');
   }
 
+
+
+  function parseRgbChannels(colorValue) {
+    if (!colorValue) return null;
+    const match = String(colorValue).trim().match(/rgba?\(([^)]+)\)/i);
+    if (!match) return null;
+    const parts = match[1].split(',').slice(0, 3).map(v => Number.parseFloat(v.trim()));
+    if (parts.length < 3 || parts.some(v => Number.isNaN(v))) return null;
+    return parts.map(v => Math.max(0, Math.min(255, v)));
+  }
+
+  function relativeLuminance(rgb) {
+    if (!Array.isArray(rgb) || rgb.length < 3) return 0;
+    const toLinear = (channel) => {
+      const normalized = channel / 255;
+      return normalized <= 0.03928 ? normalized / 12.92 : Math.pow((normalized + 0.055) / 1.055, 2.4);
+    };
+    const [r, g, b] = rgb;
+    return (0.2126 * toLinear(r)) + (0.7152 * toLinear(g)) + (0.0722 * toLinear(b));
+  }
+
+  function checkThemeContrastSanity(themeKey) {
+    try {
+      const bodyStyles = getComputedStyle(document.body);
+      const bodyBg = parseRgbChannels(bodyStyles.backgroundColor);
+      const bodyTxt = parseRgbChannels(bodyStyles.color);
+      const btnEl = document.querySelector('.btn, .dockBtn, button');
+      const btnStyles = btnEl ? getComputedStyle(btnEl) : null;
+      const btnBg = btnStyles ? parseRgbChannels(btnStyles.backgroundColor) : null;
+      const btnTxt = btnStyles ? parseRgbChannels(btnStyles.color) : null;
+
+      const isLowContrast = (bg, fg, threshold = 2.6) => {
+        if (!bg || !fg) return false;
+        const l1 = relativeLuminance(bg);
+        const l2 = relativeLuminance(fg);
+        const contrast = (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05);
+        return contrast < threshold;
+      };
+
+      const issues = [];
+      if (isLowContrast(bodyBg, bodyTxt, 2.8)) issues.push('body text/background');
+      if (isLowContrast(btnBg, btnTxt, 2.8)) issues.push('button text/background');
+
+      if (issues.length) {
+        const warningMsg = `Theme contrast warning (${themeKey}): low contrast on ${issues.join(' and ')}`;
+        if (!qa.warnings.includes(warningMsg)) qa.warnings.push(warningMsg);
+        if (typeof dockState !== 'undefined' && dockState?.isOpen && dockState.tab === 'system') renderDock();
+      }
+    } catch {}
+  }
+
   function applyTheme(themeKey, options = {}) {
     const nextTheme = THEME_REGISTRY[themeKey] ? themeKey : THEME_DEFAULT_KEY;
     document.documentElement.dataset.theme = nextTheme;
@@ -179,6 +230,7 @@
     const selectEl = document.getElementById('themeSelect');
     if (selectEl && selectEl.value !== nextTheme) selectEl.value = nextTheme;
     renderThemeRecentChips(nextTheme);
+    checkThemeContrastSanity(nextTheme);
   }
 
   // -----------------------------
