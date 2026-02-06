@@ -3702,6 +3702,31 @@
     }
 
     const addressText = [item?.address, item?.city, item?.state, item?.zip].filter(Boolean).join(', ');
+
+    // Schools: prefer validated NCES dataset coordinates, only override with high-confidence address geocode.
+    if (category === 'school') {
+      const schoolCoords = getSchoolLatLng(item || {});
+      const datasetBaseline = schoolCoords
+        ? { lat: schoolCoords[0], lon: schoolCoords[1], method: 'nces_dataset', confidence: 70, approximate: false }
+        : null;
+
+      if (addressText && window.FXBGGeocode?.resolveLocation) {
+        const resolved = await resolveWithPrecisionGeocoder({ text: addressText, cityHint: 'Fredericksburg, VA', defaultCenter: fallbackCenter });
+        const confidence = Number.isFinite(resolved?.locationConfidence) ? resolved.locationConfidence : 0;
+        if (resolved && Number.isFinite(resolved.lat) && Number.isFinite(resolved.lon) && confidence >= 88) {
+          return {
+            lat: resolved.lat,
+            lon: resolved.lon,
+            method: resolved.locationMethod || 'address_precision',
+            confidence,
+            approximate: false
+          };
+        }
+      }
+
+      return datasetBaseline;
+    }
+
     if (addressText && window.FXBGGeocode?.resolveLocation) {
       const resolved = await resolveWithPrecisionGeocoder({ text: addressText, cityHint: 'Fredericksburg, VA', defaultCenter: fallbackCenter });
       if (resolved && Number.isFinite(resolved.lat) && Number.isFinite(resolved.lon)) {
@@ -8922,6 +8947,8 @@
   async function ingestSchoolsNces(data) {
     const schools = Array.isArray(data) ? data : (data?.schools || []);
     let added = 0;
+    let usedDataset = 0;
+    let usedAddress = 0;
     let skippedInvalid = 0;
     let skippedOutOfBounds = 0;
 
@@ -8956,12 +8983,18 @@
       });
 
       const resolved = await resolveLatLngForPlace(enrichedSchool, 'school');
+      if (!resolved || resolved.method === 'fallback_center') {
+        skippedInvalid++;
+        continue;
+      }
       const lat = Number(resolved?.lat);
       const lon = Number(resolved?.lon);
       if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
         skippedInvalid++;
         continue;
       }
+      if (resolved.method === 'nces_dataset') usedDataset++;
+      else usedAddress++;
       const ncesId = school.ncesId || '';
       const key = `school_nces::${ncesId || school.name}::${lat.toFixed(5)},${lon.toFixed(5)}`;
       if (store.seenKeys.has(key)) continue;
@@ -8994,6 +9027,7 @@
         schoolDetails += `<p style="margin:0 0 4px 0;color:#FFD700;font-size:11px;font-weight:bold;">🔧 DEBUG INFO</p>`;
         schoolDetails += `<p style="margin:0 0 4px 0;color:#888;font-size:11px;font-family:monospace;"><strong>Name:</strong> ${escapeHtml(enrichedSchool.name)}</p>`;
         schoolDetails += `<p style="margin:0 0 4px 0;color:#888;font-size:11px;font-family:monospace;"><strong>Lat/Lon:</strong> ${lat.toFixed(6)}, ${lon.toFixed(6)}</p>`;
+        schoolDetails += `<p style="margin:0 0 4px 0;color:#888;font-size:11px;font-family:monospace;"><strong>Resolved:</strong> ${escapeHtml(resolved?.method || 'unknown')}</p>`;
         if (enrichedSchool.address) {
           schoolDetails += `<p style="margin:0 0 4px 0;color:#888;font-size:11px;font-family:monospace;"><strong>Address:</strong> ${escapeHtml(enrichedSchool.address)}</p>`;
         }
@@ -9048,12 +9082,14 @@
       console.log("[Schools] Detailed diagnostics:", {
         totalInFile: schools.length,
         markersAdded: added,
+        usedDataset,
+        usedAddress,
         skippedInvalidCoords: skippedInvalid,
         skippedOutOfBounds: skippedOutOfBounds
       });
     }
 
-    return { added, total: schools.length, skippedInvalid, skippedOutOfBounds };
+    return { added, total: schools.length, usedDataset, usedAddress, skippedInvalid, skippedOutOfBounds };
   }
 
   /**
