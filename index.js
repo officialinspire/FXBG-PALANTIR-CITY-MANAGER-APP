@@ -3091,11 +3091,22 @@
     const candidates = [];
 
     const PROXY_ORIGIN_OVERRIDE_KEY = "CM_PROXY_ORIGIN";
+    const shouldBypassProxyForUrl = (u) => {
+      const host = (u?.hostname || '').toLowerCase();
+      const localHosts = new Set(['localhost', '127.0.0.1', '0.0.0.0']);
+      if (localHosts.has(host)) return true;
+
+      const sameHostname = host === (window.location.hostname || '').toLowerCase();
+      const targetPort = u.port || (u.protocol === 'https:' ? '443' : '80');
+      const currentPort = window.location.port || (window.location.protocol === 'https:' ? '443' : '80');
+      return sameHostname && targetPort === currentPort;
+    };
     const tryLocalProxy = () => {
       try {
         const u = new URL(url, location.href);
         // Only proxy absolute http(s) URLs (skip blob:, data:, etc.)
         if (!/^https?:$/.test(u.protocol)) return null;
+        if (shouldBypassProxyForUrl(u)) return null;
 
         // Determine base origin for proxy
         let baseOrigin = location.origin;
@@ -7259,10 +7270,27 @@
     return message;
   }
 
+  function shouldBypassProxyUrl(url) {
+    try {
+      const u = new URL(url, location.href);
+      const host = (u.hostname || '').toLowerCase();
+      const localHosts = new Set(['localhost', '127.0.0.1', '0.0.0.0']);
+      if (localHosts.has(host)) return true;
+
+      const sameHostname = host === (window.location.hostname || '').toLowerCase();
+      const targetPort = u.port || (u.protocol === 'https:' ? '443' : '80');
+      const currentPort = window.location.port || (window.location.protocol === 'https:' ? '443' : '80');
+      return sameHostname && targetPort === currentPort;
+    } catch {
+      return false;
+    }
+  }
+
   function buildProxyUrl(url) {
     try {
       const u = new URL(url, location.href);
       if (!/^https?:$/.test(u.protocol)) return null;
+      if (shouldBypassProxyUrl(u.toString())) return null;
 
       let baseOrigin = location.origin;
       const PROXY_ORIGIN_OVERRIDE_KEY = "CM_PROXY_ORIGIN";
@@ -8413,7 +8441,7 @@
     // Try primary endpoint first, then fallback if it fails
     const incidentsEndpoints = [
       { url: CONFIG.va511.incidentsGeojson, format: 'json', name: 'primary' },
-      { url: '/api/va511/icons-metadata', format: 'json', name: 'icons-metadata' }
+      { url: '/api/va511/icons-metadata', format: 'json', name: 'icons-metadata', direct: true }
     ];
 
     for (const endpoint of incidentsEndpoints) {
@@ -8436,11 +8464,16 @@
             headers["Referer"] = "https://www.511virginia.org/";
           }
 
-          const response = await fetchWithProxies(urlVariant, {
-          expect: endpoint.format === 'jsonp' ? 'text' : 'json',
-          headers,
-          timeoutMs: 25000
-        });
+          const response = endpoint.direct
+            ? await fetch(urlVariant, { headers, cache: 'no-store' }).then((res) => {
+                if (!res.ok) throw new Error(`http ${res.status}`);
+                return endpoint.format === 'jsonp' ? res.text() : res.json();
+              })
+            : await fetchWithProxies(urlVariant, {
+                expect: endpoint.format === 'jsonp' ? 'text' : 'json',
+                headers,
+                timeoutMs: 25000
+              });
 
         // Parse response based on format
         let inc = endpoint.format === 'jsonp' ? parseJsonp(response) : response;
@@ -8613,12 +8646,9 @@
       let media = null;
 
       // Always prefer snapshot images for cameras (video feeds often don't work)
-      // NOTE: Camera snapshots routed through proxy to avoid 403 from anti-hotlink referrer rules
-      // vdotcameras.com and snapshot.vdotcameras.com block direct hotlinking
+      // Keep original remote URL; snapshot loader chooses proxy only for true remote targets.
       if (cleanedCamUrl) {
-        // Route through proxy to avoid 403 anti-hotlink blocking
-        const proxiedCamUrl = `/proxy?url=${encodeURIComponent(cleanedCamUrl)}`;
-        media = { type: "image", src: proxiedCamUrl, originalSrc: cleanedCamUrl, alt: name };
+        media = { type: "image", src: cleanedCamUrl, originalSrc: cleanedCamUrl, alt: name };
       }
 
       // Debug logging for first 5 cameras to help troubleshoot
