@@ -1,0 +1,37 @@
+{
+  "version": 1,
+  "basemapEnhancers": [
+    {
+      "key": "fxbg_a6b00e",
+      "name": "Fredericksburg Basemap Enhancer",
+      "url": "https://www.arcgis.com/sharing/rest/content/items/a6b00ee8ba5f4f9c879ae35d8af33d51/data",
+      "formatHint": "geojson",
+      "defaultEnabled": true,
+      "styleHint": "line"
+    }
+  ],
+  "toggleLayers": [
+    {
+      "key": "fxbg_caac49",
+      "group": "Fredericksburg",
+      "name": "Fredericksburg City Boundary",
+      "url": "https://www.arcgis.com/sharing/rest/content/items/caac498476d1442aad3ce5107119507f/data",
+      "formatHint": "geojson",
+      "defaultEnabled": false,
+      "styleHint": "poly"
+    }
+  ],
+  "cityLayers": [],
+  "fredBusMode": [],
+  "environmentalTopo": [],
+  "spotsy": [
+    {
+      "key": "spotsy_airports",
+      "group": "Spotsylvania",
+      "name": "Airports",
+      "url": "https://gis.spotsylvania.va.us/portal/apps/sites/#/geohub/datasets/ef877ec407d04e54b0c62086c5d4ffb5",
+      "type": "geohub",
+      "defaultEnabled": false
+    }
+  ]
+}
