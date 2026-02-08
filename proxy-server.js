@@ -269,6 +269,22 @@ const geoDataCache = new Map();
 const va511IconsMemoryCache = { ts: 0, payload: null };
 const VA511_ICONS_CACHE_TTL_MS = 5 * 60 * 1000;
 const VA511_ICONS_SOURCE_URL = "https://files5.iteriscdn.com/WebApps/VA/SafeTravel/data/local/icons/metadata/icons.incident.geojsonp";
+
+// VA511 Events + Cams endpoints (first-class server-side fetch with caching)
+const VA511_EVENTS_SOURCE_URL = "https://511.vdot.virginia.gov/services/map/layers/map/events";
+const VA511_CAMS_SOURCE_URL = "https://511.vdot.virginia.gov/services/map/layers/map/cams";
+const VA511_EVENTS_CACHE_FILE = path.join(CACHE_DIR, "va511-events.json");
+const VA511_CAMS_CACHE_FILE = path.join(CACHE_DIR, "va511-cams.json");
+const VA511_EVENTS_CACHE_TTL_MS = 3 * 60 * 1000;   // 3 minutes fresh
+const VA511_EVENTS_STALE_TTL_MS = 60 * 60 * 1000;   // 1 hour stale fallback
+const VA511_CAMS_CACHE_TTL_MS = 5 * 60 * 1000;      // 5 minutes fresh
+const VA511_CAMS_STALE_TTL_MS = 60 * 60 * 1000;     // 1 hour stale fallback
+const va511EventsMemoryCache = { ts: 0, payload: null };
+const va511CamsMemoryCache = { ts: 0, payload: null };
+
+// FXBG I-95 corridor bounding box for status summary
+const FXBG_I95_BBOX = { minLat: 38.15, maxLat: 38.55, minLon: -77.70, maxLon: -77.20 };
+
 const CDC_SOURCE_URL = "https://data.cdc.gov/api/v3/views/psx4-wq38/query.json";
 const CDC_BACKOFF_MS = 30 * 60 * 1000;
 const cdcState = { backoffUntil: 0, lastReason: null, cache: null };
@@ -354,6 +370,140 @@ async function fetchVa511IconsMetadata() {
       data: null
     };
   }
+}
+
+// ---------------------------------------------------------------------------
+// VA511 Events (server-side fetch with memory + disk cache + stale fallback)
+// ---------------------------------------------------------------------------
+const VA511_UPSTREAM_HEADERS = {
+  "Accept": "application/json,*/*",
+  "Referer": "https://511.vdot.virginia.gov/",
+  "Origin": "https://511.vdot.virginia.gov",
+  "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+};
+
+async function fetchVa511Layer(sourceUrl, memCache, ttlMs, staleTtlMs, diskCacheFile, layerName) {
+  const now = Date.now();
+  // 1. Fresh memory cache?
+  if (memCache.payload && (now - memCache.ts) < ttlMs) {
+    return { ok: true, data: memCache.payload.data, sourceUrl, fetchedAt: memCache.payload.fetchedAt, cached: true, degraded: false };
+  }
+
+  // 2. Try upstream
+  try {
+    const result = await upstreamFetch(sourceUrl, {
+      expectedType: "json",
+      timeoutMs: 15000,
+      headers: VA511_UPSTREAM_HEADERS,
+      upstreamName: `va511-${layerName}`,
+      route: `/api/va511/${layerName}`
+    });
+
+    if (!result.ok || !result.json) {
+      throw new Error(result.error || `upstream returned status ${result.status}`);
+    }
+
+    const payload = { ok: true, data: result.json, sourceUrl, fetchedAt: result.fetchedAt };
+    memCache.ts = now;
+    memCache.payload = payload;
+    await writeJsonFile(diskCacheFile, payload);
+    return { ...payload, cached: false, degraded: false };
+  } catch (err) {
+    // 3. Stale memory cache within stale window?
+    if (memCache.payload && (now - memCache.ts) < staleTtlMs) {
+      return { ok: true, data: memCache.payload.data, sourceUrl, fetchedAt: memCache.payload.fetchedAt, cached: true, degraded: true, reason: err.message };
+    }
+
+    // 4. Disk cache fallback
+    const diskCached = await readJsonFile(diskCacheFile);
+    if (diskCached?.ok && diskCached?.data) {
+      memCache.ts = now;
+      memCache.payload = diskCached;
+      return { ok: true, data: diskCached.data, sourceUrl, fetchedAt: diskCached.fetchedAt || null, cached: true, degraded: true, reason: err.message };
+    }
+
+    // 5. Total failure
+    return { ok: false, data: null, sourceUrl, fetchedAt: null, cached: false, degraded: true, error: err.message };
+  }
+}
+
+async function fetchVa511Events() {
+  return fetchVa511Layer(VA511_EVENTS_SOURCE_URL, va511EventsMemoryCache, VA511_EVENTS_CACHE_TTL_MS, VA511_EVENTS_STALE_TTL_MS, VA511_EVENTS_CACHE_FILE, "events");
+}
+
+async function fetchVa511Cams() {
+  return fetchVa511Layer(VA511_CAMS_SOURCE_URL, va511CamsMemoryCache, VA511_CAMS_CACHE_TTL_MS, VA511_CAMS_STALE_TTL_MS, VA511_CAMS_CACHE_FILE, "cams");
+}
+
+// ---------------------------------------------------------------------------
+// VA511 Status Summary (computed from events)
+// ---------------------------------------------------------------------------
+function computeVa511Status(eventsPayload) {
+  if (!eventsPayload || !eventsPayload.ok || !eventsPayload.data) {
+    if (eventsPayload?.degraded && eventsPayload?.data) {
+      // degraded but have cached data — still compute
+    } else {
+      return {
+        ok: false,
+        totalEvents: 0,
+        i95ApproxCount: 0,
+        byCategory: {},
+        fetchedAt: eventsPayload?.fetchedAt || null,
+        degraded: eventsPayload?.degraded || true,
+        cached: eventsPayload?.cached || false,
+        error: eventsPayload?.error || "no events data"
+      };
+    }
+  }
+
+  const data = eventsPayload.data;
+  // VA511 events can be a FeatureCollection or an array
+  const items = Array.isArray(data) ? data : (data?.features || data?.items || []);
+  const totalEvents = items.length;
+
+  const byCategory = { incident: 0, crash: 0, congestion: 0, closure: 0, construction: 0, other: 0 };
+  let i95ApproxCount = 0;
+
+  for (const item of items) {
+    // Support both GeoJSON features and flat objects
+    const props = item.properties || item;
+    const geom = item.geometry || null;
+    let lat = null, lon = null;
+
+    if (geom && geom.coordinates) {
+      [lon, lat] = geom.coordinates;
+    } else {
+      lat = parseFloat(props.latitude || props.lat || props.y || 0);
+      lon = parseFloat(props.longitude || props.lon || props.lng || props.x || 0);
+    }
+
+    // Categorize
+    const combined = `${props.title || ""} ${props.event || ""} ${props.description || ""} ${props.incident_type || ""} ${props.road || ""}`.toLowerCase();
+    if (/crash|collision|accident|wreck/.test(combined)) byCategory.crash++;
+    else if (/closed|closure|blocked|detour/.test(combined)) byCategory.closure++;
+    else if (/congestion|slow|delay|queue/.test(combined)) byCategory.congestion++;
+    else if (/construction|work\s*zone|lane\s*closure|paving/.test(combined)) byCategory.construction++;
+    else if (/incident/.test(combined)) byCategory.incident++;
+    else byCategory.other++;
+
+    // I-95 corridor count
+    if (isFinite(lat) && isFinite(lon)) {
+      const isI95 = /\bi\-?95\b|\binterstate\s*95\b/.test(combined);
+      if (isI95 && lat >= FXBG_I95_BBOX.minLat && lat <= FXBG_I95_BBOX.maxLat && lon >= FXBG_I95_BBOX.minLon && lon <= FXBG_I95_BBOX.maxLon) {
+        i95ApproxCount++;
+      }
+    }
+  }
+
+  return {
+    ok: true,
+    totalEvents,
+    i95ApproxCount,
+    byCategory,
+    fetchedAt: eventsPayload.fetchedAt,
+    degraded: Boolean(eventsPayload.degraded),
+    cached: Boolean(eventsPayload.cached)
+  };
 }
 
 async function readOrInitGeoDataset(filePath, context) {
@@ -3291,6 +3441,25 @@ const server = http.createServer(async (req, res) => {
     if (urlObj.pathname === "/api/va511/icons-metadata" && req.method === "GET") {
       const payload = await fetchVa511IconsMetadata();
       return send(res, payload.ok ? 200 : 200, JSON.stringify(payload, null, 2), { "Content-Type": "application/json" });
+    }
+
+    // --- VA511 Events (server-side cached) ---
+    if (urlObj.pathname === "/api/va511/events" && req.method === "GET") {
+      const payload = await fetchVa511Events();
+      return send(res, payload.ok ? 200 : 502, JSON.stringify(payload, null, 2), { "Content-Type": "application/json" });
+    }
+
+    // --- VA511 Cameras (server-side cached) ---
+    if (urlObj.pathname === "/api/va511/cams" && req.method === "GET") {
+      const payload = await fetchVa511Cams();
+      return send(res, payload.ok ? 200 : 502, JSON.stringify(payload, null, 2), { "Content-Type": "application/json" });
+    }
+
+    // --- VA511 Status Summary (computed from events, for UI indicator) ---
+    if (urlObj.pathname === "/api/va511/status" && req.method === "GET") {
+      const eventsPayload = await fetchVa511Events();
+      const status = computeVa511Status(eventsPayload);
+      return send(res, status.ok ? 200 : 502, JSON.stringify(status, null, 2), { "Content-Type": "application/json" });
     }
 
     if (urlObj.pathname === "/api/cdc/wonder" && req.method === "GET") {
