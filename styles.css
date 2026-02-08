@@ -411,6 +411,21 @@ body{
   box-shadow: 0 0 12px rgba(68,240,166,.6);
 }
 
+button,
+.btn,
+.iconBtn,
+.filterBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1.2;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
 .btn{
   box-sizing: border-box;
   display: inline-flex;
@@ -441,11 +456,19 @@ body{
   background: var(--btnBgActive);
   box-shadow: var(--shadow2);
 }
+.btn:focus-visible,
+.iconBtn:focus-visible,
+.filterBtn:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+  box-shadow: var(--glow);
+}
 .btn__label{
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  max-width: 100%;
   font-size: 12px;
   font-weight: 700;
   letter-spacing: .05em;
@@ -749,6 +772,11 @@ body.debug-ui button {
   cursor:pointer;
   color: var(--txt);
   transition: all 0.15s ease;
+}
+.iconBtn svg{
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
 }
 .iconBtn:hover{
   background: var(--btnBgHover);
@@ -1085,6 +1113,7 @@ body.debug-ui button {
   padding: 14px 16px;
   border-bottom: 1px solid var(--stroke);
   background: rgba(255, 255, 255, .03);
+  min-width: 0;
 }
 
 .newsFlashPanel__title {
@@ -1094,6 +1123,7 @@ body.debug-ui button {
   font-size: 16px;
   font-weight: 600;
   color: var(--txt);
+  min-width: 0;
 }
 
 .newsFlashPanel__emoji {
@@ -1107,15 +1137,24 @@ body.debug-ui button {
   padding: 12px 16px;
   border-bottom: 1px solid var(--stroke);
   background: rgba(255, 255, 255, .02);
+  min-width: 0;
 }
 
 .filterBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   padding: 6px 12px;
   border-radius: 10px;
   border: 1px solid rgba(255, 255, 255, .10);
   background: rgba(255, 255, 255, .05);
   color: var(--muted);
   font-size: 12px;
+  line-height: 1.1;
+  white-space: nowrap;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
   cursor: pointer;
   transition: all 0.2s ease;
 }
@@ -1129,6 +1168,32 @@ body.debug-ui button {
   background: rgba(126, 240, 255, .15);
   border-color: var(--accent);
   color: var(--accent);
+}
+
+@media (max-width: 720px) {
+  .btn,
+  .filterBtn {
+    min-height: 44px;
+  }
+
+  .filterBtn {
+    white-space: normal;
+    line-height: 1.2;
+  }
+
+  .topbarRow {
+    flex-wrap: wrap;
+    overflow-x: visible;
+    row-gap: 6px;
+  }
+
+  .topbarRow--actions {
+    align-items: flex-start;
+  }
+
+  .leaflet-top {
+    top: calc(var(--topbarActual) + 24px);
+  }
 }
 
 .newsFlashPanel__jurisdiction {
@@ -1652,6 +1717,7 @@ body.debug-ui button {
   border-bottom: 1px solid var(--stroke);
   background: rgba(255, 255, 255, .03);
   gap: 12px;
+  min-width: 0;
 }
 
 .timelinePanel__title {
@@ -1661,6 +1727,7 @@ body.debug-ui button {
   font-size: 15px;
   font-weight: 700;
   flex-shrink: 0;
+  min-width: 0;
 }
 
 .timelinePanel__emoji {
@@ -1675,6 +1742,7 @@ body.debug-ui button {
   font-size: 10px;
   color: var(--muted2);
   flex: 1;
+  min-width: 0;
 }
 
 .timelinePanel__filters {
@@ -1684,6 +1752,7 @@ body.debug-ui button {
   padding: 12px 16px;
   border-bottom: 1px solid var(--stroke);
   align-items: center;
+  min-width: 0;
 }
 
 .timelinePanel__filters label {
@@ -1717,6 +1786,7 @@ body.debug-ui button {
   gap: 6px;
   padding: 12px 16px;
   border-bottom: 1px solid var(--stroke);
+  min-width: 0;
 }
 
 .timelinePanel__sync {
@@ -1724,6 +1794,7 @@ body.debug-ui button {
   gap: 8px;
   padding: 12px 16px;
   border-bottom: 1px solid var(--stroke);
+  min-width: 0;
 }
 
 .timelinePanel__list {
@@ -4102,9 +4173,15 @@ button {
 }
 .activeMissionBar--hidden { display: none; }
 .activeMissionBar__label { font-size: 11px; color: var(--warn); text-transform: uppercase; letter-spacing: .04em; }
-.activeMissionBar__name { font-size: 14px; font-weight: 700; }
-.activeMissionBar__meta { display: flex; flex-direction: column; }
-.activeMissionBar__actions { display: flex; align-items: center; gap: 10px; }
+.activeMissionBar__name {
+  font-size: 14px;
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.activeMissionBar__meta { display: flex; flex-direction: column; min-width: 0; }
+.activeMissionBar__actions { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .activeMissionBar__timer { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-weight: 700; }
 
 body.field-mode .timelinePanel {
