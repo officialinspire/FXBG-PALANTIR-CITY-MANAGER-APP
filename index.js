@@ -3445,6 +3445,9 @@
     events: { lat: -0.004, lon: -0.002 }
   };
 
+  const FAR_AWAY_DISTANCE_MILES = 150;
+  const FAR_AWAY_DISTANCE_METERS = FAR_AWAY_DISTANCE_MILES * 1609.34;
+
   const KNOWN_LOCATION_OVERRIDES = (() => {
     const cams = CONFIG.externalCameras?.cameras || [];
     return cams
@@ -3585,29 +3588,31 @@
     return LOCATION_CONFIDENCE[type] ?? 50;
   }
 
-  function applyDeterministicJitter(base, seed) {
-    const seedText = seed || "rss-fallback";
+  function applyTinyJitter(base, seed, maxMeters = 10) {
+    if (!base || !Number.isFinite(base.lat) || !Number.isFinite(base.lon)) return base;
+    const seedText = seed || "fallback-jitter";
     const hash = parseInt(fnv1a(seedText), 16);
     const angleHash = parseInt(fnv1a(`${seedText}-angle`), 16);
-    const distanceMeters = 50 + (hash % 151); // 50–200m
+    const distanceMeters = hash % Math.max(1, Math.round(maxMeters));
     const angleRad = ((angleHash % 360) * Math.PI) / 180;
     const metersLat = distanceMeters * Math.cos(angleRad);
     const metersLon = distanceMeters * Math.sin(angleRad);
-    const lat = base.lat + (metersLat / 111320);
-    const lon = base.lon + (metersLon / (111320 * Math.cos((base.lat * Math.PI) / 180)));
-    return { lat, lon };
+    return {
+      lat: base.lat + (metersLat / 111320),
+      lon: base.lon + (metersLon / (111320 * Math.cos((base.lat * Math.PI) / 180)))
+    };
   }
 
   /**
    * Get fallback location based on jurisdiction centroid + category offset + deterministic jitter.
    * Returns { lat, lon } with best-guess location for ungeocodeable items.
    */
-  function getFallbackLocationForItem({ source, category, seed }) {
-    const jurisdiction = source.jurisdiction || "Regional";
-    const base = JURISDICTION_CENTROIDS[jurisdiction] || source.defaultLoc || CONFIG.center;
-    const offset = CATEGORY_CENTROID_OFFSETS[category] || { lat: 0, lon: 0 };
-    const centroid = { lat: base.lat + offset.lat, lon: base.lon + offset.lon };
-    return applyDeterministicJitter(centroid, seed);
+  function getFallbackLocationForItem({ source, seed, allowJitter = false } = {}) {
+    const jurisdiction = source?.jurisdiction || "Regional";
+    const base = JURISDICTION_CENTROIDS[jurisdiction] || source?.defaultLoc || CONFIG.center;
+    const centroid = { lat: base.lat, lon: base.lon };
+    if (!allowJitter) return centroid;
+    return applyTinyJitter(centroid, seed, 10);
   }
 
   /**
@@ -3828,51 +3833,232 @@
     return null;
   }
 
-  async function resolveLatLngForPlace(item, category, opts = {}) {
-    const allowFallbackCenter = opts.allowFallbackCenter !== false;
-    const fallbackCenter = { lat: CONFIG.center.lat, lng: CONFIG.center.lon };
+  function buildStructuredAddress(item) {
+    if (!item) return null;
+    const parts = [item.address, item.city, item.state, item.zip]
+      .map(v => String(v || '').trim())
+      .filter(Boolean);
+    if (!parts.length) return null;
+    return parts.join(', ');
+  }
+
+  function isReasonableLatLon(lat, lon, opts = {}) {
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) return false;
+    if (Math.abs(lat) < 0.0001 && Math.abs(lon) < 0.0001) return false;
+    if (Math.abs(lat) > 90 || Math.abs(lon) > 180) return false;
+    const bbox = opts.bbox || null;
+    if (bbox && inBbox(lat, lon, bbox)) return true;
+    const distance = haversineDistance(CONFIG.center.lat, CONFIG.center.lon, lat, lon);
+    return distance <= FAR_AWAY_DISTANCE_METERS;
+  }
+
+  function logCoordinateFallback(contextLabel, notes = []) {
+    if (!(CONFIG.debug.poiCoords || CONFIG.debug.rssGeo || CONFIG.debug.geocoding)) return;
+    const detail = notes.length ? ` (${notes.join("; ")})` : "";
+    console.warn(`[Coords] Fallback for ${contextLabel}${detail}`);
+  }
+
+  async function resolveRssCandidateLocation(item, source) {
+    const textToSearch = `${item.title || ''} ${item.summary || item.message || ''}`;
+    const jurisdictionHint = source?.jurisdiction || 'Regional';
+    const candidates = collectLocationCandidates(textToSearch, jurisdictionHint);
+
+    if (CONFIG.debug.rssGeo) {
+      console.log(`[Location] "${item.title?.slice(0, 50)}..." - Found ${candidates.length} candidates`);
+    }
+
+    const gazetteerCandidates = candidates.filter(c => c.type === 'gazetteer' && c.gazetteerLat && c.gazetteerLon);
+    if (gazetteerCandidates.length > 0) {
+      const best = gazetteerCandidates[0];
+      return {
+        lat: best.gazetteerLat,
+        lon: best.gazetteerLon,
+        locationText: best.phrase,
+        locationMethod: 'gazetteer',
+        locationConfidence: LOCATION_CONFIDENCE.gazetteer,
+        chosenCandidate: { phrase: best.phrase, type: best.type },
+        _geocode: { confidence: LOCATION_CONFIDENCE.gazetteer, method: 'gazetteer', label: best.phrase }
+      };
+    }
+
+    const knownLocation = findKnownLocationFromText(textToSearch);
+    if (knownLocation) {
+      return {
+        lat: knownLocation.lat,
+        lon: knownLocation.lon,
+        locationText: knownLocation.label || 'known location',
+        locationMethod: 'override',
+        locationConfidence: LOCATION_CONFIDENCE.override,
+        _geocode: { confidence: LOCATION_CONFIDENCE.override, method: 'override', label: knownLocation.label || 'known location' }
+      };
+    }
+
+    const best = pickBestCandidate(candidates, jurisdictionHint);
+    if (!best) return null;
+
+    const enrichedPhrase = enrichCandidatePhrase(best.phrase, jurisdictionHint);
+    const baseConfidence = getLocationConfidenceForCandidate(best.type);
+
+    if (CONFIG.debug.rssGeo) {
+      console.log(`[Location] Best candidate: [${best.type}] "${best.phrase}" (score: ${best.score})`);
+      console.log(`[Location] Enriched for geocoding: "${enrichedPhrase}"`);
+    }
+
+    const precise = await resolveWithPrecisionGeocoder({
+      text: enrichedPhrase,
+      cityHint: jurisdictionHint,
+      defaultCenter: { lat: source?.defaultLoc?.lat || CONFIG.center.lat, lng: source?.defaultLoc?.lon || CONFIG.center.lon }
+    });
+    if (precise) {
+      return {
+        lat: precise.lat,
+        lon: precise.lon,
+        locationText: best.rawPhrase,
+        locationMethod: precise.locationMethod,
+        locationConfidence: precise.locationConfidence,
+        chosenCandidate: { phrase: best.rawPhrase, type: best.type },
+        _geocode: precise.geocodeMeta
+      };
+    }
+
+    const geocoded = await geocodeLocation(enrichedPhrase, jurisdictionHint);
+    if (!geocoded) return null;
+
+    const result = {
+      lat: geocoded.lat,
+      lon: geocoded.lon,
+      locationText: best.rawPhrase,
+      locationMethod: 'extract+geocode',
+      locationConfidence: baseConfidence,
+      chosenCandidate: { phrase: best.rawPhrase, type: best.type },
+      _geocode: { confidence: baseConfidence, method: 'extract+geocode', label: best.rawPhrase },
+      flag: null
+    };
+    if (geocoded.aoi === "outside" && LOCAL_JURISDICTIONS.has(String(jurisdictionHint || "").toLowerCase()) && baseConfidence >= 80) {
+      result.locationConfidence = Math.max(0, baseConfidence - 20);
+      result.flag = "outside_aoi";
+      result._geocode = { confidence: result.locationConfidence, method: result.locationMethod, label: best.rawPhrase };
+    }
+    return result;
+  }
+
+  // Coordinate priority order:
+  // 1) Explicit lat/lon (finite, non-zero, reasonable bounds)
+  // 2) Structured address geocode (server /api/geocode)
+  // 3) RSS candidate extraction + geocode (if applicable)
+  // 4) Dataset overrides (places/schools/etc.)
+  // 5) Fallback centroid (no offsets/jitter unless explicitly allowed)
+  async function resolveBestLatLon(item, sourceContext = {}) {
+    const notes = [];
+    const source = sourceContext.source || {};
+    const category = sourceContext.category || item?.category || source?.category || null;
+    const jurisdiction = sourceContext.jurisdiction || item?.jurisdiction || source?.jurisdiction || 'Regional';
+    const defaultLoc = sourceContext.defaultLoc || source?.defaultLoc || CONFIG.center;
+    const bbox = sourceContext.bbox || getBboxForItem(item);
+    const allowFallbackCenter = sourceContext.allowFallbackCenter !== false;
+
+    const directCoords = getAnyLatLng(item || {});
+    if (directCoords && isReasonableLatLon(directCoords[0], directCoords[1], { bbox })) {
+      if (category === 'school' && (item?.ncesId || item?.nces || item?.nces_id)) {
+        return { lat: directCoords[0], lon: directCoords[1], method: 'nces_dataset', confidence: 95, notes };
+      }
+      return { lat: directCoords[0], lon: directCoords[1], method: 'explicit', confidence: 95, notes };
+    }
+    if (directCoords) {
+      notes.push('explicit_coords_out_of_bounds');
+    }
+
+    const addressText = buildStructuredAddress(item);
+    if (addressText) {
+      const geocoded = await geocodeLocation(addressText, jurisdiction);
+      if (geocoded && isReasonableLatLon(geocoded.lat, geocoded.lon, { bbox })) {
+        return { lat: geocoded.lat, lon: geocoded.lon, method: 'address_geocoded', confidence: 90, notes, locationText: addressText, _geocode: { confidence: 90, method: 'address_geocoded', label: addressText } };
+      }
+      notes.push('address_geocode_failed');
+    }
+
+    if (sourceContext.isRss) {
+      const rssResolved = await resolveRssCandidateLocation(item, source);
+      if (rssResolved && Number.isFinite(rssResolved.lat) && Number.isFinite(rssResolved.lon)) {
+        return {
+          lat: rssResolved.lat,
+          lon: rssResolved.lon,
+          method: rssResolved.locationMethod,
+          confidence: rssResolved.locationConfidence,
+          notes,
+          locationText: rssResolved.locationText,
+          chosenCandidate: rssResolved.chosenCandidate,
+          flag: rssResolved.flag,
+          _geocode: rssResolved._geocode
+        };
+      }
+      notes.push('rss_candidate_failed');
+    }
+
     const placeOverride = resolvePlaceOverride(item || {});
     if (placeOverride && Number.isFinite(placeOverride.lat) && Number.isFinite(placeOverride.lon)) {
-      return { lat: placeOverride.lat, lon: placeOverride.lon, method: placeOverride.method || 'precision_pack', confidence: placeOverride.confidence ?? 98, approximate: Boolean(placeOverride.approximate) };
+      return { lat: placeOverride.lat, lon: placeOverride.lon, method: placeOverride.method || 'places_dataset', confidence: placeOverride.confidence ?? 98, notes };
+    }
+    if (placeOverride?.address) {
+      const overrideAddr = buildStructuredAddress(placeOverride);
+      if (overrideAddr) {
+        const overrideGeo = await geocodeLocation(overrideAddr, jurisdiction);
+        if (overrideGeo) {
+          return { lat: overrideGeo.lat, lon: overrideGeo.lon, method: 'places_address', confidence: 88, notes, locationText: overrideAddr, _geocode: { confidence: 88, method: 'places_address', label: overrideAddr } };
+        }
+      }
+      notes.push('places_address_geocode_failed');
     }
 
     if (category === 'school') {
       const schoolCoords = getSchoolLatLng(item || {});
       if (schoolCoords) {
-        return { lat: schoolCoords[0], lon: schoolCoords[1], method: 'nces_dataset', confidence: 95, approximate: false };
+        return { lat: schoolCoords[0], lon: schoolCoords[1], method: 'nces_dataset', confidence: 95, notes };
       }
+      notes.push('school_dataset_missing');
     }
 
-    const directCoords = getAnyLatLng(item || {});
-    if (directCoords && category !== 'school') {
-      return { lat: directCoords[0], lon: directCoords[1], method: 'direct_coords', confidence: 92, approximate: false };
+    if (!allowFallbackCenter) {
+      logCoordinateFallback(item?.title || item?.name || item?.id || 'item', notes);
+      return { lat: null, lon: null, method: 'no_fallback', confidence: 0, notes };
     }
 
-    const addressText = [item?.address, item?.city, item?.state, item?.zip].filter(Boolean).join(', ');
+    if (!notes.length) notes.push('no_coordinate_candidates');
+    const fallbackLoc = getFallbackLocationForItem({ source: { jurisdiction, defaultLoc }, seed: item?.id || item?.title || item?.name || '' });
+    logCoordinateFallback(item?.title || item?.name || item?.id || 'item', notes);
+    return {
+      lat: fallbackLoc.lat,
+      lon: fallbackLoc.lon,
+      method: 'fallback_center',
+      confidence: LOCATION_CONFIDENCE.fallback,
+      notes
+    };
+  }
 
-    if (addressText && window.FXBGGeocode?.resolveLocation) {
-      const resolved = await resolveWithPrecisionGeocoder({ text: addressText, cityHint: 'Fredericksburg, VA', defaultCenter: fallbackCenter });
-      if (resolved && Number.isFinite(resolved.lat) && Number.isFinite(resolved.lon)) {
-        return {
-          lat: resolved.lat,
-          lon: resolved.lon,
-          method: resolved.locationMethod || 'address_precision',
-          confidence: Number.isFinite(resolved.locationConfidence) ? resolved.locationConfidence : 85,
-          approximate: false
-        };
-      }
+  async function resolveLatLngForPlace(item, category, opts = {}) {
+    const allowFallbackCenter = opts.allowFallbackCenter !== false;
+    const poiCategories = new Set(['school', 'dorm', 'college', 'campus', 'poi']);
+    const bbox = poiCategories.has(category) ? CONFIG.poiBbox : CONFIG.bbox;
+    const resolved = await resolveBestLatLon(item, {
+      category,
+      jurisdiction: item?.jurisdiction || 'Regional',
+      defaultLoc: CONFIG.center,
+      bbox,
+      allowFallbackCenter,
+      source: opts.source
+    });
+    if (!Number.isFinite(resolved?.lat) || !Number.isFinite(resolved?.lon)) {
+      return null;
     }
-
-    if (addressText && item?.address) {
-      const addrKey = normalizeAddressKey(item.address, item.city, item.state, item.zip);
-      const cachedGeo = addrKey ? geocodeCache.get(addrKey) : null;
-      if (cachedGeo && Number.isFinite(cachedGeo.lat) && Number.isFinite(cachedGeo.lon)) {
-        return { lat: Number(cachedGeo.lat), lon: Number(cachedGeo.lon), method: 'address_geocache', confidence: 80, approximate: false };
-      }
-    }
-
-    if (!allowFallbackCenter) return null;
-    return { lat: fallbackCenter.lat, lon: fallbackCenter.lng, method: 'fallback_center', confidence: 10, approximate: true };
+    return {
+      lat: resolved.lat,
+      lon: resolved.lon,
+      method: resolved.method,
+      confidence: resolved.confidence,
+      approximate: resolved.method === 'fallback_center',
+      locationText: resolved.locationText,
+      _geocode: resolved._geocode
+    };
   }
 
   function resolvePlaceOverride({ id, name, address, city, state, zip, lat, lon, lng }) {
@@ -3885,19 +4071,59 @@
     if (!hit) return null;
 
     if (Number.isFinite(hit.lat) && Number.isFinite(hit.lng)) {
-      return { lat: Number(hit.lat), lon: Number(hit.lng), confidence: 98, method: 'places_dataset', approximate: false };
+      return {
+        lat: Number(hit.lat),
+        lon: Number(hit.lng),
+        confidence: 98,
+        method: 'places_dataset',
+        approximate: false,
+        address: hit.address,
+        city: hit.city,
+        state: hit.state,
+        zip: hit.zip
+      };
     }
 
     const inputAddressKey = normalizeAddressKey(address, city, state, zip);
     const cachedGeo = inputAddressKey ? geocodeCache.get(inputAddressKey) : null;
     if (cachedGeo && Number.isFinite(cachedGeo.lat) && Number.isFinite(cachedGeo.lon)) {
-      return { lat: Number(cachedGeo.lat), lon: Number(cachedGeo.lon), confidence: 80, method: 'address_geocache', approximate: false };
+      return {
+        lat: Number(cachedGeo.lat),
+        lon: Number(cachedGeo.lon),
+        confidence: 80,
+        method: 'address_geocache',
+        approximate: false,
+        address,
+        city,
+        state,
+        zip
+      };
     }
 
     if (Number.isFinite(lat) && Number.isFinite(lon ?? lng)) {
-      return { lat: Number(lat), lon: Number(lon ?? lng), confidence: 40, method: 'upstream_coords', approximate: true };
+      return {
+        lat: Number(lat),
+        lon: Number(lon ?? lng),
+        confidence: 40,
+        method: 'upstream_coords',
+        approximate: true,
+        address,
+        city,
+        state,
+        zip
+      };
     }
-    return { lat: null, lon: null, confidence: 10, method: 'unknown_address', approximate: true };
+    return {
+      lat: null,
+      lon: null,
+      confidence: 10,
+      method: 'unknown_address',
+      approximate: true,
+      address,
+      city,
+      state,
+      zip
+    };
   }
 
   /**
@@ -4260,150 +4486,26 @@
    * @returns {Promise<Object>} Object with { lat, lon, locationText, locationMethod }
    */
   async function resolveBestLatLonForRssItem(item, source) {
-    const result = {
-      lat: null,
-      lon: null,
-      locationText: null,
-      locationMethod: null,
-      locationConfidence: null,
-      chosenCandidate: null,
-      flag: null
-    };
-
-    // Build search text from title and description
-    const textToSearch = `${item.title || ''} ${item.summary || item.message || ''}`;
-    const jurisdictionHint = source.jurisdiction || 'Regional';
-
-    // Step 1: Collect all location candidates
-    const candidates = collectLocationCandidates(textToSearch, jurisdictionHint);
-
-    if (CONFIG.debug.rssGeo) {
-      console.log(`[Location] "${item.title?.slice(0, 50)}..." - Found ${candidates.length} candidates`);
-    }
-
-    // Step 2: Check for gazetteer matches first (they have exact coordinates)
-    const gazetteerCandidates = candidates.filter(c => c.type === 'gazetteer' && c.gazetteerLat && c.gazetteerLon);
-    if (gazetteerCandidates.length > 0) {
-      const best = gazetteerCandidates[0]; // First gazetteer match wins
-      result.lat = best.gazetteerLat;
-      result.lon = best.gazetteerLon;
-      result.locationText = best.phrase;
-      result.locationMethod = 'gazetteer';
-      result.locationConfidence = LOCATION_CONFIDENCE.gazetteer;
-      result.chosenCandidate = { phrase: best.phrase, type: best.type };
-      result._geocode = { confidence: result.locationConfidence, method: result.locationMethod, label: best.phrase };
-
-      if (CONFIG.debug.rssGeo) {
-        console.log(`[Location] Gazetteer match: "${best.phrase}" -> ${result.lat}, ${result.lon}`);
-      }
-      return result;
-    }
-
-    // Step 3: Try known location overrides (from external cameras config)
-    const knownLocation = findKnownLocationFromText(textToSearch);
-    if (knownLocation) {
-      result.lat = knownLocation.lat;
-      result.lon = knownLocation.lon;
-      result.locationText = knownLocation.label || 'known location';
-      result.locationMethod = 'override';
-      result.locationConfidence = LOCATION_CONFIDENCE.override;
-      result._geocode = { confidence: result.locationConfidence, method: result.locationMethod, label: result.locationText };
-
-      if (CONFIG.debug.rssGeo) {
-        console.log(`[Location] Known location override -> ${result.lat}, ${result.lon}`);
-      }
-      return result;
-    }
-
-    // Step 4: Pick best candidate and geocode
-    const best = pickBestCandidate(candidates, jurisdictionHint);
-
-    if (best) {
-      // Enrich with jurisdiction context
-      const enrichedPhrase = enrichCandidatePhrase(best.phrase, jurisdictionHint);
-      const baseConfidence = getLocationConfidenceForCandidate(best.type);
-      result.chosenCandidate = { phrase: best.rawPhrase, type: best.type };
-
-      if (CONFIG.debug.rssGeo) {
-        console.log(`[Location] Best candidate: [${best.type}] "${best.phrase}" (score: ${best.score})`);
-        console.log(`[Location] Enriched for geocoding: "${enrichedPhrase}"`);
-      }
-
-      // Geocode the enriched phrase (precision resolver first, legacy geocoder fallback)
-      const precise = await resolveWithPrecisionGeocoder({
-        text: enrichedPhrase,
-        cityHint: jurisdictionHint,
-        defaultCenter: { lat: source.defaultLoc?.lat || CONFIG.center.lat, lng: source.defaultLoc?.lon || CONFIG.center.lon }
-      });
-
-      if (precise) {
-        result.lat = precise.lat;
-        result.lon = precise.lon;
-        result.locationText = best.rawPhrase;
-        result.locationMethod = precise.locationMethod;
-        result.locationConfidence = precise.locationConfidence;
-        result._geocode = precise.geocodeMeta;
-        return result;
-      }
-
-      const geocoded = await geocodeLocation(enrichedPhrase, jurisdictionHint);
-
-      if (geocoded) {
-        result.lat = geocoded.lat;
-        result.lon = geocoded.lon;
-        result.locationText = best.rawPhrase;
-        result.locationMethod = 'extract+geocode';
-        result.locationConfidence = baseConfidence;
-        result._geocode = { confidence: result.locationConfidence, method: result.locationMethod, label: best.rawPhrase };
-
-        if (geocoded.aoi === "outside" && LOCAL_JURISDICTIONS.has(String(jurisdictionHint || "").toLowerCase()) && baseConfidence >= 80) {
-          result.locationConfidence = Math.max(0, baseConfidence - 20);
-          result.flag = "outside_aoi";
-        }
-
-        if (CONFIG.debug.rssGeo) {
-          console.log(`[Location] Geocoded "${enrichedPhrase}" -> ${result.lat}, ${result.lon}`);
-        }
-        return result;
-      } else {
-        if (CONFIG.debug.rssGeo) {
-          console.log(`[Location] Geocoding failed for "${enrichedPhrase}"`);
-        }
-      }
-    }
-
-    // Step 5: Fallback - no valid location found
-    if (CONFIG.debug.rssGeo) {
-      const reason = candidates.length === 0 ? 'no candidates found' : 'geocoding failed';
-      console.log(`[Location] Fallback: ${reason} for "${item.title?.slice(0, 50)}..."`);
-    }
-
-    // Fallback using resolver center first, then intelligent category/content default
-    const precisionFallback = await resolveWithPrecisionGeocoder({
-      text: textToSearch,
-      cityHint: jurisdictionHint,
-      defaultCenter: { lat: source.defaultLoc?.lat || CONFIG.center.lat, lng: source.defaultLoc?.lon || CONFIG.center.lon }
+    const resolved = await resolveBestLatLon(item, {
+      isRss: true,
+      source,
+      jurisdiction: source?.jurisdiction || 'Regional',
+      category: source?.category
     });
-    if (precisionFallback) {
-      result.lat = precisionFallback.lat;
-      result.lon = precisionFallback.lon;
-      result.locationText = precisionFallback.locationText;
-      result.locationMethod = precisionFallback.locationMethod;
-      result.locationConfidence = precisionFallback.locationConfidence;
-      result._geocode = precisionFallback.geocodeMeta;
-      return result;
-    }
-
-    const fallbackSeed = `${source.id}|${item.guid || item.url || item.title || ""}|${item.published || ""}`;
-    const fallbackLoc = getFallbackLocationForItem({ source, category: source.category, seed: fallbackSeed });
-    result.lat = fallbackLoc.lat;
-    result.lon = fallbackLoc.lon;
-    result.locationText = null;
-    result.locationMethod = 'fallback';
-    result.locationConfidence = LOCATION_CONFIDENCE.fallback;
-    result._geocode = { confidence: result.locationConfidence, method: 'fallback_center', label: jurisdictionHint || 'Regional center' };
-
-    return result;
+    return {
+      lat: resolved.lat,
+      lon: resolved.lon,
+      locationText: resolved.locationText || null,
+      locationMethod: resolved.method || null,
+      locationConfidence: resolved.confidence || null,
+      chosenCandidate: resolved.chosenCandidate || null,
+      flag: resolved.flag || null,
+      _geocode: resolved._geocode || (Number.isFinite(resolved.confidence) || resolved.method ? {
+        confidence: Number.isFinite(resolved.confidence) ? resolved.confidence : null,
+        method: resolved.method || "unknown",
+        label: resolved.locationText || "Unknown location"
+      } : null)
+    };
   }
 
 
@@ -7046,9 +7148,9 @@
 
     // CRITICAL: Never drop items due to missing geodata - always use deterministic fallback
     let loc = raw.loc || fallbackLoc;
-    let locationMethod = raw.locationMethod || (raw.loc ? "override" : "fallback");
+    let locationMethod = raw.locationMethod || (raw.loc ? "override" : "fallback_center");
     let locationConfidence = Number.isFinite(raw.locationConfidence) ? raw.locationConfidence : null;
-    if (locationMethod === "fallback") {
+    if (locationMethod === "fallback_center") {
       loc = fallbackLoc;
       locationConfidence = LOCATION_CONFIDENCE.fallback;
     } else if (!Number.isFinite(locationConfidence) && locationMethod in LOCATION_CONFIDENCE) {
@@ -7255,6 +7357,19 @@
          </div>`
       : "";
 
+    const debugMethod = item._geocode?.method || item.locationMethod || item.meta?.locationMethod || "unknown";
+    const debugConfidence = Number.isFinite(item._geocode?.confidence)
+      ? item._geocode.confidence
+      : (Number.isFinite(item.locationConfidence) ? item.locationConfidence : item.meta?.locationConfidence);
+    const debugLocation = (item._geocode?.label || item.locationText || item.address || item.meta?.address || "").toString().trim();
+    const debugLocationTrim = debugLocation.length > 80 ? `${debugLocation.slice(0, 77)}…` : debugLocation || "n/a";
+    const poiCoordsDebug = CONFIG.debug.poiCoords
+      ? `<div style="font-size:10px; color:rgba(126,240,255,0.6); margin-top:6px; padding-top:6px; border-top:1px solid rgba(255,255,255,0.08);">
+           <div><strong>Why here?</strong> ${escapeHtml(debugMethod)} • Confidence: ${Number.isFinite(debugConfidence) ? Math.round(debugConfidence) : "—"}</div>
+           <div>Original: ${escapeHtml(debugLocationTrim)}</div>
+         </div>`
+      : "";
+
     return `
       <div style="min-width:220px; max-width:280px">
         <div style="font-weight:900; font-size:13px; margin-bottom:6px">${item.emoji} ${safeTitle}</div>
@@ -7264,6 +7379,7 @@
         ${locationInfo}
         <a href="${item.url}" target="_blank" rel="noreferrer noopener" style="color:#7ef0ff; font-weight:800; text-decoration:none">Open source ↗</a>
         ${locationDebug}
+        ${poiCoordsDebug}
       </div>
     `;
   }
@@ -7309,6 +7425,59 @@
       bins.get(key).push(item);
     }
     return Array.from(bins.values());
+  }
+
+  function coerceRenderableLocation(item) {
+    if (!item) return null;
+    let lat = Number(item.lat);
+    let lon = Number(item.lon ?? item.lng);
+    const hasCoords = isReasonableLatLon(lat, lon, { bbox: getBboxForItem(item) });
+    const source = item.source || { jurisdiction: item.jurisdiction || "Regional", defaultLoc: CONFIG.center };
+
+    if (!hasCoords) {
+      const fallbackLoc = getFallbackLocationForItem({ source, seed: item.id || item.title || "" });
+      lat = fallbackLoc.lat;
+      lon = fallbackLoc.lon;
+      item.lat = lat;
+      item.lon = lon;
+      item.lng = lon;
+      item.locationMethod = item.locationMethod || "fallback_center";
+      item.locationConfidence = Number.isFinite(item.locationConfidence) ? item.locationConfidence : LOCATION_CONFIDENCE.fallback;
+      item._geocode = item._geocode || {
+        confidence: item.locationConfidence,
+        method: item.locationMethod,
+        label: item.locationText || (item.jurisdiction ? `${item.jurisdiction} center` : "Fallback center"),
+        notes: ["missing_coords_fallback"]
+      };
+    }
+
+    const bbox = getBboxForItem(item);
+    const outsideAoi = !inBbox(lat, lon, bbox);
+    if (outsideAoi) {
+      item.flag = item.flag || "outside_aoi";
+      if (item._geocode) {
+        item._geocode.notes = Array.isArray(item._geocode.notes) ? Array.from(new Set([...item._geocode.notes, "outside_aoi"])) : ["outside_aoi"];
+      }
+    }
+
+    const distance = haversineDistance(CONFIG.center.lat, CONFIG.center.lon, lat, lon);
+    if (distance > FAR_AWAY_DISTANCE_METERS) {
+      const fallbackLoc = getFallbackLocationForItem({ source, seed: item.id || item.title || "" });
+      item.lat = fallbackLoc.lat;
+      item.lon = fallbackLoc.lon;
+      item.lng = fallbackLoc.lon;
+      item.flag = "far_clamped";
+      item.locationMethod = item.locationMethod || "fallback_center";
+      item.locationConfidence = LOCATION_CONFIDENCE.fallback;
+      item._geocode = item._geocode || {};
+      item._geocode.method = item._geocode.method || "fallback_center";
+      item._geocode.confidence = Number.isFinite(item._geocode.confidence) ? item._geocode.confidence : LOCATION_CONFIDENCE.fallback;
+      item._geocode.notes = Array.isArray(item._geocode.notes)
+        ? Array.from(new Set([...item._geocode.notes, "far_clamped"]))
+        : ["far_clamped"];
+    }
+
+    return item;
   }
 
   function formatProxyError(response) {
@@ -7664,6 +7833,7 @@
     const rssMarkerStats = { attemptedMarkers: 0, placedMarkers: 0, skippedNoCoords: 0 };
 
     for (const item of store.itemsById.values()) {
+      coerceRenderableLocation(item);
       const isRssLike = item.sourceType === 'rss' || item.category === 'alerts' || item.category === 'incident' || item.category === 'incidents';
       if (isRssLike) {
         rssMarkerStats.attemptedMarkers++;
@@ -7677,7 +7847,6 @@
       }
       if (!inBbox(item.lat, item.lon, getBboxForItem(item))) {
         filtered.bbox++;
-        continue;
       }
       if (item.sourceId === "fxbg-crime-reports" && !isCrimeItemVisible(item)) {
         filtered.crime++;
@@ -9291,6 +9460,7 @@
           isPoi: true,
           poiType: "school",
           nces: true,
+          address: enrichedSchool.address,
           addressSource: enrichedSchool.addressSource,
           resolvedByAddressFirst: true,
           ncesLat: Number(school.lat ?? school.latitude ?? school.LAT ?? school.y),
@@ -9453,7 +9623,7 @@
         message: summary,
         panelHtml: collegeDetails,
         source: { id: "colleges", name: "Colleges/Universities", category: "college" },
-        meta: { isPoi: true, poiType: "college", locationMethod: resolved?.method || override?.method || (approximate ? 'city_fallback' : 'dataset'), locationConfidence: resolved?.confidence ?? override?.confidence ?? (approximate ? 10 : 90), approximate }
+        meta: { isPoi: true, poiType: "college", address: college.address, locationMethod: resolved?.method || override?.method || (approximate ? 'city_fallback' : 'dataset'), locationConfidence: resolved?.confidence ?? override?.confidence ?? (approximate ? 10 : 90), approximate }
       };
 
       registerEvent(item);
@@ -9579,7 +9749,7 @@
         message: dorm.address || 'Dormitory',
         panelHtml: `<div style="padding:12px;background:rgba(20,20,20,0.95);border-radius:8px;"><h3 style="margin:0 0 10px 0;color:#FFD700;">🛏️ ${escapeHtml(dorm.name || 'Dorm')}</h3><p style="margin:0 0 8px 0;color:#fff;"><strong style="color:#00E5FF;">📍 Address:</strong> ${escapeHtml(dorm.address || 'N/A')}</p><p style="margin:0;color:#fff;"><strong style="color:#00E5FF;">🎯 Method:</strong> ${escapeHtml(resolved?.method || 'fallback')} | <strong style="color:#00E5FF;">Confidence:</strong> ${Number.isFinite(resolved?.confidence) ? Math.round(resolved.confidence) : 0}</p></div>`,
         source: { id: 'dorms', name: 'Dorms', category: 'school' },
-        meta: { isPoi: true, poiType: 'dorm', locationMethod: resolved?.method || 'fallback', locationConfidence: resolved?.confidence ?? 10, approximate: Boolean(resolved?.approximate) }
+        meta: { isPoi: true, poiType: 'dorm', address: dorm.address, locationMethod: resolved?.method || 'fallback', locationConfidence: resolved?.confidence ?? 10, approximate: Boolean(resolved?.approximate) }
       };
       registerEvent(item);
       added++;
