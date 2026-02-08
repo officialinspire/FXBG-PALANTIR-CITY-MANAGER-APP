@@ -493,3 +493,19 @@ curl -s http://localhost:8000/api/va511/icons-metadata | python3 -m json.tool | 
 - **Fallback preserved**: `511virginia.org` GeoJSON endpoint remains as fallback
 - **Status polling**: `pollVa511()` now fetches `/api/va511/status` for the I-95 indicator chip with "updated X min ago" label
 - **Icons metadata**: Loaded separately into `store.va511IconMeta` (not mixed with incidents)
+
+---
+
+## Module 4: RSS Reliability Notes (Feeds + Geocoding)
+
+### Known Blocked/Degraded Feeds (Mitigations)
+
+- **fredericksburgva.gov / spotsylvania.va.us / staffordcountyva.gov / staffordschools.net**
+  - **Symptom:** 403 or empty responses when RSS requests lack browser-like headers.
+  - **Mitigation:** Proxy applies an RSS header shim (User-Agent, Accept, Accept-Language, Referer/Origin) when the URL looks like RSS/XML.
+  - **Fallback behavior:** If still blocked, stale cache is served when available and diagnostics mark the feed degraded.
+
+### Caching Notes
+
+- Client now sends `X-Cache-TTL-MS` to align with proxy TTL parsing.
+- Proxy continues to honor TTL caps and serves cached data when upstreams fail.

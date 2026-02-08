@@ -1442,6 +1442,48 @@ const TTL_CONFIG = {
   ]
 };
 
+const RSS_HEADER_HOSTS = [
+  "fredericksburgva.gov",
+  "spotsylvania.va.us",
+  "staffordcountyva.gov",
+  "staffordschools.net"
+];
+
+const RSS_ACCEPT_HEADER = "application/rss+xml, application/atom+xml, application/xml, text/xml, */*";
+const RSS_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+
+function shouldApplyRssHeaderShim(targetUrl, acceptHeader) {
+  let host = "";
+  let path = "";
+  try {
+    const url = new URL(targetUrl);
+    host = url.hostname;
+    path = url.pathname || "";
+  } catch {
+    return false;
+  }
+
+  const hostMatch = RSS_HEADER_HOSTS.some((allowed) => host === allowed || host.endsWith(`.${allowed}`));
+  if (!hostMatch) return false;
+
+  const accept = String(acceptHeader || "").toLowerCase();
+  const rssAccept = accept.includes("rss+xml") || accept.includes("atom+xml") || accept.includes("application/xml") || accept.includes("text/xml");
+  const rssUrl = /RSSFeed\.aspx/i.test(targetUrl) || /\.(rss|xml)(\?|$)/i.test(path);
+  return rssAccept || rssUrl;
+}
+
+function buildRssHeaderShim(targetUrl) {
+  const url = new URL(targetUrl);
+  const origin = `https://${url.hostname}`;
+  return {
+    "User-Agent": RSS_USER_AGENT,
+    "Accept": RSS_ACCEPT_HEADER,
+    "Accept-Language": "en-US,en;q=0.9",
+    "Referer": `${origin}/`,
+    "Origin": origin
+  };
+}
+
 function parseTtl(reqUrl, reqHeaders) {
   // 1. Check for explicit client hint header
   const hinted = Number(reqHeaders["x-cache-ttl-ms"] || 0);
@@ -1912,6 +1954,10 @@ async function proxyFetch(targetUrl, reqHeaders) {
             }
           } catch {}
         }
+      }
+
+      if (shouldApplyRssHeaderShim(targetUrl, accept)) {
+        Object.assign(upstreamHeaders, buildRssHeaderShim(targetUrl));
       }
 
       // Add timeout support via AbortController
