@@ -212,6 +212,7 @@ const PAYLOAD_LIMITS = {
   image: 5 * 1024 * 1024,
   binary: 5 * 1024 * 1024
 };
+const MAX_LAYER_BYTES = Number(process.env.MAX_LAYER_BYTES) || 25 * 1024 * 1024;
 
 class UpstreamError extends Error {
   constructor(code, message) {
@@ -247,6 +248,23 @@ function resolvePayloadLimit(contentType, expectedType) {
   return PAYLOAD_LIMITS.binary;
 }
 
+function isLayerDownloadRequest(targetUrl, acceptHeader) {
+  if (!targetUrl) return false;
+  const accept = String(acceptHeader || "").toLowerCase();
+  if (!accept.includes("geojson") && !accept.includes("application/json")) return false;
+  try {
+    const urlObj = new URL(targetUrl);
+    const pathLower = urlObj.pathname.toLowerCase();
+    const looksArcgis = pathLower.includes("/featureserver/") || pathLower.includes("/mapserver/");
+    const looksQuery = pathLower.endsWith("/query") || urlObj.searchParams.has("geometry") || urlObj.searchParams.has("where");
+    const format = String(urlObj.searchParams.get("f") || "").toLowerCase();
+    const isGeoFormat = format.includes("geojson") || format.includes("json");
+    return looksArcgis && (looksQuery || isGeoFormat);
+  } catch {
+    return false;
+  }
+}
+
 const REPORTS_FILE = path.join(__dirname, "data", "reports.json");
 const REPORT_UPLOAD_DIR = path.join(__dirname, "data", "uploads", "reports");
 const REPORT_ALLOWED_MIME = new Set(["image/jpeg", "image/png", "image/webp"]);
@@ -263,6 +281,8 @@ const PLACES_FILE = path.join(__dirname, "data", "places.json");
 const DOWNTOWN_CENTRAL_PARK_PLACES_FILE = path.join(__dirname, "data", "places-downtown-centralpark.json");
 const DORMS_FILE = path.join(__dirname, "data", "dorms_fxbg.json");
 const SCHOOLS_OVERRIDES_FILE = path.join(__dirname, "data", "schools_address_overrides.json");
+const SCHOOLS_DATASET_FILE = path.join(__dirname, "data", "schools_fxbg.json");
+const STREETLIST_SPOTSY_FILE = path.join(__dirname, "data", "streetlist_spotsy.json");
 const CACHE_DIR = path.join(__dirname, "data", "cache");
 const VA511_ICONS_CACHE_FILE = path.join(CACHE_DIR, "va511-icons-metadata.json");
 const geoDataCache = new Map();
@@ -320,6 +340,25 @@ async function writeJsonFile(filePath, value) {
   await fsp.writeFile(filePath, JSON.stringify(value, null, 2), "utf8");
 }
 
+async function getDirectorySizeBytes(dirPath) {
+  try {
+    const entries = await fsp.readdir(dirPath, { withFileTypes: true });
+    let total = 0;
+    for (const entry of entries) {
+      const fullPath = path.join(dirPath, entry.name);
+      if (entry.isDirectory()) {
+        total += await getDirectorySizeBytes(fullPath);
+      } else if (entry.isFile()) {
+        const stats = await fsp.stat(fullPath);
+        total += stats.size;
+      }
+    }
+    return total;
+  } catch {
+    return 0;
+  }
+}
+
 async function fetchVa511IconsMetadata() {
   const now = Date.now();
   if (va511IconsMemoryCache.payload && (now - va511IconsMemoryCache.ts) < VA511_ICONS_CACHE_TTL_MS) {
@@ -327,20 +366,23 @@ async function fetchVa511IconsMetadata() {
   }
 
   try {
-    const res = await fetch(VA511_ICONS_SOURCE_URL, {
+    const result = await upstreamFetch(VA511_ICONS_SOURCE_URL, {
+      expectedType: "json",
+      allowJsonp: true,
+      timeoutMs: 15000,
       headers: {
         "Accept": "application/javascript,text/javascript,text/plain,application/json,*/*",
         "Referer": "https://511.vdot.virginia.gov/",
         "Origin": "https://511.vdot.virginia.gov",
         "User-Agent": "FXBG-PALANTIR-CityManager/1.0"
-      }
+      },
+      upstreamName: "va511-icons-metadata",
+      route: "/api/va511/icons-metadata"
     });
-    if (!res.ok) {
-      throw new Error(`HTTP ${res.status}`);
+    if (!result.ok || !result.json) {
+      throw new Error(result.error || `HTTP ${result.status}`);
     }
-    const text = await res.text();
-    const parsed = parseJsonpPayload(text, "va511_icons_metadata");
-    const payload = { ok: true, data: parsed, sourceUrl: VA511_ICONS_SOURCE_URL, fetchedAt: new Date().toISOString() };
+    const payload = { ok: true, data: result.json, sourceUrl: VA511_ICONS_SOURCE_URL, fetchedAt: new Date().toISOString() };
     va511IconsMemoryCache.ts = now;
     va511IconsMemoryCache.payload = payload;
     await writeJsonFile(VA511_ICONS_CACHE_FILE, payload);
@@ -2120,7 +2162,16 @@ async function proxyFetch(targetUrl, reqHeaders) {
       let buf;
       try {
         const limitBytes = resolvePayloadLimit(contentType, expectedType);
-        buf = await readResponseBodyWithLimit(upstream, limitBytes);
+        const isLayerDownload = isLayerDownloadRequest(finalUrl, accept);
+        const effectiveLimit = isLayerDownload ? Math.min(limitBytes, MAX_LAYER_BYTES) : limitBytes;
+        if (isLayerDownload) {
+          const contentLength = Number(upstream.headers.get("content-length"));
+          if (Number.isFinite(contentLength) && contentLength > MAX_LAYER_BYTES) {
+            const maxMb = Math.round(MAX_LAYER_BYTES / (1024 * 1024));
+            throw new UpstreamError("payload_too_large", `Layer payload exceeds ${maxMb}MB limit`);
+          }
+        }
+        buf = await readResponseBodyWithLimit(upstream, effectiveLimit);
       } catch (err) {
         if (err instanceof UpstreamError && err.code === "payload_too_large") {
           logApp({
@@ -3465,6 +3516,46 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, JSON.stringify(health, null, 2), { "Content-Type": "application/json" });
     }
 
+    if (urlObj.pathname === "/api/health/offline-readiness") {
+      const serverTime = new Date().toISOString();
+      const hasLogsDir = Boolean(resolvedLogDir && fs.existsSync(resolvedLogDir));
+      const cacheDirExists = fs.existsSync(CACHE_DIR);
+      const diskCacheBytes = cacheDirExists ? await getDirectorySizeBytes(CACHE_DIR) : 0;
+      const hasSchoolsDataset = fs.existsSync(SCHOOLS_DATASET_FILE);
+      const hasStreetlists = {
+        spotsy: fs.existsSync(STREETLIST_SPOTSY_FILE)
+      };
+      const canServeStatic = fs.existsSync(path.join(PUBLIC_DIR, "index.html"));
+
+      const degradedUpstreams = REQUIRED_UPSTREAMS.filter((upstream) => upstream.required).filter((upstream) => {
+        const state = upstreamStatus.get(upstream.name) || {};
+        if (state.lastOk === true && !state.stale) return false;
+        if (state.cacheHit && !state.stale) return false;
+        return true;
+      }).map((upstream) => upstream.name);
+
+      const lastUpstreamSuccessAt = REQUIRED_UPSTREAMS.reduce((acc, upstream) => {
+        acc[upstream.name] = upstreamLastSuccess.get(upstream.name) || null;
+        return acc;
+      }, {});
+
+      const payload = {
+        ok: true,
+        serverTime,
+        hasLogsDir,
+        cacheDir: CACHE_DIR,
+        diskCacheBytes,
+        hasSchoolsDataset,
+        hasStreetlists,
+        canServeStatic,
+        canServeTiles: false,
+        degradedUpstreams,
+        lastUpstreamSuccessAt
+      };
+
+      return send(res, 200, JSON.stringify(payload, null, 2), { "Content-Type": "application/json" });
+    }
+
 
     if (urlObj.pathname === "/api/geo/gazetteer" && req.method === "GET") {
       const payload = await readOrInitGeoDataset(GAZETTEER_FILE, "gazetteer");
@@ -3538,23 +3629,27 @@ const server = http.createServer(async (req, res) => {
       }
 
       try {
-        const upstream = await fetch(CDC_SOURCE_URL, {
+        const upstream = await upstreamFetch(CDC_SOURCE_URL, {
+          expectedType: "json",
+          timeoutMs: 15000,
           headers: {
             "Accept": "application/json",
             "X-App-Token": token,
             "User-Agent": "FXBG-PALANTIR-CityManager/1.0"
-          }
+          },
+          upstreamName: "cdc-wonder",
+          route: "/api/cdc/wonder"
         });
 
-        if (!upstream.ok) {
+        if (!upstream.ok || !upstream.json) {
           if (upstream.status === 403 || upstream.status === 429) {
             cdcState.backoffUntil = Date.now() + CDC_BACKOFF_MS;
             cdcState.lastReason = `HTTP ${upstream.status}`;
           }
-          throw new Error(`HTTP ${upstream.status}`);
+          throw new Error(upstream.error || `HTTP ${upstream.status}`);
         }
 
-        const data = await upstream.json();
+        const data = upstream.json;
         cdcState.cache = data;
         cdcState.backoffUntil = 0;
         cdcState.lastReason = null;
