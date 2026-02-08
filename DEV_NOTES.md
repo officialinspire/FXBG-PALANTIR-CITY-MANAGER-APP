@@ -452,3 +452,44 @@ watch -n 5 'curl -s http://localhost:8000/cache/stats | jq'
 3. Paste into `data/places-downtown-centralpark.json` under `items`.
 4. Prefer verified coordinates only. If unknown, set `lat/lng` to `null` and include a `todo` note.
 5. Reload app to refresh client cache, or wait up to 60s for server cache expiry.
+
+---
+
+## Module 1: VA511 Status Indicators (server-side endpoints)
+
+### New Server Endpoints
+
+| Endpoint | Description | Cache TTL | Stale Fallback |
+|---|---|---|---|
+| `GET /api/va511/events` | VA511 traffic events (raw JSON from VDOT) | 3 min | 1 hour |
+| `GET /api/va511/cams` | VA511 camera feeds (raw JSON from VDOT) | 5 min | 1 hour |
+| `GET /api/va511/status` | Computed status summary (counts, I-95 corridor, categories) | Reuses events cache | — |
+| `GET /api/va511/icons-metadata` | Icons metadata (unchanged, no longer treated as incidents) | 5 min | disk fallback |
+
+### Test Commands
+
+```bash
+# Start server
+node proxy-server.js
+
+# Test endpoints
+curl -s http://localhost:8000/api/va511/events | python3 -m json.tool | head -20
+curl -s http://localhost:8000/api/va511/cams | python3 -m json.tool | head -20
+curl -s http://localhost:8000/api/va511/status | python3 -m json.tool
+curl -s http://localhost:8000/api/va511/icons-metadata | python3 -m json.tool | head -10
+```
+
+### Browser Verification
+
+1. Open browser DevTools console
+2. Confirm **no** console error about icons-metadata being "invalid GeoJSON"
+3. Confirm traffic indicator chip shows one of: `NORMAL`, `SLOWING (n)`, `HEAVY (n)`, `DEGRADED (cached)`, or `Traffic status unavailable`
+4. Verify incidents load from `server-events` endpoint first (check console log for `"511 incidents loaded successfully from server-events"`)
+
+### Key Changes
+
+- **Bug fix**: Removed `/api/va511/icons-metadata` from `incidentsEndpoints` — it is NOT a GeoJSON FeatureCollection of incidents
+- **New primary**: `/api/va511/events` is now the preferred incidents source (server-side cached with proper anti-bot headers)
+- **Fallback preserved**: `511virginia.org` GeoJSON endpoint remains as fallback
+- **Status polling**: `pollVa511()` now fetches `/api/va511/status` for the I-95 indicator chip with "updated X min ago" label
+- **Icons metadata**: Loaded separately into `store.va511IconMeta` (not mixed with incidents)

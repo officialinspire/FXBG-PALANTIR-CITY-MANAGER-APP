@@ -8490,10 +8490,10 @@
       return match ? safeJsonParse(match[1], null, "va511 incidents jsonp") : safeJsonParse(text, null, "va511 incidents json");
     };
 
-    // Try primary endpoint first, then fallback if it fails
+    // Try server-side events endpoint first (most stable), then 511virginia.org GeoJSON as fallback
     const incidentsEndpoints = [
-      { url: CONFIG.va511.incidentsGeojson, format: 'json', name: 'primary' },
-      { url: '/api/va511/icons-metadata', format: 'json', name: 'icons-metadata', direct: true }
+      { url: '/api/va511/events', format: 'json', name: 'server-events', direct: true },
+      { url: CONFIG.va511.incidentsGeojson, format: 'json', name: 'primary' }
     ];
 
     for (const endpoint of incidentsEndpoints) {
@@ -8529,11 +8529,21 @@
 
         // Parse response based on format
         let inc = endpoint.format === 'jsonp' ? parseJsonp(response) : response;
-        if (endpoint.name === 'icons-metadata') {
-          if (inc?.ok === false && inc?.degraded) {
+
+        // Handle server-events endpoint: unwrap { ok, data, degraded } wrapper
+        if (endpoint.name === 'server-events') {
+          if (inc?.ok === false && !inc?.data) {
+            setI95Indicator(null, { degraded: true, cached: Boolean(inc.cached) });
+            throw new Error(inc.error || "server-events returned ok:false with no data");
+          }
+          if (inc?.degraded) {
             setI95Indicator(null, { degraded: true, cached: Boolean(inc.cached) });
           }
           inc = inc?.data || null;
+          // VA511 events API may return an array or FeatureCollection — normalize to FeatureCollection
+          if (inc && Array.isArray(inc) && !inc.type) {
+            inc = { type: "FeatureCollection", features: inc };
+          }
         }
 
         // Validate that we got actual GeoJSON
@@ -8552,8 +8562,8 @@
         } catch (e) {
           // Try next URL variant or next endpoint if available
           console.warn(`[VA511 Incidents] ${endpoint.name} (${urlVariant}) failed: ${e.message}, trying next variant/endpoint...`);
-          if (endpoint.name === 'icons-metadata' && urlVariant === fallbackVariants[fallbackVariants.length - 1]) {
-            // Last variant of fallback endpoint failed - record failure
+          if (endpoint === incidentsEndpoints[incidentsEndpoints.length - 1] && urlVariant === fallbackVariants[fallbackVariants.length - 1]) {
+            // Last variant of last endpoint failed - record failure
             recordSourceFailure('va511-incidents', 'fetch_error');
             recordFeedError('va511-incidents');
 
@@ -8593,7 +8603,43 @@
       }
     }
 
-    setI95Indicator(i95Incidents);
+    // Lightweight status poll from server-side computed summary
+    try {
+      const statusResp = await fetch('/api/va511/status', { cache: 'no-store' });
+      if (statusResp.ok) {
+        const statusData = await statusResp.json();
+        if (statusData.ok) {
+          // Use server-computed i95 count if we didn't get incidents from the pipeline
+          const i95FromStatus = statusData.i95ApproxCount || 0;
+          const effectiveI95 = incidentsLoaded ? i95Incidents : i95FromStatus;
+          setI95Indicator(effectiveI95, {
+            degraded: statusData.degraded,
+            cached: statusData.cached,
+            fetchedAt: statusData.fetchedAt,
+            totalEvents: statusData.totalEvents
+          });
+        } else {
+          setI95Indicator(incidentsLoaded ? i95Incidents : null, { degraded: true, cached: statusData.cached });
+        }
+      } else {
+        setI95Indicator(i95Incidents);
+      }
+    } catch (_statusErr) {
+      // Status endpoint unavailable — fall back to pipeline count
+      setI95Indicator(i95Incidents);
+    }
+
+    // Fetch icons metadata separately (do NOT treat as incidents GeoJSON)
+    try {
+      const iconResp = await fetch('/api/va511/icons-metadata', { cache: 'no-store' });
+      if (iconResp.ok) {
+        const iconPayload = await iconResp.json();
+        store.va511IconMeta = iconPayload?.data || null;
+      }
+    } catch (_iconErr) {
+      // Non-critical — icons metadata is supplementary
+    }
+
     setLastUpdate();
     redraw();
     if (incidentsLoaded) {
@@ -10383,9 +10429,18 @@
       else if (i95Incidents <= 2) status = `SLOWING (${i95Incidents})`;
       else status = `HEAVY (${i95Incidents})`;
     }
+    // Append "updated X min ago" if fetchedAt is available
+    let timeLabel = "";
+    if (options.fetchedAt) {
+      const agoMs = Date.now() - new Date(options.fetchedAt).getTime();
+      const agoMin = Math.round(agoMs / 60000);
+      if (agoMin <= 0) timeLabel = " · just now";
+      else if (agoMin === 1) timeLabel = " · 1 min ago";
+      else timeLabel = ` · ${agoMin} min ago`;
+    }
     if (el) {
-      el.textContent = `I‑95: ${status}`;
-      if (CONFIG.debug.chips) console.log(`[Chip Update] I-95: ${status} (${i95Incidents} incidents)`);
+      el.textContent = `I‑95: ${status}${timeLabel}`;
+      if (CONFIG.debug.chips) console.log(`[Chip Update] I-95: ${status}${timeLabel} (${i95Incidents} incidents)`);
     }
   }
 
