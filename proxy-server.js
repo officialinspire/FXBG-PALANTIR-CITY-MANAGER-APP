@@ -283,7 +283,9 @@ const DORMS_FILE = path.join(__dirname, "data", "dorms_fxbg.json");
 const SCHOOLS_OVERRIDES_FILE = path.join(__dirname, "data", "schools_address_overrides.json");
 const SCHOOLS_DATASET_FILE = path.join(__dirname, "data", "schools_fxbg.json");
 const STREETLIST_SPOTSY_FILE = path.join(__dirname, "data", "streetlist_spotsy.json");
+const GIS_CATALOG_FILE = path.join(__dirname, "data", "gis-catalog.json");
 const CACHE_DIR = path.join(__dirname, "data", "cache");
+const GIS_CACHE_DIR = path.join(CACHE_DIR, "gis");
 const VA511_ICONS_CACHE_FILE = path.join(CACHE_DIR, "va511-icons-metadata.json");
 const geoDataCache = new Map();
 const va511IconsMemoryCache = { ts: 0, payload: null };
@@ -338,6 +340,91 @@ async function readJsonFile(filePath) {
 async function writeJsonFile(filePath, value) {
   await fsp.mkdir(path.dirname(filePath), { recursive: true });
   await fsp.writeFile(filePath, JSON.stringify(value, null, 2), "utf8");
+}
+
+function defaultGisCatalog() {
+  return {
+    version: 1,
+    basemapEnhancers: [],
+    toggleLayers: [],
+    cityLayers: [],
+    fredBusMode: [],
+    environmentalTopo: [],
+    spotsy: []
+  };
+}
+
+async function readGisCatalog() {
+  const catalog = await readJsonFile(GIS_CATALOG_FILE);
+  if (!catalog) return defaultGisCatalog();
+  return {
+    ...defaultGisCatalog(),
+    ...catalog
+  };
+}
+
+function listGisCatalogEntries(catalog) {
+  const groups = [
+    "basemapEnhancers",
+    "toggleLayers",
+    "cityLayers",
+    "fredBusMode",
+    "environmentalTopo",
+    "spotsy"
+  ];
+  const entries = [];
+  for (const group of groups) {
+    const items = Array.isArray(catalog[group]) ? catalog[group] : [];
+    for (const item of items) {
+      if (!item || !item.key) continue;
+      entries.push({ ...item, category: group });
+    }
+  }
+  return entries;
+}
+
+function findGisCatalogEntry(catalog, key) {
+  if (!catalog || !key) return null;
+  return listGisCatalogEntries(catalog).find((entry) => entry.key === key) || null;
+}
+
+function sanitizeGisKey(value) {
+  const key = String(value || "").trim();
+  if (!key || !/^[a-z0-9_-]+$/i.test(key)) return null;
+  return key;
+}
+
+function detectGisFormat(contentType, buffer) {
+  const ct = String(contentType || "").toLowerCase();
+  const prefix = buffer?.slice(0, 64)?.toString("utf8")?.trimStart() || "";
+  if (ct.includes("json") || prefix.startsWith("{")) {
+    return "geojson";
+  }
+  if (buffer && buffer.length >= 2 && buffer[0] === 0x50 && buffer[1] === 0x4b) {
+    return "zip";
+  }
+  return "unknown";
+}
+
+function getGisCachePaths(key, format) {
+  const base = path.join(GIS_CACHE_DIR, key);
+  const ext = format === "geojson" ? ".json" : format === "zip" ? ".zip" : ".bin";
+  return {
+    rawPath: `${base}${ext}`,
+    geojsonPath: `${base}.geojson`,
+    metaPath: `${base}.meta.json`,
+    savedAs: path.basename(`${base}${ext}`)
+  };
+}
+
+async function readGisCacheMeta(key) {
+  const metaPath = path.join(GIS_CACHE_DIR, `${key}.meta.json`);
+  const meta = await readJsonFile(metaPath);
+  if (!meta || !meta.savedAs) return null;
+  const rawPath = path.join(GIS_CACHE_DIR, meta.savedAs);
+  const hasRaw = fs.existsSync(rawPath);
+  if (!hasRaw) return null;
+  return { ...meta, rawPath, metaPath };
 }
 
 async function getDirectorySizeBytes(dirPath) {
@@ -933,8 +1020,11 @@ const MIME = {
   ".jpeg": "image/jpeg",
   ".webp": "image/webp",
   ".json": "application/json; charset=utf-8",
+  ".geojson": "application/geo+json; charset=utf-8",
   ".ico": "image/x-icon",
   ".txt": "text/plain; charset=utf-8",
+  ".zip": "application/zip",
+  ".bin": "application/octet-stream",
 };
 
 /**
@@ -1020,6 +1110,8 @@ const ALLOWED_UPSTREAM_DOMAINS = [
   // GIS / Map Services
   'maps.fredericksburgva.gov',
   'p5v98VHDX9Atv3l7.maps.arcgis.com', // VDOT ArcGIS subdomain
+  'data-fredericksburg.opendata.arcgis.com',
+  'gis.spotsylvania.va.us',
 
   // Testing/Dev (remove in production if needed)
   'httpbin.org',
@@ -3554,6 +3646,131 @@ const server = http.createServer(async (req, res) => {
       };
 
       return send(res, 200, JSON.stringify(payload, null, 2), { "Content-Type": "application/json" });
+    }
+
+    if (urlObj.pathname === "/api/gis/catalog" && req.method === "GET") {
+      const catalog = await readGisCatalog();
+      return send(res, 200, JSON.stringify(catalog, null, 2), { "Content-Type": "application/json" });
+    }
+
+    if (urlObj.pathname === "/api/gis/fetch" && req.method === "GET") {
+      const rawKey = urlObj.searchParams.get("key");
+      const key = sanitizeGisKey(rawKey);
+      if (!key) {
+        return send(res, 400, JSON.stringify({ ok: false, error: "invalid_key" }), { "Content-Type": "application/json" });
+      }
+
+      const catalog = await readGisCatalog();
+      const entry = findGisCatalogEntry(catalog, key);
+      if (!entry) {
+        return send(res, 404, JSON.stringify({ ok: false, error: "unknown_key" }), { "Content-Type": "application/json" });
+      }
+
+      const cachedMeta = await readGisCacheMeta(key);
+      if (cachedMeta) {
+        return send(res, 200, JSON.stringify({
+          ok: true,
+          key,
+          cached: true,
+          bytes: cachedMeta.bytes,
+          contentType: cachedMeta.contentType || null,
+          savedAs: cachedMeta.savedAs,
+          fetchedAt: cachedMeta.fetchedAt,
+          format: cachedMeta.format || "unknown"
+        }, null, 2), { "Content-Type": "application/json" });
+      }
+
+      const urlCheck = checkUrlAllowed(entry.url);
+      if (!urlCheck.allowed) {
+        return send(res, 400, JSON.stringify({ ok: false, error: "blocked_url", reason: urlCheck.reason }, null, 2), { "Content-Type": "application/json" });
+      }
+
+      const upstream = await upstreamFetch(entry.url, {
+        includeBodyBuffer: true,
+        maxBytes: MAX_LAYER_BYTES,
+        timeoutMs: 20000,
+        upstreamName: `gis-${key}`,
+        route: "/api/gis/fetch"
+      });
+
+      if (!upstream.ok || !upstream.bodyBuffer) {
+        return send(res, 502, JSON.stringify({
+          ok: false,
+          error: upstream.error || "upstream_failed",
+          status: upstream.status || 0
+        }, null, 2), { "Content-Type": "application/json" });
+      }
+
+      const buffer = upstream.bodyBuffer;
+      const format = detectGisFormat(upstream.contentType, buffer);
+      const cachePaths = getGisCachePaths(key, format);
+
+      await fsp.mkdir(GIS_CACHE_DIR, { recursive: true });
+      await fsp.writeFile(cachePaths.rawPath, buffer);
+
+      let normalizedGeojsonPath = null;
+      if (format === "geojson") {
+        try {
+          const parsed = JSON.parse(buffer.toString("utf8"));
+          const normalized = JSON.stringify(parsed, null, 2);
+          await fsp.writeFile(cachePaths.geojsonPath, normalized, "utf8");
+          normalizedGeojsonPath = cachePaths.geojsonPath;
+        } catch (err) {
+          logApp({
+            level: "WARN",
+            kind: "gis_normalize",
+            msg: "Failed to normalize GIS payload",
+            errorCode: err.message,
+            key
+          });
+        }
+      }
+
+      const meta = {
+        key,
+        bytes: buffer.length,
+        contentType: upstream.contentType || null,
+        savedAs: cachePaths.savedAs,
+        fetchedAt: upstream.fetchedAt,
+        format
+      };
+      await writeJsonFile(cachePaths.metaPath, meta);
+
+      return send(res, 200, JSON.stringify({
+        ok: true,
+        key,
+        cached: false,
+        bytes: meta.bytes,
+        contentType: meta.contentType,
+        savedAs: meta.savedAs,
+        fetchedAt: meta.fetchedAt,
+        format: meta.format,
+        normalized: Boolean(normalizedGeojsonPath)
+      }, null, 2), { "Content-Type": "application/json" });
+    }
+
+    if (urlObj.pathname === "/api/gis/data" && req.method === "GET") {
+      const rawKey = urlObj.searchParams.get("key");
+      const key = sanitizeGisKey(rawKey);
+      if (!key) {
+        return send(res, 400, JSON.stringify({ ok: false, error: "invalid_key" }), { "Content-Type": "application/json" });
+      }
+
+      const geojsonPath = path.join(GIS_CACHE_DIR, `${key}.geojson`);
+      if (fs.existsSync(geojsonPath)) {
+        const payload = await fsp.readFile(geojsonPath);
+        return send(res, 200, payload, { "Content-Type": MIME[".geojson"] });
+      }
+
+      const cachedMeta = await readGisCacheMeta(key);
+      if (cachedMeta) {
+        const ext = path.extname(cachedMeta.rawPath).toLowerCase();
+        const type = MIME[ext] || "application/octet-stream";
+        const payload = await fsp.readFile(cachedMeta.rawPath);
+        return send(res, 200, payload, { "Content-Type": type });
+      }
+
+      return send(res, 404, JSON.stringify({ ok: false, error: "not_cached_yet" }), { "Content-Type": "application/json" });
     }
 
 

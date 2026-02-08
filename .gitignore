@@ -10,6 +10,7 @@ data/*
 !data/gazetteer.json
 !data/places.json
 !data/places-downtown-centralpark.json
+!data/gis-catalog.json
 
 # Logs
 *.log
