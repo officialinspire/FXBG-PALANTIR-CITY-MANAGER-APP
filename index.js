@@ -8029,6 +8029,27 @@
     }
   }
 
+  function escapeStrayAmpersands(xmlText) {
+    const entityPattern = /&(?!amp;|lt;|gt;|quot;|apos;|#\d+;|#x[0-9a-fA-F]+;)/g;
+    const cdataPattern = /<!\[CDATA\[[\s\S]*?\]\]>/g;
+    let result = '';
+    let lastIndex = 0;
+    let match;
+
+    while ((match = cdataPattern.exec(xmlText)) !== null) {
+      const chunk = xmlText.slice(lastIndex, match.index);
+      result += chunk.replace(entityPattern, '&amp;');
+      result += match[0];
+      lastIndex = match.index + match[0].length;
+    }
+
+    if (lastIndex < xmlText.length) {
+      result += xmlText.slice(lastIndex).replace(entityPattern, '&amp;');
+    }
+
+    return result;
+  }
+
   async function fetchRSS(source) {
     // Handle html_discover type - discover feed URL from HTML page first
     let feedUrl = source.url;
@@ -8059,7 +8080,7 @@
       expect: "text",
       headers: {
         "Accept": "application/rss+xml, application/atom+xml, application/xml, text/xml, */*",
-        "X-Cache": `max-age=${cacheSeconds}`
+        "X-Cache-TTL-MS": String(cacheSeconds * 1000)
       }
     });
 
@@ -8087,15 +8108,12 @@
 
         // For malformed XML, try to clean it and parse again
         console.warn(`RSS parse error for ${source.id}, attempting to clean XML...`);
-        const cleanedXml = xmlText
-          .trim()
-          .replace(/^[^<]*/, '') // Remove any non-XML content before first tag
-          .replace(/<!\[CDATA\[.*?\]\]>/gs, '') // Remove CDATA sections that might be malformed
-          .replace(/&(?!amp;|lt;|gt;|quot;|apos;|#)/g, '&amp;'); // Escape unescaped ampersands
+        const cleanedXml = escapeStrayAmpersands(xmlText.trim().replace(/^[^<]*/, '')); // Remove any non-XML content before first tag
 
         doc = new DOMParser().parseFromString(cleanedXml, "text/xml");
         const parseError2 = doc.querySelector("parsererror");
         if (parseError2) {
+          console.warn(`[RSS Parse] ${source.id}: parsererror after cleanup (bytes=${xmlText.length})`);
           throw new Error(`RSS parse error for ${source.id}: ${errorText.slice(0, 100)}`);
         }
       }
@@ -8199,6 +8217,13 @@
 
         if (CONFIG.debug.rss && resolved.locationMethod !== 'fallback') {
           console.log(`[Location] Resolved "${item.title?.slice(0, 50)}..." via ${resolved.locationMethod}: ${resolved.lat.toFixed(4)}, ${resolved.lon.toFixed(4)}${resolved.locationText ? ` ("${resolved.locationText}")` : ''}`);
+        }
+
+        if (!store._rssDebugLocationLogged) {
+          const debugText = resolved.locationText || 'Unknown location';
+          const methodText = resolved.locationMethod || 'unknown';
+          console.log(`[RSS Debug] ${source.id}: "${item.title?.slice(0, 60) || 'untitled'}" -> ${debugText} (${methodText}) @ ${resolved.lat.toFixed(4)}, ${resolved.lon.toFixed(4)}`);
+          store._rssDebugLocationLogged = true;
         }
       }
     }
@@ -11484,7 +11509,14 @@
     const allItems = Array.from(store.itemsById.values());
 
     // Base set: all RSS-sourced items (not hardcoded category allowlist)
-    const rssItems = allItems.filter(item => item.sourceType === "rss");
+    const now = Date.now();
+    const maxAgeMs = Math.max(2, CONFIG.freshness?.uiListMaxAgeHours || 24) * 3600 * 1000;
+    const rssItems = allItems
+      .filter(item => item.sourceType === "rss")
+      .filter(item => {
+        const ts = new Date(item.timestamp || item.published || 0).getTime();
+        return Number.isFinite(ts) && (now - ts) <= maxAgeMs;
+      });
     const totalRssCount = rssItems.length;
 
     // Apply category filter if not "all"
