@@ -2361,6 +2361,18 @@ const LOCAL_JURISDICTIONS = new Set([
   "regional"
 ]);
 
+function hasStateInQuery(value) {
+  const q = String(value || "");
+  return /\b(va|virginia)\b/i.test(q);
+}
+
+function ensureVirginiaQuery(query, jurisdiction) {
+  const j = String(jurisdiction || "").toLowerCase();
+  if (!LOCAL_JURISDICTIONS.has(j)) return query;
+  if (hasStateInQuery(query)) return query;
+  return `${query}, Virginia`;
+}
+
 function normalizeKeyPart(value) {
   return String(value || "")
     .toLowerCase()
@@ -3538,11 +3550,12 @@ const server = http.createServer(async (req, res) => {
         return send(res, 405, JSON.stringify({ ok: false, error: "method_not_allowed" }), { "Content-Type": "application/json" });
       }
 
-      const q = String(urlObj.searchParams.get("q") || "").trim();
+      const rawQ = String(urlObj.searchParams.get("q") || "").trim();
       const j = String(urlObj.searchParams.get("j") || "").trim();
+      const q = ensureVirginiaQuery(rawQ, j);
       const normalizedQ = normalizeKeyPart(q);
 
-      if (q.length < 3 || q.length > 140 || normalizedQ.length < 3) {
+      if (q.length < 3 || q.length > 160 || normalizedQ.length < 3) {
         return send(res, 400, JSON.stringify({ ok: false, error: "invalid_query" }), { "Content-Type": "application/json" });
       }
 
