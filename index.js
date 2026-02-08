@@ -109,6 +109,15 @@
     THEME_CURRENT: 'fxbg_theme_current',
     THEME_RECENT: 'fxbg_theme_recent'
   };
+  const LOAD_SHEDDING_STORAGE_KEY = "fxbg.loadShedding";
+
+  function readLoadSheddingPref() {
+    try {
+      return localStorage.getItem(LOAD_SHEDDING_STORAGE_KEY) === "1";
+    } catch {
+      return false;
+    }
+  }
 
   currentUiMode = readStoredUiMode();
 
@@ -3633,7 +3642,9 @@
     }
 
     try {
-      const response = await fetch(`/api/geocode?q=${encodeURIComponent(locationString)}&j=${encodeURIComponent(jurisdiction || "")}`);
+      const response = await fetchJsonWithTimeout(`/api/geocode?q=${encodeURIComponent(locationString)}&j=${encodeURIComponent(jurisdiction || "")}`, {
+        timeoutMs: 12000
+      });
       if (!response.ok) {
         if (CONFIG.debug.rssGeo) {
           console.warn(`[Geocode] Server responded with ${response.status} for "${locationString}"`);
@@ -3641,7 +3652,7 @@
         return null;
       }
 
-      const payload = await response.json();
+      const payload = response.data;
       if (!payload.ok) {
         if (CONFIG.debug.rssGeo) {
           console.warn(`[Geocode] Server error for "${locationString}": ${payload.error}`);
@@ -4884,7 +4895,7 @@
         const current = urls[index];
         index += 1;
         try {
-          await fetch(current, { mode: 'no-cors', cache: 'no-store' });
+          await fetchWithTimeout(current, { mode: 'no-cors', cache: 'no-store', timeoutMs: 8000 });
         } catch {}
         done += 1;
         progressEl.textContent = `Downloading ${done}/${urls.length} tiles…`;
@@ -6162,6 +6173,8 @@
     openuv: () => fetchOpenUV(),
     waqi: () => fetchAirQuality()
   };
+  const LOAD_SHEDDING_REDRAW_MS = 600;
+  const LOAD_SHEDDING_LIST_THRESHOLD = 300;
 
   const store = {
     itemsById: new Map(),
@@ -6232,8 +6245,16 @@
       lastSyncAt: null,
       clients: []
     },
+    loadShedding: readLoadSheddingPref(),
     freshnessTransitions: new Map()
   };
+
+  function setLoadShedding(enabled) {
+    store.loadShedding = Boolean(enabled);
+    try {
+      localStorage.setItem(LOAD_SHEDDING_STORAGE_KEY, store.loadShedding ? "1" : "0");
+    } catch {}
+  }
 
   // -----------------------------
   // IndexedDB wrapper for offline persistence
@@ -6766,10 +6787,11 @@
     // Try POST if online
     if (!store.timeline.isOffline) {
       try {
-        const res = await fetch('/api/reports', {
+        const res = await fetchJsonWithTimeout('/api/reports', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(report)
+          body: JSON.stringify(report),
+          timeoutMs: 15000
         });
         if (res.ok) {
           report.pendingSync = false;
@@ -6809,9 +6831,9 @@
 
   async function refreshHubClients() {
     try {
-      const res = await fetch('/api/hub/clients');
+      const res = await fetchJsonWithTimeout('/api/hub/clients', { timeoutMs: 12000 });
       if (!res.ok) throw new Error(`hub_clients_${res.status}`);
-      const payload = await res.json();
+      const payload = res.data;
       const clients = Array.isArray(payload?.clients) ? payload.clients : [];
       store.hub.clients = clients;
       store.hub.reachable = true;
@@ -6832,10 +6854,11 @@
     if (!deviceId) return false;
     try {
       const ua = `${navigator.platform || 'unknown'}|${navigator.userAgentData?.platform || 'na'}`;
-      const res = await fetch('/api/hub/ping', {
+      const res = await fetchJsonWithTimeout('/api/hub/ping', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ deviceId, userAgent: ua })
+        body: JSON.stringify({ deviceId, userAgent: ua }),
+        timeoutMs: 12000
       });
       store.hub.reachable = res.ok;
       updateGlobalStatusRibbon();
@@ -6901,10 +6924,11 @@
 
     for (const report of pending) {
       try {
-        const res = await fetch('/api/reports', {
+        const res = await fetchJsonWithTimeout('/api/reports', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(report)
+          body: JSON.stringify(report),
+          timeoutMs: 15000
         });
         if (res.ok) {
           report.pendingSync = false;
@@ -7550,7 +7574,7 @@
 
       for (const url of candidates) {
         try {
-          response = await fetch(url, { cache: "no-store" });
+          response = await fetchWithTimeout(url, { cache: "no-store", timeoutMs: 12000 });
           if (!response.ok) {
             throw new Error(formatProxyError(response));
           }
@@ -7810,9 +7834,17 @@
    * Coalesces rapid redraw calls into a single RAF update
    */
   let redrawScheduled = false;
+  let redrawTimeout = null;
   function redrawThrottled() {
     if (redrawScheduled) return;
     redrawScheduled = true;
+    if (store.loadShedding) {
+      redrawTimeout = setTimeout(() => {
+        redrawScheduled = false;
+        redrawImmediate();
+      }, LOAD_SHEDDING_REDRAW_MS);
+      return;
+    }
     requestAnimationFrame(() => {
       redrawScheduled = false;
       redrawImmediate();
@@ -7821,6 +7853,11 @@
 
   function redrawImmediate() {
     enforceCaps();
+    if (store.loadShedding) {
+      console.log("[LoadShedding] Skipping cluster rebuild (load shedding enabled)");
+      updateCategoryCounts();
+      return;
+    }
     clusters.clearLayers();
     markerLayer.clearLayers();
     if (map.hasLayer(clusters)) map.removeLayer(clusters);
@@ -8711,9 +8748,9 @@
           }
 
           const response = endpoint.direct
-            ? await fetch(urlVariant, { headers, cache: 'no-store' }).then((res) => {
+            ? await fetchJsonWithTimeout(urlVariant, { headers, timeoutMs: 20000 }).then((res) => {
                 if (!res.ok) throw new Error(`http ${res.status}`);
-                return endpoint.format === 'jsonp' ? res.text() : res.json();
+                return res.data;
               })
             : await fetchWithProxies(urlVariant, {
                 expect: endpoint.format === 'jsonp' ? 'text' : 'json',
@@ -8799,9 +8836,9 @@
 
     // Lightweight status poll from server-side computed summary
     try {
-      const statusResp = await fetch('/api/va511/status', { cache: 'no-store' });
+      const statusResp = await fetchJsonWithTimeout('/api/va511/status', { timeoutMs: 12000 });
       if (statusResp.ok) {
-        const statusData = await statusResp.json();
+        const statusData = statusResp.data;
         if (statusData.ok) {
           // Use server-computed i95 count if we didn't get incidents from the pipeline
           const i95FromStatus = statusData.i95ApproxCount || 0;
@@ -8825,9 +8862,9 @@
 
     // Fetch icons metadata separately (do NOT treat as incidents GeoJSON)
     try {
-      const iconResp = await fetch('/api/va511/icons-metadata', { cache: 'no-store' });
+      const iconResp = await fetchJsonWithTimeout('/api/va511/icons-metadata', { timeoutMs: 12000 });
       if (iconResp.ok) {
-        const iconPayload = await iconResp.json();
+        const iconPayload = iconResp.data;
         store.va511IconMeta = iconPayload?.data || null;
       }
     } catch (_iconErr) {
@@ -9536,12 +9573,12 @@
       const url = CONFIG.schoolsNces.url;
       console.log(`[SchoolsNCES] Fetching ${url}...`);
 
-      const response = await fetch(url);
+      const response = await fetchJsonWithTimeout(url, { timeoutMs: 20000 });
       if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        throw new Error(`HTTP ${response.status}`);
       }
 
-      const data = await response.json();
+      const data = response.data;
       const result = await ingestSchoolsNces(data);
       store.lastFetch.schoolsNces = now;
       console.log(`[SchoolsNCES] Loaded ${result.added} schools from NCES dataset (${result.total} total in file)`);
@@ -9672,12 +9709,12 @@
       const url = CONFIG.colleges.url;
       console.log(`[Colleges] Fetching ${url}...`);
 
-      const response = await fetch(url);
+      const response = await fetchJsonWithTimeout(url, { timeoutMs: 20000 });
       if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        throw new Error(`HTTP ${response.status}`);
       }
 
-      const data = await response.json();
+      const data = response.data;
       const result = await ingestColleges(data);
       store.lastFetch.colleges = now;
       console.log(`[Colleges] Loaded ${result.added} colleges/universities (${result.total} total in file)`);
@@ -9688,9 +9725,9 @@
 
   async function loadPlacesDataset() {
     try {
-      const response = await fetch('/api/places');
+      const response = await fetchJsonWithTimeout('/api/places', { timeoutMs: 15000 });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const payload = await response.json();
+      const payload = response.data;
       const items = Array.isArray(payload?.items) ? payload.items : [];
       store.places = items;
       store.placesIndex = buildPlacesIndex(items);
@@ -9708,9 +9745,9 @@
 
   async function loadSchoolsAddressOverrides() {
     try {
-      const response = await fetch('/api/geo/schools-overrides');
+      const response = await fetchJsonWithTimeout('/api/geo/schools-overrides', { timeoutMs: 15000 });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const payload = await response.json();
+      const payload = response.data;
       const items = Array.isArray(payload?.items) ? payload.items : [];
       store.schoolAddressOverrides = { version: Number(payload?.version) || 1, items };
       store.schoolOverridesIndex = buildNameAddressIndex(items);
@@ -9729,9 +9766,9 @@
   async function loadDormsDataset() {
     if (!CONFIG.dorms?.enabled) return;
     try {
-      const response = await fetch(CONFIG.dorms.url);
+      const response = await fetchJsonWithTimeout(CONFIG.dorms.url, { timeoutMs: 20000 });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const payload = await response.json();
+      const payload = response.data;
       const items = Array.isArray(payload) ? payload : (Array.isArray(payload?.items) ? payload.items : []);
       store.dorms = items;
       store.dormsIndex = buildNameAddressIndex(items);
@@ -10289,14 +10326,34 @@
   // -----------------------------
   // OpenUV API - UV Index data
   // -----------------------------
-  async function fetchJsonWithStatus(url, opts = {}) {
+  async function fetchJsonWithTimeout(url, opts = {}) {
+    const timeoutMs = Number.isFinite(opts.timeoutMs) ? opts.timeoutMs : 15000;
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort("Timeout"), opts.timeoutMs || 15000);
+    const timeout = setTimeout(() => controller.abort("Timeout"), timeoutMs);
+
+    if (opts.signal) {
+      const externalSignal = opts.signal;
+      if (externalSignal.aborted) {
+        controller.abort(externalSignal.reason || "External abort");
+      } else {
+        externalSignal.addEventListener("abort", () => {
+          controller.abort(externalSignal.reason || "External abort");
+        }, { once: true });
+      }
+    }
+
     try {
       const response = await fetch(url, {
+        method: opts.method || "GET",
         signal: controller.signal,
-        headers: opts.headers
+        headers: opts.headers,
+        body: opts.body
       });
+      const maxBytes = Number.isFinite(opts.maxBytes) ? opts.maxBytes : 10 * 1024 * 1024;
+      const contentLength = Number(response.headers.get("content-length"));
+      if (Number.isFinite(contentLength) && contentLength > maxBytes) {
+        return { ok: false, status: 413, error: "payload_too_large", data: null };
+      }
       const text = await response.text();
       const data = safeJsonParse(text, null, `json ${url}`);
       return { ok: response.ok, status: response.status, data };
@@ -10305,6 +10362,44 @@
     } finally {
       clearTimeout(timeout);
     }
+  }
+
+  async function fetchWithTimeout(url, opts = {}) {
+    const timeoutMs = Number.isFinite(opts.timeoutMs) ? opts.timeoutMs : 15000;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort("Timeout"), timeoutMs);
+
+    if (opts.signal) {
+      const externalSignal = opts.signal;
+      if (externalSignal.aborted) {
+        controller.abort(externalSignal.reason || "External abort");
+      } else {
+        externalSignal.addEventListener("abort", () => {
+          controller.abort(externalSignal.reason || "External abort");
+        }, { once: true });
+      }
+    }
+
+    try {
+      return await fetch(url, {
+        method: opts.method || "GET",
+        signal: controller.signal,
+        headers: opts.headers,
+        body: opts.body,
+        cache: opts.cache,
+        mode: opts.mode
+      });
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  async function fetchJsonWithStatus(url, opts = {}) {
+    return fetchJsonWithTimeout(url, {
+      timeoutMs: opts.timeoutMs || 15000,
+      headers: opts.headers,
+      signal: opts.signal
+    });
   }
 
   async function fetchOpenUV() {
@@ -10791,14 +10886,14 @@
       const months = CONFIG.fxbgCrimeReports.months;
       const url = `/api/fxbg/crime-reports/incidents?months=${months}`;
 
-      const res = await fetch(url);
+      const res = await fetchJsonWithTimeout(url, { timeoutMs: 15000 });
       if (!res.ok) {
         updateFreshnessStatus('crime', () => freshnessTracker.markFailure('crime', `http_${res.status}`), `http_${res.status}`);
         console.warn(`[Crime Reports] API returned ${res.status}`);
         return;
       }
 
-      const json = await res.json();
+      const json = res.data;
       if (!json.ok || !json.incidents) {
         updateFreshnessStatus('crime', () => freshnessTracker.markFailure('crime', 'invalid_crime_payload'), 'invalid crime payload');
         console.warn("[Crime Reports] Invalid API response");
@@ -11245,13 +11340,13 @@
     try {
       const params = new URLSearchParams();
       if (sinceDays) params.set("sinceDays", String(sinceDays));
-      const res = await fetch(`/api/reports?${params.toString()}`);
+      const res = await fetchJsonWithTimeout(`/api/reports?${params.toString()}`, { timeoutMs: 15000 });
       if (!res.ok) {
         updateFreshnessStatus('reports', () => freshnessTracker.markFailure('reports', `http_${res.status}`), `http_${res.status}`);
         setReportStatus("Reports feed unavailable.", "warn");
         return;
       }
-      const data = await res.json();
+      const data = res.data;
       if (!data.ok || !Array.isArray(data.items)) {
         updateFreshnessStatus('reports', () => freshnessTracker.markFailure('reports', 'invalid_reports_payload'), 'invalid reports payload');
         setReportStatus("Reports feed unavailable.", "warn");
@@ -11329,9 +11424,13 @@
         form.append("lng", String(loc.lng));
         if (loc.accuracy) form.append("accuracy", String(loc.accuracy));
         form.append("photo", photoFile);
-        res = await fetch("/api/reports", { method: "POST", body: form });
+        res = await fetchJsonWithTimeout("/api/reports", {
+          method: "POST",
+          body: form,
+          timeoutMs: 20000
+        });
       } else {
-        res = await fetch("/api/reports", {
+        res = await fetchJsonWithTimeout("/api/reports", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -11341,11 +11440,12 @@
             lat: loc.lat,
             lng: loc.lng,
             accuracy: loc.accuracy
-          })
+          }),
+          timeoutMs: 20000
         });
       }
 
-      const data = await res.json();
+      const data = res.data;
       if (!res.ok || !data.ok) {
         throw new Error(data.error || "submit_failed");
       }
@@ -11519,6 +11619,16 @@
       });
     const totalRssCount = rssItems.length;
 
+    if (store.loadShedding && totalRssCount > LOAD_SHEDDING_LIST_THRESHOLD) {
+      body.innerHTML = `
+        <div class="dockMetaText" style="color:var(--warn);font-weight:600;">
+          Load shedding enabled — list rendering paused for ${totalRssCount} items.
+        </div>
+        <div class="dockMetaText">Disable Load Shedding to refresh the full list.</div>
+      `;
+      return;
+    }
+
     // Apply category filter if not "all"
     let filtered = rssItems.filter(item => {
       if (newsFlashFilter !== "all" && item.category !== newsFlashFilter) return false;
@@ -11636,6 +11746,7 @@
   const diagnosticsUpstreams = $("diagnosticsUpstreams");
   const diagnosticsUpstreamTests = $("diagnosticsUpstreamTests");
   const diagnosticsCache = $("diagnosticsCache");
+  const diagnosticsOfflineReadiness = $("diagnosticsOfflineReadiness");
   const diagnosticsRequiredBanner = $("diagnosticsRequiredBanner");
   const diagnosticsBannerTitle = $("diagnosticsBannerTitle");
   const diagnosticsRequiredText = $("diagnosticsRequiredText");
@@ -11676,19 +11787,21 @@
     return `${seconds}s`;
   }
 
-  async function fetchDiagnosticsJson(url) {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort("Diagnostics timeout"), 15000);
-    try {
-      const response = await fetch(url, { signal: controller.signal });
-      const text = await response.text();
-      const data = safeJsonParse(text, null, `diagnostics ${url}`);
-      return { ok: response.ok, status: response.status, data };
-    } catch (err) {
-      return { ok: false, status: 0, error: err.message || String(err), data: null };
-    } finally {
-      clearTimeout(timeout);
+  function formatBytesShort(bytes) {
+    if (!Number.isFinite(bytes)) return "—";
+    if (bytes < 1024) return `${bytes} B`;
+    const units = ["KB", "MB", "GB", "TB"];
+    let value = bytes / 1024;
+    let unitIndex = 0;
+    while (value >= 1024 && unitIndex < units.length - 1) {
+      value /= 1024;
+      unitIndex += 1;
     }
+    return `${value.toFixed(value >= 10 ? 0 : 1)} ${units[unitIndex]}`;
+  }
+
+  async function fetchDiagnosticsJson(url) {
+    return fetchJsonWithTimeout(url, { timeoutMs: 15000 });
   }
 
   function renderDiagnosticsSummary(healthData, crimeStatus) {
@@ -11790,6 +11903,71 @@
         <div class="diagnosticsBadge ${optKeysWarning.length > 0 ? "diagnosticsBadge--warn" : "diagnosticsBadge--ok"}">
           ${optKeysWarning.length > 0 ? "WARN" : "OK"}
         </div>
+      </div>
+    `;
+  }
+
+  function renderDiagnosticsOfflineReadiness(readiness) {
+    if (!diagnosticsOfflineReadiness) return;
+
+    if (!readiness) {
+      diagnosticsOfflineReadiness.textContent = "Offline readiness snapshot unavailable.";
+      return;
+    }
+
+    const logsBadge = readiness.hasLogsDir ? "diagnosticsBadge--ok" : "diagnosticsBadge--warn";
+    const cacheBadge = readiness.diskCacheBytes > 0 ? "diagnosticsBadge--ok" : "diagnosticsBadge--warn";
+    const schoolsBadge = readiness.hasSchoolsDataset ? "diagnosticsBadge--ok" : "diagnosticsBadge--warn";
+    const spotsyBadge = readiness.hasStreetlists?.spotsy ? "diagnosticsBadge--ok" : "diagnosticsBadge--warn";
+    const staticBadge = readiness.canServeStatic ? "diagnosticsBadge--ok" : "diagnosticsBadge--warn";
+    const degradedUpstreams = Array.isArray(readiness.degradedUpstreams) ? readiness.degradedUpstreams : [];
+    const degradedBadge = degradedUpstreams.length ? "diagnosticsBadge--warn" : "diagnosticsBadge--ok";
+
+    const lastSuccessLines = readiness.lastUpstreamSuccessAt
+      ? Object.entries(readiness.lastUpstreamSuccessAt).map(([name, ts]) => {
+        const label = ts ? formatRelativeTime(ts) : "Never";
+        return `<div class="dockRowMeta">${escapeHtml(name)} • ${escapeHtml(label)}</div>`;
+      }).join("")
+      : '<div class="dockRowMeta">No upstream data yet.</div>';
+
+    diagnosticsOfflineReadiness.innerHTML = `
+      <div class="diagnosticsRow">
+        <div><div class="diagnosticsRow__title">Snapshot time</div></div>
+        <div class="diagnosticsBadge">${escapeHtml(readiness.serverTime || "—")}</div>
+      </div>
+      <div class="diagnosticsRow">
+        <div><div class="diagnosticsRow__title">Logs directory</div></div>
+        <div class="diagnosticsBadge ${logsBadge}">${readiness.hasLogsDir ? "OK" : "MISSING"}</div>
+      </div>
+      <div class="diagnosticsRow">
+        <div><div class="diagnosticsRow__title">Cache directory</div></div>
+        <div class="diagnosticsBadge">${escapeHtml(readiness.cacheDir || "—")}</div>
+      </div>
+      <div class="diagnosticsRow">
+        <div><div class="diagnosticsRow__title">Disk cache size</div></div>
+        <div class="diagnosticsBadge ${cacheBadge}">${formatBytesShort(readiness.diskCacheBytes || 0)}</div>
+      </div>
+      <div class="diagnosticsRow">
+        <div><div class="diagnosticsRow__title">Schools dataset</div></div>
+        <div class="diagnosticsBadge ${schoolsBadge}">${readiness.hasSchoolsDataset ? "READY" : "MISSING"}</div>
+      </div>
+      <div class="diagnosticsRow">
+        <div><div class="diagnosticsRow__title">Streetlist (Spotsy)</div></div>
+        <div class="diagnosticsBadge ${spotsyBadge}">${readiness.hasStreetlists?.spotsy ? "READY" : "MISSING"}</div>
+      </div>
+      <div class="diagnosticsRow">
+        <div><div class="diagnosticsRow__title">Static assets</div></div>
+        <div class="diagnosticsBadge ${staticBadge}">${readiness.canServeStatic ? "READY" : "MISSING"}</div>
+      </div>
+      <div class="diagnosticsRow">
+        <div><div class="diagnosticsRow__title">Degraded upstreams</div></div>
+        <div class="diagnosticsBadge ${degradedBadge}">${degradedUpstreams.length}</div>
+      </div>
+      <div class="diagnosticsSection__content--subtle" style="margin-top:6px;">
+        ${degradedUpstreams.length ? `Degraded: ${escapeHtml(degradedUpstreams.join(", "))}` : "All required upstreams recently OK."}
+      </div>
+      <div class="diagnosticsSection__content--subtle" style="margin-top:6px;">
+        ${lastSuccessLines || ""}
       </div>
     `;
   }
@@ -12107,15 +12285,17 @@
     if (diagnosticsUpstreams) diagnosticsUpstreams.textContent = "Loading…";
     if (diagnosticsUpstreamTests) diagnosticsUpstreamTests.textContent = "Run “Test Upstreams” to see results.";
     if (diagnosticsCache) diagnosticsCache.textContent = "Loading…";
+    if (diagnosticsOfflineReadiness) diagnosticsOfflineReadiness.textContent = "Loading…";
     if (diagnosticsRSSGeoSummary) diagnosticsRSSGeoSummary.textContent = "Loading…";
     if (diagnosticsRSSGeoList) diagnosticsRSSGeoList.textContent = "Loading…";
 
     // Fetch from new endpoints (with fallback to legacy)
-    const [healthRes, upstreamRes, cacheRes, crimeStatusRes] = await Promise.all([
+    const [healthRes, upstreamRes, cacheRes, crimeStatusRes, offlineRes] = await Promise.all([
       fetchDiagnosticsJson("/api/health").then(r => r.ok ? r : fetchDiagnosticsJson("/health")),
       fetchDiagnosticsJson("/api/diag/upstreams"),
       fetchDiagnosticsJson("/cache/stats"),
-      fetchDiagnosticsJson("/api/fxbg/crime-reports/status")
+      fetchDiagnosticsJson("/api/fxbg/crime-reports/status"),
+      fetchDiagnosticsJson("/api/health/offline-readiness")
     ]);
 
     // Graceful degradation: if all fetches failed, show last known data
@@ -12134,6 +12314,7 @@
       }
       renderDiagnosticsUpstreams(lastKnownDiagnostics.upstreams?.upstreams || null);
       renderDiagnosticsCache(lastKnownDiagnostics.cache || null);
+      renderDiagnosticsOfflineReadiness(lastKnownDiagnostics.offlineReadiness || null);
       renderDiagnosticsRSS();
       renderDiagnosticsRSSGeoSummary();
       return;
@@ -12143,6 +12324,7 @@
     const upstreamList = healthRes.data?.upstreams || upstreamRes.data?.upstreams || null;
     renderDiagnosticsUpstreams(upstreamList);
     renderDiagnosticsCache(cacheRes.data || null);
+    renderDiagnosticsOfflineReadiness(offlineRes.data || null);
     renderDiagnosticsRSS();
     renderDiagnosticsRSSGeoSummary();
 
@@ -12151,7 +12333,8 @@
       health: healthRes.data || null,
       upstreams: upstreamRes.data || null,
       cache: cacheRes.data || null,
-      crimeStatus: crimeStatusRes.data || null
+      crimeStatus: crimeStatusRes.data || null,
+      offlineReadiness: offlineRes.data || null
     };
 
     // Store for offline fallback
@@ -12297,8 +12480,8 @@
   }
   if (diagnosticsCopy) {
     diagnosticsCopy.addEventListener("click", async () => {
-      if (!lastHealthPayload) return;
-      const text = JSON.stringify(lastHealthPayload, null, 2);
+      if (!lastDiagnosticsPayload) return;
+      const text = JSON.stringify(lastDiagnosticsPayload, null, 2);
       try {
         await navigator.clipboard.writeText(text);
         diagnosticsCopy.textContent = "Copied!";
@@ -12583,11 +12766,11 @@
     console.log("[DEBUG Crime Refresh] Click detected at", new Date().toISOString());
     try {
       const months = CONFIG.fxbgCrimeReports.months;
-      const res = await fetch(`/api/fxbg/crime-reports/refresh?months=${months}`);
+      const res = await fetchJsonWithTimeout(`/api/fxbg/crime-reports/refresh?months=${months}`, { timeoutMs: 20000 });
       // DEBUG: Log response status
-      console.log("[DEBUG Crime Refresh] Response status:", res.status, res.statusText);
+      console.log("[DEBUG Crime Refresh] Response status:", res.status);
       // DEBUG: Log response body
-      const json = await res.json();
+      const json = res.data;
       console.log("[DEBUG Crime Refresh] Response body:", JSON.stringify(json, null, 2));
       if (res.ok && json.ok) {
         console.log("[Crime Reports] Refresh initiated");
@@ -14018,6 +14201,15 @@
 
     html += `</div>`;
 
+    html += `<div class="dockCard">`;
+    html += `<div class="dockSectionTitle">Load Shedding</div>`;
+    html += `<div class="dockToggleRow">`;
+    html += `<div class="dockToggleLabel">Degraded UI mode</div>`;
+    html += `<div class="toggleSwitch ${store.loadShedding ? 'isOn' : ''}" id="loadSheddingToggle" role="switch" aria-checked="${store.loadShedding ? 'true' : 'false'}"></div>`;
+    html += `</div>`;
+    html += `<div class="dockMetaText">When enabled, pause heavy map clustering, reduce list rerenders, and slow marker refreshes to prevent lockups.</div>`;
+    html += `</div>`;
+
     // Recent errors
     if (healthTracker.recentErrors.size > 0) {
       html += `<div class="dockSectionTitle">Recent Errors (${healthTracker.recentErrors.size})</div>`;
@@ -14254,6 +14446,13 @@
 
     if (dockState.tab === "system") {
       bind("dockRunQuickSmoke", "click", () => runQuickSmoke());
+      const loadSheddingToggle = document.getElementById("loadSheddingToggle");
+      if (loadSheddingToggle) {
+        loadSheddingToggle.addEventListener("click", () => {
+          setLoadShedding(!store.loadShedding);
+          renderDock();
+        });
+      }
 
       // Bind GIS overlay toggles
       dockPanelBody.querySelectorAll('input[data-overlay-id]').forEach(checkbox => {
