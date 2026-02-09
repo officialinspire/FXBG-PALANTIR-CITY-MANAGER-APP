@@ -8,6 +8,7 @@
     "dev": "PORT=8000 node proxy-server.js",
     "doctor": "node scripts/doctor.js",
     "install-env": "bash scripts/install-env.sh",
+    "qa": "node scripts/qa-runner.js",
     "smoke": "bash scripts/smoke.sh",
     "build:schools": "node scripts/build-schools-nces.js",
     "audit:schools": "node scripts/audit-schools.js",
