@@ -4876,6 +4876,7 @@
 
   // Helper to determine control position based on viewport
   function getControlPosition() {
+    if (IS_MOBILE_UI) return "bottomright";
     return window.matchMedia("(max-width: 768px)").matches ? "bottomright" : "topright";
   }
 
@@ -6780,6 +6781,7 @@
     currentUiMode = (mode === UI_MODES.FIELD || mode === UI_MODES.DISPATCH) ? mode : getDefaultUiMode();
     document.body.classList.toggle('field-mode', currentUiMode === UI_MODES.FIELD);
     document.body.classList.toggle('dispatch-mode', currentUiMode === UI_MODES.DISPATCH);
+    document.body.classList.toggle('fieldDefault', IS_MOBILE_UI && currentUiMode === UI_MODES.FIELD);
     try { localStorage.setItem(getUiModeStorageKey(), currentUiMode); } catch {}
 
     const panel = document.getElementById('timelinePanel');
@@ -16703,12 +16705,24 @@
     const root = document.documentElement;
     root.classList.toggle("ui-mobile", IS_MOBILE_UI);
     root.classList.toggle("ui-desktop", !IS_MOBILE_UI);
+    const body = document.body;
+    if (body) {
+      body.classList.toggle("isMobile", IS_MOBILE_UI);
+      body.classList.toggle("fieldDefault", IS_MOBILE_UI && currentUiMode === UI_MODES.FIELD);
+    }
 
     const desktopHeader = document.getElementById("desktopHeader");
 
     if (IS_MOBILE_UI) {
       // IMPORTANT: prevent duplicate IDs from desktop header interfering with mobile getElementById lookups
       if (desktopHeader) desktopHeader.innerHTML = "";
+      if (dockState?.tab === "system") {
+        if (dockState.isOpen) {
+          setDockTab("overview");
+        } else {
+          dockState.tab = "overview";
+        }
+      }
       // Mobile mode: attach event listeners to mobile header elements (only once or when switching from desktop)
       if (!__mobileListenersAttached || changed) {
         __headerListenersAttached = false; // Reset guard to allow re-attachment
