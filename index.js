@@ -33,24 +33,58 @@
 
   let IS_MOBILE_UI = computeIsMobileUI();
 
+  // -----------------------------
+  // Storage Keys for localStorage persistence
+  // -----------------------------
+  const STORAGE_KEYS = {
+    PORTRAIT_DISMISSED: 'fxbg-palantir-portrait-dismissed',
+    CRIME_UI: 'fxbg-crime-ui',
+    REPORTS: 'fxbg-reports',
+    UI_MODE_DESKTOP: 'fxbg.uiMode.desktop',
+    UI_MODE_MOBILE: 'fxbg.uiMode.mobile',
+    ACTIVE_MISSION: 'fxbg.activeMission',
+    HUB_DEVICE_ID: 'fxbg.hubDeviceId',
+    TRACK_HAPTICS: 'fxbg.trackHaptics',
+    THEME_CURRENT: 'fxbg_theme_current',
+    THEME_RECENT: 'fxbg_theme_recent',
+    OFFLINE_PACK_INSTALLED: 'fxbg.offlinePackInstalled'
+  };
+
   const UI_MODES = {
     FIELD: 'field',
     DISPATCH: 'dispatch'
   };
 
+  function getUiModeStorageKey(isMobile = computeIsMobileUI()) {
+    return isMobile ? STORAGE_KEYS.UI_MODE_MOBILE : STORAGE_KEYS.UI_MODE_DESKTOP;
+  }
+
   function getDefaultUiMode() {
     return computeIsMobileUI() ? UI_MODES.FIELD : UI_MODES.DISPATCH;
   }
 
+  function hasStoredUiMode(isMobile = computeIsMobileUI()) {
+    try {
+      const stored = localStorage.getItem(getUiModeStorageKey(isMobile));
+      return stored === UI_MODES.FIELD || stored === UI_MODES.DISPATCH;
+    } catch {
+      return false;
+    }
+  }
+
   function readStoredUiMode() {
     try {
-      const stored = localStorage.getItem(STORAGE_KEYS.UI_MODE);
+      const stored = localStorage.getItem(getUiModeStorageKey());
       if (stored === UI_MODES.FIELD || stored === UI_MODES.DISPATCH) return stored;
     } catch {}
     return getDefaultUiMode();
   }
 
   let currentUiMode = getDefaultUiMode();
+  if (IS_MOBILE_UI && !hasStoredUiMode(true)) {
+    currentUiMode = UI_MODES.FIELD;
+    try { localStorage.setItem(STORAGE_KEYS.UI_MODE_MOBILE, currentUiMode); } catch {}
+  }
 
   const missionState = {
     active: null,
@@ -110,24 +144,11 @@
     navigator.vibrate(p);
   }
 
-  // -----------------------------
-  // Storage Keys for localStorage persistence
-  // -----------------------------
-  const STORAGE_KEYS = {
-    PORTRAIT_DISMISSED: 'fxbg-palantir-portrait-dismissed',
-    CRIME_UI: 'fxbg-crime-ui',
-    REPORTS: 'fxbg-reports',
-    UI_MODE: 'fxbg.uiMode',
-    ACTIVE_MISSION: 'fxbg.activeMission',
-    HUB_DEVICE_ID: 'fxbg.hubDeviceId',
-    TRACK_HAPTICS: 'fxbg.trackHaptics',
-    THEME_CURRENT: 'fxbg_theme_current',
-    THEME_RECENT: 'fxbg_theme_recent',
-    OFFLINE_PACK_INSTALLED: 'fxbg.offlinePackInstalled'
-  };
   const OFFLINE_PACK_UPDATED_KEY = 'fxbg.offlinePackUpdated';
   const LOAD_SHEDDING_STORAGE_KEY = "fxbg.loadShedding";
   const AOI_MODE_STORAGE_KEY = "fxbg.aoiMode";
+  const MOBILE_PERF_STORAGE_KEY = "fxbg.mobilePerf";
+  const MOBILE_MARKER_CAP = 250;
   const GIS_LAYERS = new Map(); // key -> { leafletLayer, enabled, meta, loaded }
   const GIS_PANEL_GROUPS = [
     { key: "basemapEnhancers", label: "Basemap Enhancers" },
@@ -149,6 +170,15 @@
     } catch {
       return false;
     }
+  }
+
+  function readMobilePerfPref() {
+    try {
+      const stored = localStorage.getItem(MOBILE_PERF_STORAGE_KEY);
+      if (stored === "1") return true;
+      if (stored === "0") return false;
+    } catch {}
+    return IS_MOBILE_UI;
   }
 
   function readAoiModePref() {
@@ -6673,7 +6703,7 @@
     currentUiMode = (mode === UI_MODES.FIELD || mode === UI_MODES.DISPATCH) ? mode : getDefaultUiMode();
     document.body.classList.toggle('field-mode', currentUiMode === UI_MODES.FIELD);
     document.body.classList.toggle('dispatch-mode', currentUiMode === UI_MODES.DISPATCH);
-    try { localStorage.setItem(STORAGE_KEYS.UI_MODE, currentUiMode); } catch {}
+    try { localStorage.setItem(getUiModeStorageKey(), currentUiMode); } catch {}
 
     const panel = document.getElementById('timelinePanel');
     if (panel) {
@@ -6861,6 +6891,7 @@
       lastGpsFixTs: 0
     },
     loadShedding: readLoadSheddingPref(),
+    mobilePerf: readMobilePerfPref(),
     freshnessTransitions: new Map()
   };
 
@@ -6873,6 +6904,14 @@
       autoLoadBasemapEnhancers();
     }
     refreshLayersPanelUI();
+  }
+
+  function setMobilePerf(enabled) {
+    store.mobilePerf = Boolean(enabled);
+    try {
+      localStorage.setItem(MOBILE_PERF_STORAGE_KEY, store.mobilePerf ? "1" : "0");
+    } catch {}
+    redrawThrottled();
   }
 
   function setAoiMode(mode) {
@@ -8529,8 +8568,13 @@
       visibleItems.push(item);
     }
 
+    if (store.mobilePerf) {
+      visibleItems.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+      if (visibleItems.length > MOBILE_MARKER_CAP) visibleItems.splice(MOBILE_MARKER_CAP);
+    }
+
     const downtownMode = isDowntownModeEnabled();
-    const useStacks = shouldUseDeclutterStacking();
+    const useStacks = store.mobilePerf ? true : shouldUseDeclutterStacking();
 
     if (useStacks) {
       for (const stack of buildDeclutterStacks(visibleItems)) {
@@ -14886,6 +14930,15 @@
     html += `</div>`;
 
     html += `<div class="dockCard">`;
+    html += `<div class="dockSectionTitle">Mobile Perf Mode</div>`;
+    html += `<div class="dockToggleRow">`;
+    html += `<div class="dockToggleLabel">Cap markers + declutter stacking</div>`;
+    html += `<div class="toggleSwitch ${store.mobilePerf ? 'isOn' : ''}" id="mobilePerfToggle" role="switch" aria-checked="${store.mobilePerf ? 'true' : 'false'}"></div>`;
+    html += `</div>`;
+    html += `<div class="dockMetaText">Limits marker count and prefers declutter stacking to keep mobile responsive.</div>`;
+    html += `</div>`;
+
+    html += `<div class="dockCard">`;
     html += `<div class="dockSectionTitle">AOI Filter (Mobile)</div>`;
     html += `<div class="dockMetaText">Controls mobile marker gating: primary AOI only, or include near-user GPS AOI.</div>`;
     html += `<div class="dockActionRow dockActionRow--three">`;
@@ -15457,6 +15510,13 @@
         if (loadSheddingToggle) {
           loadSheddingToggle.addEventListener("click", () => {
             setLoadShedding(!store.loadShedding);
+            renderDock();
+          });
+        }
+        const mobilePerfToggle = document.getElementById("mobilePerfToggle");
+        if (mobilePerfToggle) {
+          mobilePerfToggle.addEventListener("click", () => {
+            setMobilePerf(!store.mobilePerf);
             renderDock();
           });
         }
