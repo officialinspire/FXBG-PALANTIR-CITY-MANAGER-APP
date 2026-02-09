@@ -174,6 +174,7 @@
   const LOAD_SHEDDING_STORAGE_KEY = "fxbg.loadShedding";
   const AOI_MODE_STORAGE_KEY = "fxbg.aoiMode";
   const MOBILE_PERF_STORAGE_KEY = "fxbg.mobilePerf";
+  const ACTIVE_CATEGORIES_STORAGE_KEY = "fxbg.activeCategories";
   const MOBILE_MARKER_CAP = 200;
   const MAP_REDRAW_DEBOUNCE_MS = 320;
   const GIS_LAYERS = new Map(); // key -> { leafletLayer, enabled, meta, loaded }
@@ -395,6 +396,9 @@
 
     // GPS AOI radius (miles). When user is outside primary AOI, we load markers near them only.
     gpsAoiMilesRadius: 15,
+
+    // Optional county bboxes for region tagging (if available).
+    countyBboxes: null,
 
     // POI-specific bbox (bounds for schools, hospitals, clinics in FXBG metro area)
     // Expanded to include full K-12 schools dataset: lat 38.1285–38.5312, lon -77.6215–-77.3425
@@ -2788,8 +2792,34 @@
     return CONFIG.bbox;
   }
 
+  function computeRegionTag(item) {
+    const lat = Number(item?.lat);
+    const lon = Number(item?.lon ?? item?.lng);
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) return "other";
+
+    if (!inBbox(lat, lon, CONFIG.primaryAoiBbox)) return "other";
+
+    const countyBboxes = CONFIG.countyBboxes || {};
+    if (countyBboxes.fxbg && inBbox(lat, lon, countyBboxes.fxbg)) return "fxbg";
+    if (countyBboxes.stafford && inBbox(lat, lon, countyBboxes.stafford)) return "stafford";
+    if (countyBboxes.spotsy && inBbox(lat, lon, countyBboxes.spotsy)) return "spotsy";
+
+    const jurisdiction = String(item?.jurisdiction || item?.source?.jurisdiction || "").toLowerCase();
+    if (jurisdiction.includes("stafford")) return "stafford";
+    if (jurisdiction.includes("spotsylvania") || jurisdiction.includes("spotsy")) return "spotsy";
+    if (jurisdiction.includes("fredericksburg") || jurisdiction.includes("fxbg")) return "fxbg";
+
+    return "fxbg";
+  }
+
+  function assignRegionTag(item) {
+    const tag = computeRegionTag(item);
+    if (item) item.regionTag = tag;
+    return tag;
+  }
+
   function isAllowedByMobileAOI(item) {
-    if (!IS_MOBILE_UI) return true;
+    if (!IS_MOBILE_UI || currentUiMode !== UI_MODES.FIELD) return true;
 
     // If user explicitly disables AOI gating
     if (store?.aoi?.mode === "off") return true;
@@ -2798,8 +2828,10 @@
     const lon = item.lon ?? item.lng;
     if (!Number.isFinite(lat) || !Number.isFinite(lon)) return false;
 
-    // Always allow things in primary AOI
-    if (inBbox(lat, lon, CONFIG.primaryAoiBbox)) return true;
+    const regionTag = item.regionTag || assignRegionTag(item);
+
+    // Always allow things in primary AOI (FXBG + Stafford + Spotsy)
+    if (regionTag === "fxbg" || regionTag === "stafford" || regionTag === "spotsy") return true;
 
     // If mode is primary-only, block everything else
     if (store?.aoi?.mode === "primary-only") return false;
@@ -6904,6 +6936,7 @@
     locks: { rss:false, nws:false, arcgis:false, virginiaCrashData:false, va511:false, openUV:false, cdc:false, air:false, crime:false },
     lastByCategory: new Map(),
     lastFetch: { externalCameras: 0, schoolsNces: 0, colleges: 0 },
+    lastRefreshGroups: { rss: 0, schools: 0, traffic: 0, crime: 0 },
     cameraPins: new Set(),
     cameraRefresh: new Map(),
     alerts: {
@@ -6944,8 +6977,11 @@
       placedMarkers: 0,
       skippedNoCoords: 0,
       visibleMarkers: 0,
+      suppressedByViewport: 0,
+      suppressedByCap: 0,
       suppressedByCategory: 0,
       suppressedByAoi: 0,
+      missingLatLon: 0,
       warningShown: false
     },
     diagnostics: {
@@ -7014,6 +7050,16 @@
       localStorage.setItem(AOI_MODE_STORAGE_KEY, mode);
     } catch {}
     scheduleRender();
+  }
+
+  function resetMobileFilters() {
+    try {
+      localStorage.removeItem(AOI_MODE_STORAGE_KEY);
+      localStorage.removeItem(LOAD_SHEDDING_STORAGE_KEY);
+      localStorage.removeItem(MOBILE_PERF_STORAGE_KEY);
+      localStorage.removeItem(ACTIVE_CATEGORIES_STORAGE_KEY);
+    } catch {}
+    window.location.reload();
   }
 
   applyMobilePerfMode(store.mobilePerf);
@@ -8217,6 +8263,8 @@
     if (!item) return null;
     let lat = Number(item.lat);
     let lon = Number(item.lon ?? item.lng);
+    const hasRawCoords = Number.isFinite(lat) && Number.isFinite(lon);
+    item.missingLatLon = !hasRawCoords;
     const hasCoords = isReasonableLatLon(lat, lon, { bbox: getBboxForItem(item) });
     const source = item.source || { jurisdiction: item.jurisdiction || "Regional", defaultLoc: CONFIG.center };
 
@@ -8262,6 +8310,8 @@
         ? Array.from(new Set([...item._geocode.notes, "far_clamped"]))
         : ["far_clamped"];
     }
+
+    assignRegionTag(item);
 
     return item;
   }
@@ -8664,11 +8714,13 @@
 
     let markerCount = 0;
     let filtered = { category: 0, bbox: 0, aoi: 0, crime: 0 };
+    let missingLatLonCount = 0;
     const visibleItems = [];
     const rssMarkerStats = { attemptedMarkers: 0, placedMarkers: 0, skippedNoCoords: 0 };
 
     for (const item of store.itemsById.values()) {
       coerceRenderableLocation(item);
+      if (item.missingLatLon) missingLatLonCount++;
       const isRssLike = item.sourceType === 'rss' || item.category === 'alerts' || item.category === 'incident' || item.category === 'incidents';
       if (isRssLike) {
         rssMarkerStats.attemptedMarkers++;
@@ -8699,6 +8751,7 @@
       visibleItems.push(item);
     }
 
+    let suppressedByCap = 0;
     if (IS_MOBILE_UI || store.mobilePerf) {
       const getItemTs = (item) => {
         if (Number.isFinite(item?.ts)) return item.ts;
@@ -8706,7 +8759,10 @@
         return Number.isFinite(parsed) ? parsed : 0;
       };
       visibleItems.sort((a, b) => (b.priority || 0) - (a.priority || 0) || getItemTs(b) - getItemTs(a));
-      if (store.mobilePerf && visibleItems.length > MOBILE_MARKER_CAP) visibleItems.length = MOBILE_MARKER_CAP;
+      if (store.mobilePerf && visibleItems.length > MOBILE_MARKER_CAP) {
+        suppressedByCap = visibleItems.length - MOBILE_MARKER_CAP;
+        visibleItems.length = MOBILE_MARKER_CAP;
+      }
     }
 
     const downtownMode = isDowntownModeEnabled();
@@ -8762,8 +8818,11 @@
     store.markerDiagnostics.placedMarkers = rssMarkerStats.placedMarkers;
     store.markerDiagnostics.skippedNoCoords = rssMarkerStats.skippedNoCoords;
     store.markerDiagnostics.visibleMarkers = markerCount;
+    store.markerDiagnostics.suppressedByViewport = filtered.bbox;
+    store.markerDiagnostics.suppressedByCap = suppressedByCap;
     store.markerDiagnostics.suppressedByCategory = filtered.category;
     store.markerDiagnostics.suppressedByAoi = filtered.aoi;
+    store.markerDiagnostics.missingLatLon = missingLatLonCount;
 
     if (rssMarkerStats.attemptedMarkers > 0 && rssMarkerStats.placedMarkers === 0) {
       if (!store.markerDiagnostics.warningShown) {
@@ -9257,6 +9316,7 @@
     setLastUpdate();
     renderDiagnosticsRSSGeoSummary();
     redraw();
+    markRefreshGroup("rss");
     store.locks.rss = false;
     return { results, diagnostics: store.diagnostics.rss };
   }
@@ -9722,6 +9782,7 @@
       setI95Indicator(null);
       return { i95Incidents: null };
     } finally {
+      markRefreshGroup("traffic");
       store.locks.va511 = false;
     }
   }
@@ -10430,6 +10491,8 @@
     } catch (e) {
       console.warn("[SchoolsNCES] Failed to load:", e.message);
       // Not critical - app works without this data
+    } finally {
+      markRefreshGroup("schools");
     }
   }
 
@@ -10551,6 +10614,8 @@
       console.log(`[Colleges] Loaded ${result.added} colleges/universities (${result.total} total in file)`);
     } catch (e) {
       console.warn("[Colleges] Failed to load:", e.message);
+    } finally {
+      markRefreshGroup("schools");
     }
   }
 
@@ -11841,6 +11906,7 @@
       updateFreshnessStatus('crime', () => freshnessTracker.markFailure('crime', err?.message || 'crime_poll_failed'), err?.message);
       console.error("[Crime Reports] Poll error:", err);
     } finally {
+      markRefreshGroup("crime");
       store.locks.crime = false;
     }
   }
@@ -12349,6 +12415,7 @@
   async function refreshAll() {
     const liveTextEl = getChipElement("liveText");
     if (liveTextEl) liveTextEl.textContent = "Refreshing…";
+    const loadSheddingActive = store.loadShedding;
 
     // Round 3: Initialize cycle budget tracking
     cycleStats.requestCount = 0;
@@ -12380,6 +12447,10 @@
     ]);
 
     // Load RSS feeds and other APIs first (in parallel)
+    // Load shedding: keep core feeds alive, pause heavy sources (bulk GIS/large lists).
+    if (loadSheddingActive) {
+      console.log("[LoadShedding] Core refresh only: heavy sources paused for this cycle.");
+    }
     await Promise.allSettled([
       pollRSS().catch(e => console.warn("RSS refresh partial", e)),
       CONFIG.nws.enabled ? fetchNWS().catch(e => console.warn("NWS refresh partial", e)) : Promise.resolve(),
@@ -12387,10 +12458,10 @@
       CONFIG.openUV.enabled ? fetchOpenUV().catch(e => console.warn("OpenUV refresh partial", e)) : Promise.resolve(),
       CONFIG.cdc.enabled ? fetchCDC().catch(e => console.warn("CDC refresh partial", e)) : Promise.resolve(),
       CONFIG.air.enabled ? fetchAirQuality().catch(e => console.warn("Air quality refresh partial", e)) : Promise.resolve(),
-      CONFIG.externalCameras.enabled ? pollExternalCameras().catch(e => console.warn("External cameras refresh partial", e)) : Promise.resolve(),
-      CONFIG.schoolsNces?.enabled ? pollSchoolsNces().catch(e => console.warn("NCES Schools refresh partial", e)) : Promise.resolve(),
-      CONFIG.colleges?.enabled ? pollColleges().catch(e => console.warn("Colleges refresh partial", e)) : Promise.resolve(),
-      CONFIG.dorms?.enabled ? ingestDorms().catch(e => console.warn("Dorms refresh partial", e)) : Promise.resolve(),
+      CONFIG.externalCameras.enabled && !loadSheddingActive ? pollExternalCameras().catch(e => console.warn("External cameras refresh partial", e)) : Promise.resolve(),
+      CONFIG.schoolsNces?.enabled && !loadSheddingActive ? pollSchoolsNces().catch(e => console.warn("NCES Schools refresh partial", e)) : Promise.resolve(),
+      CONFIG.colleges?.enabled && !loadSheddingActive ? pollColleges().catch(e => console.warn("Colleges refresh partial", e)) : Promise.resolve(),
+      CONFIG.dorms?.enabled && !loadSheddingActive ? ingestDorms().catch(e => console.warn("Dorms refresh partial", e)) : Promise.resolve(),
       CONFIG.fxbgCrimeReports.enabled ? pollFxbgCrimeReports().catch(e => console.warn("Crime Reports refresh partial", e)) : Promise.resolve()
     ]);
 
@@ -12398,7 +12469,9 @@
 
     // Check budget before proceeding to crash data (budget enforcement)
     const budgetCheck = checkCycleBudget();
-    if (budgetCheck.exceeded) {
+    if (loadSheddingActive) {
+      console.warn("[LoadShedding] Skipping crash data sources (load shedding enabled)");
+    } else if (budgetCheck.exceeded) {
       console.warn(`[Budget] Deferring crash data sources to next cycle (${budgetCheck.reason})`);
     } else {
       // Load Virginia Crash data LAST after all other APIs complete (sequential for better performance)
@@ -12527,6 +12600,7 @@
       const jurisdiction = escapeHtml(item.jurisdiction || "Unknown");
       const category = escapeHtml(CATEGORIES[item.category]?.label || item.category || "News");
       const time = fmtTime(item.published);
+      const locationBadge = item.missingLatLon ? `<span class="newsItem__badge">No location</span>` : "";
 
       return `
         <div class="newsItem" data-item-id="${escapeAttr(item.id)}">
@@ -12538,6 +12612,7 @@
             <span class="newsItem__jurisdiction">${jurisdiction}</span>
             <span class="newsItem__category">${category}</span>
             <span class="newsItem__time">${time}</span>
+            ${locationBadge}
           </div>
           <div class="newsItem__summary">${summary}</div>
         </div>
@@ -15020,6 +15095,11 @@
     return (bytes / (1024 * 1024)).toFixed(1);
   }
 
+  function markRefreshGroup(groupKey) {
+    if (!store.lastRefreshGroups) store.lastRefreshGroups = {};
+    store.lastRefreshGroups[groupKey] = Date.now();
+  }
+
   function renderSystemSubnav() {
     return `
       <div class="dockSubnav">
@@ -15040,6 +15120,28 @@
     const visibleMarkers = store.markerDiagnostics?.visibleMarkers ?? 0;
     const suppressedByCategory = store.markerDiagnostics?.suppressedByCategory ?? 0;
     const suppressedByAoi = store.markerDiagnostics?.suppressedByAoi ?? 0;
+    const suppressedByViewport = store.markerDiagnostics?.suppressedByViewport ?? 0;
+    const suppressedByCap = store.markerDiagnostics?.suppressedByCap ?? 0;
+    const missingLatLon = store.markerDiagnostics?.missingLatLon ?? 0;
+    const totalItems = store.itemsById.size;
+    const categoryCounts = new Map();
+
+    for (const item of store.itemsById.values()) {
+      const key = item.category || "uncategorized";
+      categoryCounts.set(key, (categoryCounts.get(key) || 0) + 1);
+    }
+
+    const topCategories = Array.from(categoryCounts.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 10);
+
+    const refreshGroups = store.lastRefreshGroups || {};
+    const refreshLabels = {
+      rss: refreshGroups.rss ? formatRelativeTime(refreshGroups.rss) : "Never",
+      schools: refreshGroups.schools ? formatRelativeTime(refreshGroups.schools) : "Never",
+      traffic: refreshGroups.traffic ? formatRelativeTime(refreshGroups.traffic) : "Never",
+      crime: refreshGroups.crime ? formatRelativeTime(refreshGroups.crime) : "Never"
+    };
 
     let html = "";
 
@@ -15102,6 +15204,35 @@
 
     html += `</div>`;
 
+    html += `<div class="dockCard markerDiagnostics">`;
+    html += `<div class="dockSectionTitle">Marker Pipeline</div>`;
+    html += `<div class="dockRow"><div class="dockRowLeft"><div class="dockRowTitle">Total items in memory</div></div><div class="dockBadge">${totalItems}</div></div>`;
+    html += `<div class="dockRow"><div class="dockRowLeft"><div class="dockRowTitle">Rendered markers</div></div><div class="dockBadge">${visibleMarkers}</div></div>`;
+    html += `<div class="dockRow"><div class="dockRowLeft"><div class="dockRowTitle">Suppressed by AOI</div></div><div class="dockBadge">${suppressedByAoi}</div></div>`;
+    html += `<div class="dockRow"><div class="dockRowLeft"><div class="dockRowTitle">Suppressed by viewport</div></div><div class="dockBadge">${suppressedByViewport}</div></div>`;
+    html += `<div class="dockRow"><div class="dockRowLeft"><div class="dockRowTitle">Suppressed by cap</div></div><div class="dockBadge">${suppressedByCap}</div></div>`;
+    html += `<div class="dockRow"><div class="dockRowLeft"><div class="dockRowTitle">Missing lat/lon</div></div><div class="dockBadge">${missingLatLon}</div></div>`;
+    html += `<div class="dockRow"><div class="dockRowLeft"><div class="dockRowTitle">Load shedding</div></div><div class="dockBadge ${store.loadShedding ? 'status-backoff' : 'status-ok'}">${store.loadShedding ? 'ON' : 'OFF'}</div></div>`;
+    html += `<div class="markerDiagnostics__subTitle">Top categories</div>`;
+    html += `<div class="markerDiagnostics__list">`;
+    if (topCategories.length === 0) {
+      html += `<div class="dockRowMeta">No items yet.</div>`;
+    } else {
+      topCategories.forEach(([key, count]) => {
+        const label = CATEGORIES[key]?.label || key;
+        html += `<div class="markerDiagnostics__item"><span>${escapeHtml(label)}</span><span class="dockBadge">${count}</span></div>`;
+      });
+    }
+    html += `</div>`;
+    html += `<div class="markerDiagnostics__subTitle">Last refresh by group</div>`;
+    html += `<div class="markerDiagnostics__list">`;
+    html += `<div class="markerDiagnostics__item"><span>News/RSS</span><span class="dockBadge">${escapeHtml(refreshLabels.rss)}</span></div>`;
+    html += `<div class="markerDiagnostics__item"><span>Schools</span><span class="dockBadge">${escapeHtml(refreshLabels.schools)}</span></div>`;
+    html += `<div class="markerDiagnostics__item"><span>Traffic</span><span class="dockBadge">${escapeHtml(refreshLabels.traffic)}</span></div>`;
+    html += `<div class="markerDiagnostics__item"><span>Crime</span><span class="dockBadge">${escapeHtml(refreshLabels.crime)}</span></div>`;
+    html += `</div>`;
+    html += `</div>`;
+
     html += `<div class="dockCard">`;
     html += `<div class="dockSectionTitle">Load Shedding</div>`;
     html += `<div class="dockToggleRow">`;
@@ -15128,6 +15259,12 @@
     html += `<button class="dockBtnSmall" data-aoi-mode="primary-only" aria-pressed="${store.aoi.mode === 'primary-only'}">AOI: Primary</button>`;
     html += `<button class="dockBtnSmall" data-aoi-mode="off" aria-pressed="${store.aoi.mode === 'off'}">AOI: Off</button>`;
     html += `</div>`;
+    html += `</div>`;
+
+    html += `<div class="dockCard">`;
+    html += `<div class="dockSectionTitle">Mobile Filters</div>`;
+    html += `<div class="dockMetaText">Reset AOI mode, load shedding, mobile perf, and category filters.</div>`;
+    html += `<button class="dockBtnSmall" id="resetMobileFilters">Reset Mobile Filters</button>`;
     html += `</div>`;
 
     // Recent errors
@@ -15724,6 +15861,12 @@
             renderDock();
           });
         });
+        const resetMobileFiltersBtn = document.getElementById("resetMobileFilters");
+        if (resetMobileFiltersBtn) {
+          resetMobileFiltersBtn.addEventListener("click", () => {
+            resetMobileFilters();
+          });
+        }
         stopOfflinePackPolling();
       } else if (systemSubtab === SYSTEM_SUBTABS.OFFLINE) {
         bind("offlineDownloadCore", "click", () => startOfflinePackPrefetch("core"));
@@ -17016,20 +17159,40 @@
 
   applyTheme(getSavedTheme(), { skipPersist: true });
 
+  const pollScheduleState = new Map();
+
+  function schedulePolling(key, fn, intervalMs, options = {}) {
+    const { loadSheddingIntervalMs = intervalMs, skipWhenLoadShedding = false } = options;
+    const tickMs = Math.min(intervalMs, loadSheddingIntervalMs);
+    return setInterval(async () => {
+      if (store.loadShedding && skipWhenLoadShedding) return;
+      const now = Date.now();
+      const minInterval = store.loadShedding ? loadSheddingIntervalMs : intervalMs;
+      const lastRun = pollScheduleState.get(key) || 0;
+      if (now - lastRun < minInterval) return;
+      pollScheduleState.set(key, now);
+      try {
+        await fn();
+      } catch (err) {
+        console.warn(`[Poll:${key}] failed`, err);
+      }
+    }, tickMs);
+  }
+
   refreshAll();
   if (CONFIG.alertRules?.enabled) {
     setInterval(evaluateAlertRules, CONFIG.alertRules.pollingMs);
   }
-  setInterval(pollRSS, CONFIG.polling.rss);
-  setInterval(fetchNWS, CONFIG.polling.nws);
-  setInterval(pollArcgisCrashes, CONFIG.polling.arcgisCrash);
-  setInterval(pollVirginiaCrashData, CONFIG.polling.virginiaCrashData);
-  setInterval(pollVa511, CONFIG.polling.va511);
-  setInterval(fetchOpenUV, CONFIG.polling.openUV);
-  setInterval(fetchCDC, CONFIG.polling.cdc);
-  setInterval(fetchAirQuality, CONFIG.air.refreshMs);
-  setInterval(pollFxbgCrimeReports, CONFIG.fxbgCrimeReports.polling);
-  setInterval(() => fetchReports({ sinceDays: 90 }), 60 * 1000);
+  schedulePolling("rss", pollRSS, CONFIG.polling.rss, { loadSheddingIntervalMs: Math.max(CONFIG.polling.rss, 90 * 1000) });
+  schedulePolling("nws", fetchNWS, CONFIG.polling.nws, { loadSheddingIntervalMs: Math.max(CONFIG.polling.nws, 90 * 1000) });
+  schedulePolling("arcgisCrash", pollArcgisCrashes, CONFIG.polling.arcgisCrash, { skipWhenLoadShedding: true });
+  schedulePolling("virginiaCrash", pollVirginiaCrashData, CONFIG.polling.virginiaCrashData, { skipWhenLoadShedding: true });
+  schedulePolling("va511", pollVa511, CONFIG.polling.va511, { loadSheddingIntervalMs: Math.max(CONFIG.polling.va511, 90 * 1000) });
+  schedulePolling("openUV", fetchOpenUV, CONFIG.polling.openUV, { loadSheddingIntervalMs: Math.max(CONFIG.polling.openUV, 120 * 1000) });
+  schedulePolling("cdc", fetchCDC, CONFIG.polling.cdc, { loadSheddingIntervalMs: Math.max(CONFIG.polling.cdc, 120 * 1000) });
+  schedulePolling("air", fetchAirQuality, CONFIG.air.refreshMs, { loadSheddingIntervalMs: Math.max(CONFIG.air.refreshMs, 120 * 1000) });
+  schedulePolling("crime", pollFxbgCrimeReports, CONFIG.fxbgCrimeReports.polling, { loadSheddingIntervalMs: Math.max(CONFIG.fxbgCrimeReports.polling, 90 * 1000) });
+  schedulePolling("reports", () => fetchReports({ sinceDays: 90 }), 60 * 1000, { loadSheddingIntervalMs: 120 * 1000 });
 
   // Keyboard shortcuts
   document.addEventListener("keydown", (e) => {
