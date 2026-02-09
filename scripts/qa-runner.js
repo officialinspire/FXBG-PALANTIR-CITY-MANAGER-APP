@@ -12,7 +12,7 @@ const PORT_MIN = 8100;
 const PORT_MAX = 8999;
 const HEALTH_TIMEOUT_MS = 45_000;
 const KILL_TIMEOUT_MS = 3_000;
-const QA_SCRIPT = path.join(__dirname, "qa-feeds-upstreams.js");
+const QA_SCRIPT = path.join(__dirname, "qa-suite.js");
 
 function ensureLogsDir() {
   if (!fs.existsSync(LOG_DIR)) {
@@ -156,12 +156,14 @@ async function main() {
     console.log("[qa] Server healthy. Running smoke tests...");
     await runCommand("bash", [path.join("scripts", "smoke.sh"), baseUrl], { cwd: ROOT_DIR });
 
-    if (!fs.existsSync(QA_SCRIPT)) {
-      throw new Error("Missing QA script scripts/qa-feeds-upstreams.js (expected in QA-2)");
-    }
-
     console.log("[qa] Running expanded QA checks...");
-    await runCommand("node", [QA_SCRIPT, baseUrl], { cwd: ROOT_DIR });
+    await runCommand("node", [QA_SCRIPT], {
+      cwd: ROOT_DIR,
+      env: {
+        ...process.env,
+        BASE_URL: baseUrl
+      }
+    });
 
     console.log("[qa] RESULT: PASS");
     exitCode = 0;
