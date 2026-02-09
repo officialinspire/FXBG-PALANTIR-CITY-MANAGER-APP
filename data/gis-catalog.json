@@ -7,7 +7,9 @@
       "url": "https://www.arcgis.com/sharing/rest/content/items/a6b00ee8ba5f4f9c879ae35d8af33d51/data",
       "formatHint": "geojson",
       "defaultEnabled": true,
-      "styleHint": "line"
+      "styleHint": "line",
+      "itemId": "a6b00ee8ba5f4f9c879ae35d8af33d51",
+      "portalBase": "https://www.arcgis.com"
     }
   ],
   "toggleLayers": [
@@ -18,7 +20,9 @@
       "url": "https://www.arcgis.com/sharing/rest/content/items/caac498476d1442aad3ce5107119507f/data",
       "formatHint": "geojson",
       "defaultEnabled": false,
-      "styleHint": "poly"
+      "styleHint": "poly",
+      "itemId": "caac498476d1442aad3ce5107119507f",
+      "portalBase": "https://www.arcgis.com"
     }
   ],
   "cityLayers": [],
@@ -31,7 +35,9 @@
       "name": "Airports",
       "url": "https://gis.spotsylvania.va.us/portal/apps/sites/#/geohub/datasets/ef877ec407d04e54b0c62086c5d4ffb5",
       "type": "geohub",
-      "defaultEnabled": false
+      "defaultEnabled": false,
+      "itemId": "ef877ec407d04e54b0c62086c5d4ffb5",
+      "portalBase": "https://gis.spotsylvania.va.us/portal"
     }
   ]
 }
