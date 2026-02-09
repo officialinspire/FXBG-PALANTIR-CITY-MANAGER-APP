@@ -110,6 +110,19 @@
     THEME_RECENT: 'fxbg_theme_recent'
   };
   const LOAD_SHEDDING_STORAGE_KEY = "fxbg.loadShedding";
+  const GIS_LAYERS = new Map(); // key -> { leafletLayer, enabled, meta, loaded }
+  const GIS_PANEL_GROUPS = [
+    { key: "basemapEnhancers", label: "Basemap Enhancers" },
+    { key: "toggleLayers", label: "Fredericksburg toggle layers" },
+    { key: "cityLayers", label: "City layers" },
+    { key: "fredBusMode", label: "Fred Bus Mode" },
+    { key: "environmentalTopo", label: "Environmental / Topo" },
+    { key: "spotsy", label: "Spotsylvania" }
+  ];
+  let gisCatalogCache = null;
+  let gisCatalogPromise = null;
+  let gisCatalogStatus = "idle";
+  let gisCatalogError = null;
 
   function readLoadSheddingPref() {
     try {
@@ -4565,6 +4578,10 @@
     minZoom: 7
   }).setView([CONFIG.center.lat, CONFIG.center.lon], CONFIG.zoom);
 
+  const gisBasePane = map.createPane("gisBase");
+  gisBasePane.style.zIndex = 250;
+  gisBasePane.style.pointerEvents = "none";
+
   // CARTO Dark Matter tiles (primary) - modern CDN endpoint with retina support
   const cartoLayer = L.tileLayer(
     "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",
@@ -5199,6 +5216,287 @@
   });
 
   // -----------------------------
+  // GIS Catalog Layer Manager (Module 7)
+  // -----------------------------
+  async function getGisCatalog() {
+    const res = await fetch("/api/gis/catalog");
+    if (!res.ok) {
+      throw new Error(`Failed to load GIS catalog: ${res.status}`);
+    }
+    return res.json();
+  }
+
+  async function ensureGisCached(key, signal) {
+    const res = await fetch(`/api/gis/fetch?key=${encodeURIComponent(key)}`, { signal });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`Failed to cache GIS layer: ${res.status} ${text}`);
+    }
+    return res.json();
+  }
+
+  async function loadGisGeojson(key, signal) {
+    const res = await fetch(`/api/gis/data?key=${encodeURIComponent(key)}`, { signal });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`Failed to load GIS data: ${res.status} ${text}`);
+    }
+    const contentType = res.headers.get("content-type") || "";
+    if (!contentType.includes("json")) {
+      throw new Error(`Unexpected GIS payload: ${contentType}`);
+    }
+    return res.json();
+  }
+
+  function registerGisCatalogLayers(catalog) {
+    GIS_PANEL_GROUPS.forEach((group) => {
+      const entries = Array.isArray(catalog?.[group.key]) ? catalog[group.key] : [];
+      entries.forEach((entry) => {
+        const existing = GIS_LAYERS.get(entry.key);
+        GIS_LAYERS.set(entry.key, {
+          leafletLayer: existing?.leafletLayer || null,
+          enabled: existing?.enabled || false,
+          loaded: existing?.loaded || false,
+          loading: existing?.loading || false,
+          loadingPromise: existing?.loadingPromise || null,
+          controller: existing?.controller || null,
+          error: existing?.error || null,
+          meta: { ...entry, groupKey: group.key, groupLabel: group.label }
+        });
+      });
+    });
+  }
+
+  function refreshLayersPanelUI() {
+    if (dockState?.isOpen && dockState.tab === "layers") {
+      renderDock();
+    }
+  }
+
+  async function ensureGisCatalogReady() {
+    if (gisCatalogCache) return gisCatalogCache;
+    if (gisCatalogPromise) return gisCatalogPromise;
+    gisCatalogStatus = "loading";
+    gisCatalogError = null;
+    gisCatalogPromise = (async () => {
+      try {
+        const catalog = await getGisCatalog();
+        gisCatalogCache = catalog;
+        gisCatalogStatus = "ready";
+        registerGisCatalogLayers(catalog);
+        return catalog;
+      } catch (err) {
+        gisCatalogStatus = "error";
+        gisCatalogError = err;
+        console.warn("[GIS] Catalog load failed:", err);
+        return null;
+      } finally {
+        gisCatalogPromise = null;
+        refreshLayersPanelUI();
+      }
+    })();
+    return gisCatalogPromise;
+  }
+
+  function getGisHint(meta, feature) {
+    if (meta?.styleHint) return meta.styleHint;
+    const geomType = feature?.geometry?.type || "";
+    if (geomType.includes("Line")) return "line";
+    if (geomType.includes("Polygon")) return "poly";
+    if (geomType.includes("Point")) return "point";
+    return "poly";
+  }
+
+  function getGisLayerColor(meta) {
+    if (meta?.color) return meta.color;
+    if (meta?.groupKey === "basemapEnhancers") return "#7dd3fc";
+    return "#60a5fa";
+  }
+
+  function buildGisStyle(meta, feature, isBasemap) {
+    const hint = getGisHint(meta, feature);
+    const color = getGisLayerColor(meta);
+    if (hint === "line") {
+      return {
+        color,
+        weight: isBasemap ? 1.5 : 2,
+        opacity: isBasemap ? 0.55 : 0.85
+      };
+    }
+    return {
+      color,
+      weight: isBasemap ? 1 : 1.5,
+      opacity: isBasemap ? 0.45 : 0.7,
+      fillColor: color,
+      fillOpacity: isBasemap ? 0.06 : 0.12
+    };
+  }
+
+  function buildGisPointStyle(meta, isBasemap, pane) {
+    const color = getGisLayerColor(meta);
+    return {
+      radius: isBasemap ? 3 : 4,
+      color,
+      weight: 1,
+      opacity: isBasemap ? 0.6 : 0.85,
+      fillColor: color,
+      fillOpacity: isBasemap ? 0.25 : 0.5,
+      pane
+    };
+  }
+
+  async function addGeojsonChunked(leafletLayer, geojson, options = {}) {
+    const features = Array.isArray(geojson?.features) ? geojson.features : [];
+    if (!features.length) {
+      if (geojson && !Array.isArray(geojson.features)) {
+        leafletLayer.addData(geojson);
+      }
+      return;
+    }
+
+    const batchSize = IS_MOBILE_UI ? 200 : 500;
+    let index = 0;
+    const { signal } = options;
+
+    return new Promise((resolve, reject) => {
+      const addBatch = () => {
+        if (signal?.aborted) {
+          reject(new DOMException("Aborted", "AbortError"));
+          return;
+        }
+
+        const batch = features.slice(index, index + batchSize);
+        leafletLayer.addData({
+          type: "FeatureCollection",
+          features: batch
+        });
+        index += batchSize;
+
+        if (index < features.length) {
+          requestAnimationFrame(addBatch);
+        } else {
+          resolve();
+        }
+      };
+
+      requestAnimationFrame(addBatch);
+    });
+  }
+
+  async function enableGisLayer(key) {
+    const entry = GIS_LAYERS.get(key);
+    if (!entry) return;
+    if (entry.enabled) return;
+    if (entry.loaded && entry.leafletLayer) {
+      entry.leafletLayer.addTo(map);
+      entry.enabled = true;
+      updateOverlayLegendUI();
+      refreshLayersPanelUI();
+      return;
+    }
+    if (entry.loadingPromise) return entry.loadingPromise;
+
+    entry.loading = true;
+    entry.error = null;
+    refreshLayersPanelUI();
+
+    const controller = new AbortController();
+    entry.controller = controller;
+    const loadingPromise = (async () => {
+      let leafletLayer = entry.leafletLayer;
+      try {
+        await ensureGisCached(key, controller.signal);
+        const geojson = await loadGisGeojson(key, controller.signal);
+        if (!leafletLayer) {
+          const isBasemap = entry.meta?.groupKey === "basemapEnhancers";
+          const pane = isBasemap ? "gisBase" : undefined;
+          leafletLayer = L.geoJSON(null, {
+            style: (feature) => buildGisStyle(entry.meta, feature, isBasemap),
+            pointToLayer: (feature, latlng) => {
+              const hint = getGisHint(entry.meta, feature);
+              if (hint === "point") {
+                return L.circleMarker(latlng, buildGisPointStyle(entry.meta, isBasemap, pane));
+              }
+              return L.circleMarker(latlng, buildGisPointStyle(entry.meta, isBasemap, pane));
+            },
+            pane,
+            renderer: L.canvas()
+          });
+          entry.leafletLayer = leafletLayer;
+        }
+
+        leafletLayer.addTo(map);
+        await addGeojsonChunked(leafletLayer, geojson, { signal: controller.signal });
+
+        entry.loaded = true;
+        entry.enabled = true;
+        updateOverlayLegendUI();
+      } catch (err) {
+        if (err?.name === "AbortError") {
+          console.log(`[GIS] Layer ${key} load aborted`);
+        } else {
+          entry.error = err;
+          console.warn(`[GIS] Layer ${key} load failed:`, err);
+        }
+        if (leafletLayer) {
+          leafletLayer.clearLayers();
+          map.removeLayer(leafletLayer);
+        }
+        entry.enabled = false;
+        entry.loaded = false;
+      } finally {
+        entry.loading = false;
+        entry.controller = null;
+        entry.loadingPromise = null;
+        refreshLayersPanelUI();
+      }
+    })();
+
+    entry.loadingPromise = loadingPromise;
+    return loadingPromise;
+  }
+
+  function disableGisLayer(key) {
+    const entry = GIS_LAYERS.get(key);
+    if (!entry) return;
+
+    if (entry.controller) {
+      entry.controller.abort("Layer disabled");
+      entry.controller = null;
+    }
+
+    if (entry.leafletLayer && map.hasLayer(entry.leafletLayer)) {
+      map.removeLayer(entry.leafletLayer);
+    }
+
+    if (entry.loading) {
+      entry.loaded = false;
+      entry.leafletLayer?.clearLayers();
+    }
+
+    entry.enabled = false;
+    entry.loading = false;
+    entry.loadingPromise = null;
+    refreshLayersPanelUI();
+    updateOverlayLegendUI();
+  }
+
+  async function autoLoadBasemapEnhancers() {
+    if (store.loadShedding) return;
+    const catalog = await ensureGisCatalogReady();
+    if (!catalog) return;
+    const defaults = Array.isArray(catalog.basemapEnhancers)
+      ? catalog.basemapEnhancers.filter((entry) => entry.defaultEnabled)
+      : [];
+    defaults.forEach((entry) => {
+      const layerEntry = GIS_LAYERS.get(entry.key);
+      if (!layerEntry?.enabled) {
+        enableGisLayer(entry.key);
+      }
+    });
+  }
+
+  // -----------------------------
   // GIS Overlays (ArcGIS layers) - QQMS GIS Safeguards
   // -----------------------------
   /**
@@ -5626,23 +5924,21 @@
       const el = overlayLegendControl.getContainer();
       if (!el) return;
 
-      const enabledIds = Array.from(store.gis?.enabled || []);
-      if (!enabledIds.length) {
+      const enabledLayers = Array.from(GIS_LAYERS.values())
+        .filter((entry) => entry.enabled && entry.meta);
+      if (!enabledLayers.length) {
         el.style.display = "none";
         el.innerHTML = "";
         return;
       }
 
       el.style.display = "block";
-      const overlays = (CONFIG.gisOverlays?.overlays || [])
-        .filter(o => enabledIds.includes(o.id));
-
-      const rows = overlays.map(o => {
-        const c = o?.style?.color || "#22c55e";
+      const rows = enabledLayers.map((entry) => {
+        const c = getGisLayerColor(entry.meta);
         return `
           <div class="legend-row">
             <span class="swatch" style="background:${c}; border-color:${c};"></span>
-            <span class="legend-label">${escapeHtml(o.name)}</span>
+            <span class="legend-label">${escapeHtml(entry.meta.name || entry.meta.key)}</span>
           </div>
         `;
       }).join("");
@@ -6254,6 +6550,10 @@
     try {
       localStorage.setItem(LOAD_SHEDDING_STORAGE_KEY, store.loadShedding ? "1" : "0");
     } catch {}
+    if (!store.loadShedding) {
+      autoLoadBasemapEnhancers();
+    }
+    refreshLayersPanelUI();
   }
 
   // -----------------------------
@@ -14243,54 +14543,6 @@
       });
     }
 
-    // GIS Overlays (grouped by municipality)
-    if (CONFIG.gisOverlays.enabled) {
-      html += `<div class="dockSectionTitle">Map Overlays</div>`;
-
-      // Group overlays by municipality
-      const groups = {};
-      CONFIG.gisOverlays.overlays.forEach(overlay => {
-        const group = overlay.group || "OTHER";
-        if (!groups[group]) groups[group] = [];
-        groups[group].push(overlay);
-      });
-
-      // Get collapsed state from localStorage
-      let collapsedGroups = {};
-      try {
-        const stored = localStorage.getItem("fxbg_overlay_groups_collapsed");
-        if (stored) {
-          collapsedGroups = safeJsonParse(stored, {}, "overlay group state");
-        }
-      } catch(e) {}
-
-      // Render each group as an accordion
-      Object.keys(groups).forEach(groupName => {
-        const overlays = groups[groupName];
-        const isCollapsed = collapsedGroups[groupName] === true;
-
-        html += `<div class="overlayGroup ${isCollapsed ? 'collapsed' : ''}" data-group="${escapeAttr(groupName)}">`;
-        html += `<div class="overlayGroup__toggle" data-group="${escapeAttr(groupName)}">`;
-        html += `<span class="overlayGroup__toggleTitle">${escapeHtml(groupName)} (${overlays.length})</span>`;
-        html += `<span class="overlayGroup__toggleIcon">▼</span>`;
-        html += `</div>`;
-        html += `<div class="overlayGroup__body">`;
-
-        overlays.forEach(overlay => {
-          const isEnabled = store.gis.enabled.has(overlay.id);
-          html += `<div class="dockRow">`;
-          html += `<label>`;
-          html += `<input type="checkbox" data-overlay-id="${escapeAttr(overlay.id)}" ${isEnabled ? 'checked' : ''}>`;
-          html += `<span>${escapeHtml(overlay.name)}</span>`;
-          html += `</label>`;
-          html += `</div>`;
-        });
-
-        html += `</div>`; // overlayGroup__body
-        html += `</div>`; // overlayGroup
-      });
-    }
-
     if (uniqueMissing.length > 0) {
       const warningMsg = `Critical UI bindings missing: ${uniqueMissing.join(', ')}`;
       if (!qa.warnings.includes(warningMsg)) qa.warnings.push(warningMsg);
@@ -14309,6 +14561,87 @@
     html += `<button class="dockBtnSmall" id="dockRunQuickSmoke">Run Quick Smoke</button>`;
     html += `<div id="dockQuickSmokeReport" style="margin-top:8px;">${formatQaSmokeLines(qa.quickSmokeReport)}</div>`;
     html += `</div>`;
+
+    return html;
+  }
+
+  function renderLayersHTML() {
+    let html = "";
+
+    if (store.loadShedding) {
+      html += `<div class="dockCard">`;
+      html += `<div class="dockRow">`;
+      html += `<div class="dockRowLeft">`;
+      html += `<div class="dockRowTitle">Load Shedding</div>`;
+      html += `<div class="dockRowMeta">Auto-load is disabled. Enable layers manually.</div>`;
+      html += `</div>`;
+      html += `<div class="dockBadge status-backoff">ON</div>`;
+      html += `</div>`;
+      html += `</div>`;
+    }
+
+    if (gisCatalogStatus === "idle") {
+      ensureGisCatalogReady();
+    }
+
+    if (gisCatalogStatus === "loading") {
+      html += `<div class="dockCard"><div class="dockMetaText">Loading GIS catalog…</div></div>`;
+      return html;
+    }
+
+    if (gisCatalogStatus === "error") {
+      html += `<div class="dockCard"><div class="dockMetaText" style="color:var(--warn);">Failed to load GIS catalog.</div></div>`;
+    }
+
+    let collapsedGroups = {};
+    try {
+      const stored = localStorage.getItem("fxbg_layers_groups_collapsed");
+      if (stored) {
+        collapsedGroups = safeJsonParse(stored, {}, "layers group state");
+      }
+    } catch (e) {}
+
+    GIS_PANEL_GROUPS.forEach((group) => {
+      const entries = Array.isArray(gisCatalogCache?.[group.key]) ? gisCatalogCache[group.key] : [];
+      const isCollapsed = collapsedGroups[group.key] === true;
+
+      html += `<div class="overlayGroup ${isCollapsed ? 'collapsed' : ''}" data-group="${escapeAttr(group.key)}">`;
+      html += `<div class="overlayGroup__toggle" data-group="${escapeAttr(group.key)}">`;
+      html += `<span class="overlayGroup__toggleTitle">${escapeHtml(group.label)} (${entries.length})</span>`;
+      html += `<span class="overlayGroup__toggleIcon">▼</span>`;
+      html += `</div>`;
+      html += `<div class="overlayGroup__body">`;
+
+      if (!entries.length) {
+        html += `<div class="dockRow"><div class="dockRowLeft"><div class="dockRowMeta">No layers available.</div></div></div>`;
+      }
+
+      entries.forEach((entry) => {
+        const layerEntry = GIS_LAYERS.get(entry.key);
+        const isChecked = layerEntry?.enabled || layerEntry?.loading;
+        const statusText = layerEntry?.loading
+          ? "Loading…"
+          : layerEntry?.error
+            ? "Load failed"
+            : "";
+        const statusClass = layerEntry?.error ? "style=\"color:var(--warn);\"" : "";
+
+        html += `<div class="dockRow">`;
+        html += `<div class="dockRowLeft">`;
+        html += `<label>`;
+        html += `<input type="checkbox" data-gis-layer-key="${escapeAttr(entry.key)}" ${isChecked ? 'checked' : ''}>`;
+        html += `<span>${escapeHtml(entry.name || entry.key)}</span>`;
+        html += `</label>`;
+        if (statusText) {
+          html += `<div class="dockRowMeta" ${statusClass}>${escapeHtml(statusText)}</div>`;
+        }
+        html += `</div>`;
+        html += `</div>`;
+      });
+
+      html += `</div>`;
+      html += `</div>`;
+    });
 
     return html;
   }
@@ -14345,6 +14678,7 @@
       case "alerts": return renderAlertsHTML();
       case "tracks": return renderTracksHTML();
       case "sync": return renderSyncHTML();
+      case "layers": return renderLayersHTML();
       case "settings": return renderSettingsHTML();
       case "system": return renderSystemHTML();
       default: return "<p>Unknown tab</p>";
@@ -14361,6 +14695,7 @@
       watchboard: "Watchboard",
       alerts: "Hot Alerts",
       tracks: "Tracks",
+      layers: "Layers",
       sync: "Sync",
       settings: "Settings",
       system: "System"
@@ -14453,40 +14788,36 @@
           renderDock();
         });
       }
+    }
 
-      // Bind GIS overlay toggles
-      dockPanelBody.querySelectorAll('input[data-overlay-id]').forEach(checkbox => {
-        checkbox.addEventListener("change", async (e) => {
-          const overlayId = e.target.dataset.overlayId;
-          if (e.target.checked) {
-            await enableOverlay(overlayId);
+    if (dockState.tab === "layers") {
+      dockPanelBody.querySelectorAll('input[data-gis-layer-key]').forEach((checkbox) => {
+        checkbox.addEventListener("change", async (event) => {
+          const key = event.target.dataset.gisLayerKey;
+          if (event.target.checked) {
+            await enableGisLayer(key);
           } else {
-            disableOverlay(overlayId);
+            disableGisLayer(key);
           }
         });
       });
 
-      // Bind accordion toggle handlers
-      dockPanelBody.querySelectorAll('.overlayGroup__toggle').forEach(toggle => {
-        toggle.addEventListener("click", (e) => {
-          const groupName = toggle.dataset.group;
-          const groupEl = toggle.closest('.overlayGroup');
+      dockPanelBody.querySelectorAll(".overlayGroup__toggle").forEach((toggle) => {
+        toggle.addEventListener("click", () => {
+          const groupKey = toggle.dataset.group;
+          const groupEl = toggle.closest(".overlayGroup");
+          groupEl.classList.toggle("collapsed");
 
-          // Toggle collapsed class
-          groupEl.classList.toggle('collapsed');
-
-          // Save collapsed state to localStorage
           try {
             let collapsedGroups = {};
-            const stored = localStorage.getItem("fxbg_overlay_groups_collapsed");
+            const stored = localStorage.getItem("fxbg_layers_groups_collapsed");
             if (stored) {
-              collapsedGroups = safeJsonParse(stored, {}, "overlay group state");
+              collapsedGroups = safeJsonParse(stored, {}, "layers group state");
             }
-
-            collapsedGroups[groupName] = groupEl.classList.contains('collapsed');
-            localStorage.setItem("fxbg_overlay_groups_collapsed", JSON.stringify(collapsedGroups));
-          } catch(e) {
-            console.warn("Failed to save accordion state:", e);
+            collapsedGroups[groupKey] = groupEl.classList.contains("collapsed");
+            localStorage.setItem("fxbg_layers_groups_collapsed", JSON.stringify(collapsedGroups));
+          } catch (e) {
+            console.warn("Failed to save layers accordion state:", e);
           }
         });
       });
@@ -15587,6 +15918,7 @@
   updateBarActualHeights();
   updateCrimeButtonActiveState();
   ensureOverlayLegendControl();
+  ensureGisCatalogReady().then(() => autoLoadBasemapEnhancers());
   runUiSanityCheck("boot");
   const activeMissionEndBtn = document.getElementById('activeMissionEnd');
   if (activeMissionEndBtn) {
