@@ -462,12 +462,14 @@ const VA511_EVENTS_CACHE_TTL_MS = 3 * 60 * 1000;   // 3 minutes fresh
 const VA511_EVENTS_STALE_TTL_MS = 60 * 60 * 1000;   // 1 hour stale fallback
 const VA511_CAMS_CACHE_TTL_MS = 5 * 60 * 1000;      // 5 minutes fresh
 const VA511_CAMS_STALE_TTL_MS = 60 * 60 * 1000;     // 1 hour stale fallback
-const VA511_CAMS_MAX_BYTES = 15 * 1024 * 1024;      // 15MB payload limit for cameras
+const VA511_CAMS_MAX_BYTES = 25 * 1024 * 1024;      // 25MB payload limit for cameras
 const va511EventsMemoryCache = { ts: 0, payload: null };
 const va511CamsMemoryCache = { ts: 0, payload: null };
 
 // FXBG I-95 corridor bounding box for status summary
 const FXBG_I95_BBOX = { minLat: 38.15, maxLat: 38.55, minLon: -77.70, maxLon: -77.20 };
+// AOI for VA511 cams (Fredericksburg City + Stafford + Spotsylvania)
+const AOI_BBOX = { minLat: 38.15, maxLat: 38.45, minLon: -77.75, maxLon: -77.25 };
 
 const CDC_SOURCE_URL = "https://data.cdc.gov/api/v3/views/psx4-wq38/query.json";
 const CDC_BACKOFF_MS = 30 * 60 * 1000;
@@ -1693,11 +1695,83 @@ const VA511_UPSTREAM_HEADERS = {
   "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 };
 
-async function fetchVa511Layer(sourceUrl, memCache, ttlMs, staleTtlMs, diskCacheFile, layerName, maxBytesOverride) {
+function inBbox(lat, lon, bbox) {
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return false;
+  return lat >= bbox.minLat && lat <= bbox.maxLat && lon >= bbox.minLon && lon <= bbox.maxLon;
+}
+
+function pickFirstString(source, fields) {
+  if (!source) return null;
+  for (const field of fields) {
+    const value = source[field];
+    if (value === null || value === undefined) continue;
+    const trimmed = String(value).trim();
+    if (trimmed) return trimmed;
+  }
+  return null;
+}
+
+function normalizeVa511Cams(raw) {
+  if (!raw || typeof raw !== "object") {
+    return { cams: [], schemaWarning: "unknown_schema" };
+  }
+
+  const features = Array.isArray(raw.features) ? raw.features : null;
+  if (!features) {
+    return { cams: [], schemaWarning: "unknown_schema" };
+  }
+
+  const hasGeoJson = features.some((feature) => Array.isArray(feature?.geometry?.coordinates));
+  const hasEsri = features.some((feature) => Number.isFinite(feature?.geometry?.x) && Number.isFinite(feature?.geometry?.y));
+
+  const cams = [];
+  if (hasGeoJson) {
+    for (const feature of features) {
+      const coords = feature?.geometry?.coordinates;
+      if (!Array.isArray(coords) || coords.length < 2) continue;
+      const lon = Number(coords[0]);
+      const lat = Number(coords[1]);
+      if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
+      const props = feature?.properties || {};
+      const id = pickFirstString(props, ["id", "cameraid", "camera_id", "cam_id", "cameraId"]) || (feature?.id ? String(feature.id) : null);
+      const name = pickFirstString(props, ["name", "title", "camera_name", "cameraName", "label"]);
+      const url = pickFirstString(props, ["url", "link", "camera_url", "cameraUrl", "view_url", "viewUrl"]);
+      const snapshotUrl = pickFirstString(props, ["snapshot_url", "snapshotUrl", "snapshot", "image_url", "imageUrl", "thumb_url", "thumbnail"]);
+      const roadway = pickFirstString(props, ["roadway", "road", "route", "highway", "corridor"]);
+      const direction = pickFirstString(props, ["direction", "dir", "travel_direction", "travelDirection", "heading"]);
+      cams.push({ id, name, lat, lon, url, snapshotUrl, roadway, direction });
+    }
+    return { cams };
+  }
+
+  if (hasEsri) {
+    for (const feature of features) {
+      const geom = feature?.geometry || {};
+      const lon = Number(geom.x);
+      const lat = Number(geom.y);
+      if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
+      const props = feature?.attributes || feature?.properties || {};
+      const id = pickFirstString(props, ["id", "cameraid", "camera_id", "cam_id", "cameraId", "OBJECTID", "objectid"]) || (feature?.id ? String(feature.id) : null);
+      const name = pickFirstString(props, ["name", "title", "camera_name", "cameraName", "label"]);
+      const url = pickFirstString(props, ["url", "link", "camera_url", "cameraUrl", "view_url", "viewUrl"]);
+      const snapshotUrl = pickFirstString(props, ["snapshot_url", "snapshotUrl", "snapshot", "image_url", "imageUrl", "thumb_url", "thumbnail"]);
+      const roadway = pickFirstString(props, ["roadway", "road", "route", "highway", "corridor"]);
+      const direction = pickFirstString(props, ["direction", "dir", "travel_direction", "travelDirection", "heading"]);
+      cams.push({ id, name, lat, lon, url, snapshotUrl, roadway, direction });
+    }
+    return { cams };
+  }
+
+  return { cams: [], schemaWarning: "unknown_schema" };
+}
+
+async function fetchVa511Layer(sourceUrl, memCache, ttlMs, staleTtlMs, diskCacheFile, layerName, maxBytesOverride, options = {}) {
+  const transform = typeof options.transform === "function" ? options.transform : null;
+  const allowJsonSniff = Boolean(options.allowJsonSniff);
   const now = Date.now();
   // 1. Fresh memory cache?
   if (memCache.payload && (now - memCache.ts) < ttlMs) {
-    return { ok: true, data: memCache.payload.data, sourceUrl, fetchedAt: memCache.payload.fetchedAt, cached: true, degraded: false };
+    return { ...memCache.payload, cached: true, degraded: false };
   }
 
   // 2. Try upstream
@@ -1707,6 +1781,7 @@ async function fetchVa511Layer(sourceUrl, memCache, ttlMs, staleTtlMs, diskCache
       timeoutMs: 15000,
       headers: VA511_UPSTREAM_HEADERS,
       maxBytes: maxBytesOverride,
+      allowJsonSniff,
       upstreamName: `va511-${layerName}`,
       route: `/api/va511/${layerName}`
     });
@@ -1715,7 +1790,24 @@ async function fetchVa511Layer(sourceUrl, memCache, ttlMs, staleTtlMs, diskCache
       throw new Error(result.error || `upstream returned status ${result.status}`);
     }
 
-    const payload = { ok: true, data: result.json, sourceUrl, fetchedAt: result.fetchedAt };
+    let payloadData = result.json;
+    let payloadExtras = {};
+    if (transform) {
+      const transformed = transform(result.json);
+      if (transformed && typeof transformed === "object" && !Array.isArray(transformed)) {
+        if (Object.prototype.hasOwnProperty.call(transformed, "data")) {
+          payloadData = transformed.data;
+          const { data, ...rest } = transformed;
+          payloadExtras = rest;
+        } else {
+          payloadData = transformed;
+        }
+      } else {
+        payloadData = transformed;
+      }
+    }
+
+    const payload = { ok: true, data: payloadData, sourceUrl, fetchedAt: result.fetchedAt, ...payloadExtras };
     memCache.ts = now;
     memCache.payload = payload;
     await writeJsonFile(diskCacheFile, payload);
@@ -1723,7 +1815,7 @@ async function fetchVa511Layer(sourceUrl, memCache, ttlMs, staleTtlMs, diskCache
   } catch (err) {
     // 3. Stale memory cache within stale window?
     if (memCache.payload && (now - memCache.ts) < staleTtlMs) {
-      return { ok: true, data: memCache.payload.data, sourceUrl, fetchedAt: memCache.payload.fetchedAt, cached: true, degraded: true, reason: err.message };
+      return { ...memCache.payload, cached: true, degraded: true, reason: err.message };
     }
 
     // 4. Disk cache fallback
@@ -1731,7 +1823,7 @@ async function fetchVa511Layer(sourceUrl, memCache, ttlMs, staleTtlMs, diskCache
     if (diskCached?.ok && diskCached?.data) {
       memCache.ts = now;
       memCache.payload = diskCached;
-      return { ok: true, data: diskCached.data, sourceUrl, fetchedAt: diskCached.fetchedAt || null, cached: true, degraded: true, reason: err.message };
+      return { ...diskCached, cached: true, degraded: true, reason: err.message };
     }
 
     // 5. Total failure
@@ -1744,7 +1836,58 @@ async function fetchVa511Events() {
 }
 
 async function fetchVa511Cams() {
-  return fetchVa511Layer(VA511_CAMS_SOURCE_URL, va511CamsMemoryCache, VA511_CAMS_CACHE_TTL_MS, VA511_CAMS_STALE_TTL_MS, VA511_CAMS_CACHE_FILE, "cams", VA511_CAMS_MAX_BYTES);
+  const payload = await fetchVa511Layer(
+    VA511_CAMS_SOURCE_URL,
+    va511CamsMemoryCache,
+    VA511_CAMS_CACHE_TTL_MS,
+    VA511_CAMS_STALE_TTL_MS,
+    VA511_CAMS_CACHE_FILE,
+    "cams",
+    VA511_CAMS_MAX_BYTES,
+    {
+      allowJsonSniff: true,
+      transform: (raw) => {
+        const normalized = normalizeVa511Cams(raw);
+        const cams = normalized.cams.filter((cam) => inBbox(cam.lat, cam.lon, AOI_BBOX));
+        return {
+          data: cams,
+          count: cams.length,
+          bbox: AOI_BBOX,
+          schemaWarning: normalized.schemaWarning
+        };
+      }
+    }
+  );
+
+  if (!payload.ok) {
+    return {
+      ok: false,
+      fetchedAt: payload.fetchedAt || null,
+      sourceUrl: payload.sourceUrl || VA511_CAMS_SOURCE_URL,
+      cached: Boolean(payload.cached),
+      degraded: true,
+      count: 0,
+      bbox: AOI_BBOX,
+      cams: [],
+      error: payload.error || payload.reason || "upstream_failed"
+    };
+  }
+
+  const cams = Array.isArray(payload.data) ? payload.data : [];
+  const response = {
+    ok: true,
+    fetchedAt: payload.fetchedAt,
+    sourceUrl: payload.sourceUrl,
+    cached: Boolean(payload.cached),
+    degraded: Boolean(payload.degraded),
+    count: Number.isFinite(payload.count) ? payload.count : cams.length,
+    bbox: payload.bbox || AOI_BBOX,
+    cams
+  };
+  if (payload.schemaWarning) {
+    response.schemaWarning = payload.schemaWarning;
+  }
+  return response;
 }
 
 // ---------------------------------------------------------------------------
@@ -2377,10 +2520,12 @@ function runAllowlistSanityCheck() {
   return false;
 }
 
+const LOCAL_BASE_URL = process.env.HEALTH_BASE_URL || `http://127.0.0.1:${PORT}`;
+
 const REQUIRED_UPSTREAMS = [
   {
     name: "VA511 Cameras API",
-    url: "https://511.vdot.virginia.gov/services/map/layers/map/cams",
+    url: `${LOCAL_BASE_URL}/api/va511/cams`,
     expect: ["application/json"],
     required: true
   },

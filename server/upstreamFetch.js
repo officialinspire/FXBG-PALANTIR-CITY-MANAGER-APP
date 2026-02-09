@@ -161,6 +161,7 @@ async function upstreamFetch(url, opts = {}) {
   const maxRedirects = Number.isFinite(opts.maxRedirects) ? opts.maxRedirects : DEFAULT_MAX_REDIRECTS;
   const expectedType = opts.expectedType || null;
   const allowJsonp = Boolean(opts.allowJsonp);
+  const allowJsonSniff = Boolean(opts.allowJsonSniff);
   const includeBodyText = Boolean(opts.includeBodyText);
   const includeBodyBuffer = Boolean(opts.includeBodyBuffer);
   const method = (opts.method || "GET").toUpperCase();
@@ -212,7 +213,7 @@ async function upstreamFetch(url, opts = {}) {
 
       const validation = validateContentType(expectedType, contentType, allowJsonp);
       if (!validation.ok) {
-        if (expectedType === "json" && bytes > 0 && startsWithJsonToken(bodyBuffer)) {
+        if (expectedType === "json" && allowJsonSniff && bytes > 0 && startsWithJsonToken(bodyBuffer)) {
           const rawText = bodyBuffer.toString("utf8");
           const jsonText = allowJsonp ? stripJsonp(rawText) : rawText;
           try {
