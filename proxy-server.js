@@ -282,7 +282,8 @@ const DOWNTOWN_CENTRAL_PARK_PLACES_FILE = path.join(__dirname, "data", "places-d
 const DORMS_FILE = path.join(__dirname, "data", "dorms_fxbg.json");
 const SCHOOLS_OVERRIDES_FILE = path.join(__dirname, "data", "schools_address_overrides.json");
 const SCHOOLS_DATASET_FILE = path.join(__dirname, "data", "schools_fxbg.json");
-const STREETLIST_SPOTSY_FILE = path.join(__dirname, "data", "streetlist_spotsy.json");
+const SPOTSY_STREETLIST_FILE = path.join(__dirname, "data", "streetlists", "spotsy_streets.json");
+const SPOTSY_STREETLIST_SOURCE_URL = "https://www.spotsylvania.va.us/DocumentCenter/View/7321/Street-List-February-2026";
 const GIS_CATALOG_FILE = path.join(__dirname, "data", "gis-catalog.json");
 const CACHE_DIR = path.join(__dirname, "data", "cache");
 const GIS_CACHE_DIR = path.join(CACHE_DIR, "gis");
@@ -972,6 +973,49 @@ try {
   pdfParse = require("pdf-parse");
 } catch (e) {
   console.warn("[Crime Reports] pdf-parse not installed. Run 'npm install' to enable PDF parsing.");
+}
+
+function normalizeSpotsyStreetEntry(value) {
+  const text = String(value || "").replace(/\s+/g, " ").trim();
+  if (!text) return null;
+  const lower = text.toLowerCase();
+  const headerPatterns = [
+    /^street list/i,
+    /spotsylvania county/i,
+    /document center/i,
+    /department of/i,
+    /^page\s+\d+/i,
+    /page\s+\d+\s+of\s+\d+/i,
+    /february\s+\d{4}/i,
+    /updated\s+\d{4}/i
+  ];
+  if (headerPatterns.some((pattern) => pattern.test(lower))) return null;
+  if (!/[a-z]/i.test(text)) return null;
+  return text;
+}
+
+function parseSpotsyStreetListText(rawText) {
+  const lines = String(rawText || "").split(/\r?\n/);
+  const streets = [];
+  const seen = new Set();
+
+  for (const line of lines) {
+    const parts = String(line || "")
+      .split(/\s{2,}/g)
+      .map((part) => part.trim())
+      .filter(Boolean);
+
+    for (const part of parts.length ? parts : [line]) {
+      const cleaned = normalizeSpotsyStreetEntry(part);
+      if (!cleaned) continue;
+      const key = cleaned.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      streets.push(cleaned);
+    }
+  }
+
+  return streets;
 }
 
 // Support environment aliases for API keys
@@ -3615,7 +3659,7 @@ const server = http.createServer(async (req, res) => {
       const diskCacheBytes = cacheDirExists ? await getDirectorySizeBytes(CACHE_DIR) : 0;
       const hasSchoolsDataset = fs.existsSync(SCHOOLS_DATASET_FILE);
       const hasStreetlists = {
-        spotsy: fs.existsSync(STREETLIST_SPOTSY_FILE)
+        spotsy: fs.existsSync(SPOTSY_STREETLIST_FILE)
       };
       const canServeStatic = fs.existsSync(path.join(PUBLIC_DIR, "index.html"));
 
@@ -3771,6 +3815,65 @@ const server = http.createServer(async (req, res) => {
       }
 
       return send(res, 404, JSON.stringify({ ok: false, error: "not_cached_yet" }), { "Content-Type": "application/json" });
+    }
+
+    if (urlObj.pathname === "/api/spotsy/streets/refresh" && req.method === "GET") {
+      if (!pdfParse) {
+        return send(res, 500, JSON.stringify({ ok: false, error: "pdf_parse_unavailable" }), { "Content-Type": "application/json" });
+      }
+
+      try {
+        const upstream = await runUpstreamFetch("Spotsy Street List PDF", SPOTSY_STREETLIST_SOURCE_URL, {
+          expectedType: "pdf",
+          includeBodyBuffer: true,
+          timeoutMs: 20000,
+          maxBytes: MAX_LAYER_BYTES,
+          accept: "application/pdf",
+          route: "/api/spotsy/streets/refresh"
+        });
+
+        if (!upstream.ok || !upstream.bodyBuffer) {
+          return send(res, 502, JSON.stringify({
+            ok: false,
+            error: upstream.error || "upstream_failed",
+            status: upstream.status || 0
+          }, null, 2), { "Content-Type": "application/json" });
+        }
+
+        const parsed = await pdfParse(upstream.bodyBuffer);
+        const streets = parseSpotsyStreetListText(parsed.text);
+        const fetchedAt = new Date().toISOString();
+        const payload = {
+          ok: true,
+          count: streets.length,
+          streets,
+          sourceUrl: SPOTSY_STREETLIST_SOURCE_URL,
+          fetchedAt,
+          savedAs: path.basename(SPOTSY_STREETLIST_FILE)
+        };
+        await writeJsonFile(SPOTSY_STREETLIST_FILE, payload);
+
+        return send(res, 200, JSON.stringify({
+          ok: true,
+          count: streets.length,
+          savedAs: payload.savedAs,
+          fetchedAt
+        }, null, 2), { "Content-Type": "application/json" });
+      } catch (err) {
+        return send(res, 500, JSON.stringify({
+          ok: false,
+          error: "streetlist_refresh_failed",
+          message: err.message
+        }, null, 2), { "Content-Type": "application/json" });
+      }
+    }
+
+    if (urlObj.pathname === "/api/spotsy/streets" && req.method === "GET") {
+      const payload = await readJsonFile(SPOTSY_STREETLIST_FILE);
+      if (!payload) {
+        return send(res, 404, JSON.stringify({ ok: false, error: "not_found" }, null, 2), { "Content-Type": "application/json" });
+      }
+      return send(res, 200, JSON.stringify(payload, null, 2), { "Content-Type": "application/json" });
     }
 
 
