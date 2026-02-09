@@ -463,8 +463,11 @@ const VA511_EVENTS_STALE_TTL_MS = 60 * 60 * 1000;   // 1 hour stale fallback
 const VA511_CAMS_CACHE_TTL_MS = 5 * 60 * 1000;      // 5 minutes fresh
 const VA511_CAMS_STALE_TTL_MS = 60 * 60 * 1000;     // 1 hour stale fallback
 const VA511_CAMS_MAX_BYTES = 25 * 1024 * 1024;      // 25MB payload limit for cameras
+const VA511_CAMS_DEFAULT_LIMIT = 5000;
+const VA511_CAMS_HARD_LIMIT = 20000;
 const va511EventsMemoryCache = { ts: 0, payload: null };
 const va511CamsMemoryCache = { ts: 0, payload: null };
+const va511CamsMemoryCacheByBbox = new Map();
 
 // FXBG I-95 corridor bounding box for status summary
 const FXBG_I95_BBOX = { minLat: 38.15, maxLat: 38.55, minLon: -77.70, maxLon: -77.20 };
@@ -1700,6 +1703,41 @@ function inBbox(lat, lon, bbox) {
   return lat >= bbox.minLat && lat <= bbox.maxLat && lon >= bbox.minLon && lon <= bbox.maxLon;
 }
 
+function parseBboxParam(param) {
+  if (!param) return null;
+  const parts = String(param).split(",").map((value) => Number(value));
+  if (parts.length !== 4 || parts.some((val) => !Number.isFinite(val))) return null;
+  const [minLon, minLat, maxLon, maxLat] = parts;
+  if (minLon > maxLon || minLat > maxLat) return null;
+  return { minLon, minLat, maxLon, maxLat };
+}
+
+function roundBbox(bbox, decimals = 3) {
+  const factor = Math.pow(10, decimals);
+  return {
+    minLon: Math.round(bbox.minLon * factor) / factor,
+    minLat: Math.round(bbox.minLat * factor) / factor,
+    maxLon: Math.round(bbox.maxLon * factor) / factor,
+    maxLat: Math.round(bbox.maxLat * factor) / factor
+  };
+}
+
+function getBboxCacheKey(bbox) {
+  return [
+    bbox.minLon.toFixed(3),
+    bbox.minLat.toFixed(3),
+    bbox.maxLon.toFixed(3),
+    bbox.maxLat.toFixed(3)
+  ].join(",");
+}
+
+function parseVa511Limit(param) {
+  if (param === null || param === undefined || param === "") return VA511_CAMS_DEFAULT_LIMIT;
+  const parsed = Number(param);
+  if (!Number.isFinite(parsed) || parsed <= 0) return VA511_CAMS_DEFAULT_LIMIT;
+  return Math.min(Math.floor(parsed), VA511_CAMS_HARD_LIMIT);
+}
+
 function pickFirstString(source, fields) {
   if (!source) return null;
   for (const field of fields) {
@@ -1810,7 +1848,9 @@ async function fetchVa511Layer(sourceUrl, memCache, ttlMs, staleTtlMs, diskCache
     const payload = { ok: true, data: payloadData, sourceUrl, fetchedAt: result.fetchedAt, ...payloadExtras };
     memCache.ts = now;
     memCache.payload = payload;
-    await writeJsonFile(diskCacheFile, payload);
+    if (diskCacheFile) {
+      await writeJsonFile(diskCacheFile, payload);
+    }
     return { ...payload, cached: false, degraded: false };
   } catch (err) {
     // 3. Stale memory cache within stale window?
@@ -1819,11 +1859,13 @@ async function fetchVa511Layer(sourceUrl, memCache, ttlMs, staleTtlMs, diskCache
     }
 
     // 4. Disk cache fallback
-    const diskCached = await readJsonFile(diskCacheFile);
-    if (diskCached?.ok && diskCached?.data) {
-      memCache.ts = now;
-      memCache.payload = diskCached;
-      return { ...diskCached, cached: true, degraded: true, reason: err.message };
+    if (diskCacheFile) {
+      const diskCached = await readJsonFile(diskCacheFile);
+      if (diskCached?.ok && diskCached?.data) {
+        memCache.ts = now;
+        memCache.payload = diskCached;
+        return { ...diskCached, cached: true, degraded: true, reason: err.message };
+      }
     }
 
     // 5. Total failure
@@ -1835,24 +1877,36 @@ async function fetchVa511Events() {
   return fetchVa511Layer(VA511_EVENTS_SOURCE_URL, va511EventsMemoryCache, VA511_EVENTS_CACHE_TTL_MS, VA511_EVENTS_STALE_TTL_MS, VA511_EVENTS_CACHE_FILE, "events");
 }
 
-async function fetchVa511Cams() {
+async function fetchVa511Cams(options = {}) {
+  const requestedBbox = options.bbox || null;
+  const limit = Number.isFinite(options.limit) ? options.limit : VA511_CAMS_DEFAULT_LIMIT;
+  const bboxForFilter = requestedBbox ? roundBbox(requestedBbox) : AOI_BBOX;
+  const cacheKey = requestedBbox ? getBboxCacheKey(bboxForFilter) : "default";
+  const memCache = requestedBbox
+    ? (va511CamsMemoryCacheByBbox.get(cacheKey) || { ts: 0, payload: null })
+    : va511CamsMemoryCache;
+
+  if (requestedBbox && !va511CamsMemoryCacheByBbox.has(cacheKey)) {
+    va511CamsMemoryCacheByBbox.set(cacheKey, memCache);
+  }
+
   const payload = await fetchVa511Layer(
     VA511_CAMS_SOURCE_URL,
-    va511CamsMemoryCache,
+    memCache,
     VA511_CAMS_CACHE_TTL_MS,
     VA511_CAMS_STALE_TTL_MS,
-    VA511_CAMS_CACHE_FILE,
+    requestedBbox ? null : VA511_CAMS_CACHE_FILE,
     "cams",
     VA511_CAMS_MAX_BYTES,
     {
       allowJsonSniff: true,
       transform: (raw) => {
         const normalized = normalizeVa511Cams(raw);
-        const cams = normalized.cams.filter((cam) => inBbox(cam.lat, cam.lon, AOI_BBOX));
+        const cams = normalized.cams.filter((cam) => inBbox(cam.lat, cam.lon, bboxForFilter));
         return {
           data: cams,
           count: cams.length,
-          bbox: AOI_BBOX,
+          bbox: bboxForFilter,
           schemaWarning: normalized.schemaWarning
         };
       }
@@ -1867,22 +1921,23 @@ async function fetchVa511Cams() {
       cached: Boolean(payload.cached),
       degraded: true,
       count: 0,
-      bbox: AOI_BBOX,
+      bbox: bboxForFilter,
       cams: [],
       error: payload.error || payload.reason || "upstream_failed"
     };
   }
 
   const cams = Array.isArray(payload.data) ? payload.data : [];
+  const limitedCams = cams.slice(0, limit);
   const response = {
     ok: true,
     fetchedAt: payload.fetchedAt,
     sourceUrl: payload.sourceUrl,
     cached: Boolean(payload.cached),
     degraded: Boolean(payload.degraded),
-    count: Number.isFinite(payload.count) ? payload.count : cams.length,
-    bbox: payload.bbox || AOI_BBOX,
-    cams
+    count: limitedCams.length,
+    bbox: payload.bbox || bboxForFilter,
+    cams: limitedCams
   };
   if (payload.schemaWarning) {
     response.schemaWarning = payload.schemaWarning;
@@ -5378,7 +5433,11 @@ const server = http.createServer(async (req, res) => {
 
     // --- VA511 Cameras (server-side cached) ---
     if (urlObj.pathname === "/api/va511/cams" && req.method === "GET") {
-      const payload = await fetchVa511Cams();
+      const bboxParam = urlObj.searchParams.get("bbox");
+      const limitParam = urlObj.searchParams.get("limit");
+      const bbox = parseBboxParam(bboxParam);
+      const limit = parseVa511Limit(limitParam);
+      const payload = await fetchVa511Cams({ bbox, limit });
       return send(res, payload.ok ? 200 : 502, JSON.stringify(payload, null, 2), { "Content-Type": "application/json" });
     }
 
