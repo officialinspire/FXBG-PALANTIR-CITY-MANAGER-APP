@@ -42,6 +42,7 @@
     REPORTS: 'fxbg-reports',
     UI_MODE_DESKTOP: 'fxbg.uiMode.desktop',
     UI_MODE_MOBILE: 'fxbg.uiMode.mobile',
+    MOBILE_HUD_COMPACT: 'fxbg.mobileHudCompact',
     ACTIVE_MISSION: 'fxbg.activeMission',
     HUB_DEVICE_ID: 'fxbg.hubDeviceId',
     TRACK_HAPTICS: 'fxbg.trackHaptics',
@@ -80,10 +81,34 @@
     return getDefaultUiMode();
   }
 
+  function hasStoredMobileHudCompact() {
+    try {
+      const stored = localStorage.getItem(STORAGE_KEYS.MOBILE_HUD_COMPACT);
+      return stored === 'true' || stored === 'false';
+    } catch {
+      return false;
+    }
+  }
+
+  function readStoredMobileHudCompact() {
+    try {
+      const stored = localStorage.getItem(STORAGE_KEYS.MOBILE_HUD_COMPACT);
+      if (stored === 'true') return true;
+      if (stored === 'false') return false;
+    } catch {}
+    return IS_MOBILE_UI;
+  }
+
   let currentUiMode = getDefaultUiMode();
   if (IS_MOBILE_UI && !hasStoredUiMode(true)) {
     currentUiMode = UI_MODES.FIELD;
     try { localStorage.setItem(STORAGE_KEYS.UI_MODE_MOBILE, currentUiMode); } catch {}
+  }
+
+  let initialMobileHudCompact = readStoredMobileHudCompact();
+  if (IS_MOBILE_UI && !hasStoredMobileHudCompact()) {
+    initialMobileHudCompact = true;
+    try { localStorage.setItem(STORAGE_KEYS.MOBILE_HUD_COMPACT, 'true'); } catch {}
   }
 
   const missionState = {
@@ -6435,6 +6460,23 @@
     updateBarActualHeights();
   }
 
+  function applyMobileHudCompactState() {
+    if (!IS_MOBILE_UI) return;
+    const mobileHeader = document.getElementById("mobileHeader");
+    if (!mobileHeader) return;
+    mobileHeader.classList.toggle("mobileHeader--compact", !!store.mobileHudCompact);
+    updateChromeHeights();
+    updateBarActualHeights();
+  }
+
+  function setMobileHudCompact(isCompact, { persist = true } = {}) {
+    store.mobileHudCompact = !!isCompact;
+    if (persist) {
+      try { localStorage.setItem(STORAGE_KEYS.MOBILE_HUD_COMPACT, String(store.mobileHudCompact)); } catch {}
+    }
+    applyMobileHudCompactState();
+  }
+
   // Helper to restore header if no blocking panels are open
   function restoreHeaderIfNoBlockingPanels() {
     const newsPanel = $("newsFlashPanel");
@@ -6840,6 +6882,7 @@
     weather: { baseText: "Weather: Loading…" },
     crime: null,  // Will be initialized with loadCrimeUI()
     _crimeBootInitialized: false,  // Tracks if initial 30-day crime filter has been applied
+    mobileHudCompact: initialMobileHudCompact,
     reports: {
       items: [],
       layer: null,
@@ -16200,6 +16243,17 @@
     __headerListenersAttached = true;
     wireUiModeToggle();
 
+    if (IS_MOBILE_UI) {
+      const moreBtn = document.getElementById("mobileHudMoreBtn");
+      if (moreBtn) {
+        moreBtn.addEventListener("click", () => {
+          if (!store.mobileHudCompact) return;
+          setMobileHudCompact(false);
+        });
+      }
+      applyMobileHudCompactState();
+    }
+
     // Refresh button - use parent-aware selectors to avoid ID conflicts during mobile/desktop transitions
     const btnRefresh = IS_MOBILE_UI
       ? document.querySelector('.mobile-only #btnRefresh') || $("btnRefresh")
@@ -16510,6 +16564,7 @@
         attachHeaderEventListeners();
         __mobileListenersAttached = true;
       }
+      applyMobileHudCompactState();
       renderFreshnessBadges();
       updateChromeHeights();
       updateBarActualHeights();

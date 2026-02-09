@@ -3167,6 +3167,27 @@ button {
   }
 }
 
+@media (max-width: 1024px) and (pointer: coarse) {
+  #mobileHeader .mobileHudMoreBtn {
+    display: none;
+    padding: 4px 8px;
+    font-size: 12px;
+    line-height: 1;
+  }
+
+  #mobileHeader.mobileHeader--compact .mobileHudMoreBtn {
+    display: inline-flex;
+  }
+
+  #mobileHeader.mobileHeader--compact #chipLive,
+  #mobileHeader.mobileHeader--compact #chipAir,
+  #mobileHeader.mobileHeader--compact #chipCameras,
+  #mobileHeader.mobileHeader--compact #swStatusChipMobile,
+  #mobileHeader.mobileHeader--compact #freshnessBadgesMobile {
+    display: none;
+  }
+}
+
 /* ========================================
    DESKTOP VS MOBILE UI SPLIT (FIXED)
    - Desktop is default (including narrow desktop windows)
