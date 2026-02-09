@@ -5098,6 +5098,104 @@
    * - Bounded caching: cache per viewport with TTL and LRU eviction
    */
 
+  // -----------------------------
+  // GIS Catalog fetch + merge
+  // -----------------------------
+  let _gisCatalogPromise = null;
+
+  /**
+   * Derive a human-readable fallback label from an overlay entry.
+   * Uses the id or attempts to extract a service name from the URL.
+   */
+  function gisOverlayFallbackName(entry) {
+    if (entry.name && String(entry.name).trim()) return entry.name;
+    // Try to derive from URL path, e.g. ".../services/Parcels/FeatureServer/0" -> "Parcels"
+    try {
+      const urlPath = new URL(entry.url).pathname;
+      const parts = urlPath.split('/').filter(Boolean);
+      // Walk backwards to find a meaningful segment (skip numeric layer ids)
+      for (let i = parts.length - 1; i >= 0; i--) {
+        const seg = parts[i];
+        if (!/^\d+$/.test(seg) && !/^(FeatureServer|MapServer|query|rest|services|arcgis|ArcGIS)$/i.test(seg)) {
+          return `[Unnamed] ${seg.replace(/[_-]/g, ' ')}`;
+        }
+      }
+    } catch (_) { /* ignore URL parse errors */ }
+    return `[Unnamed] ${entry.id || 'layer'}`;
+  }
+
+  /**
+   * Fetch the external GIS catalog from the server and merge
+   * entries into CONFIG.gisOverlays.overlays.
+   * Safe to call multiple times — dedupes via promise caching.
+   */
+  async function ensureGisCatalogReady() {
+    if (store.gis.catalogReady) return;
+    if (_gisCatalogPromise) return _gisCatalogPromise;
+
+    _gisCatalogPromise = (async () => {
+      try {
+        store.gis.catalogError = null;
+        console.log('[GIS] Fetching catalog from /api/gis/catalog ...');
+        const resp = await fetch('/api/gis/catalog');
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${resp.statusText}`);
+        const catalog = await resp.json();
+        const catalogOverlays = catalog?.overlays || [];
+
+        if (catalogOverlays.length === 0) {
+          console.warn('[GIS] Catalog returned 0 overlays, keeping built-in config.');
+          store.gis.catalogReady = true;
+          return;
+        }
+
+        // Build lookup of existing overlays by id for merge
+        const existingById = new Map();
+        CONFIG.gisOverlays.overlays.forEach(o => existingById.set(o.id, o));
+
+        // Merge: catalog entries win for name (if present), and add any new entries
+        for (const entry of catalogOverlays) {
+          if (!entry.id) continue;
+          const existing = existingById.get(entry.id);
+          if (existing) {
+            // Merge name from catalog if present
+            if (entry.name && String(entry.name).trim()) {
+              existing.name = entry.name;
+            }
+          } else {
+            // New entry from catalog — ensure it has at minimum required fields
+            if (entry.url) {
+              entry.name = gisOverlayFallbackName(entry);
+              entry.style = entry.style || { color: '#888888', weight: 2, dashArray: null, fillOpacity: 0.03 };
+              entry.group = entry.group || 'OTHER';
+              entry.type = entry.type || 'arcgis';
+              CONFIG.gisOverlays.overlays.push(entry);
+            }
+          }
+        }
+
+        // Ensure every overlay has a displayable name (fallback for missing names)
+        CONFIG.gisOverlays.overlays.forEach(o => {
+          o.name = gisOverlayFallbackName(o);
+        });
+
+        console.log(`[GIS] Catalog merged: ${CONFIG.gisOverlays.overlays.length} total overlays`);
+        store.gis.catalogReady = true;
+      } catch (err) {
+        console.error('[GIS] Failed to fetch catalog:', err);
+        store.gis.catalogError = err.message || String(err);
+        // Still mark ready so we render with built-in config + fallback names
+        CONFIG.gisOverlays.overlays.forEach(o => {
+          o.name = gisOverlayFallbackName(o);
+        });
+        store.gis.catalogReady = true;
+      } finally {
+        _gisCatalogPromise = null;
+      }
+    })();
+
+    return _gisCatalogPromise;
+  }
+
   /**
    * Get rounded bounding box from map for cache key stability
    */
@@ -6080,7 +6178,9 @@
       enabled: new Set(),
       layers: new Map(),
       cache: new Map(),
-      requests: new Map()  // Track in-flight requests for cancellation: overlayId -> { controller, cacheKey }
+      requests: new Map(),  // Track in-flight requests for cancellation: overlayId -> { controller, cacheKey }
+      catalogReady: false,
+      catalogError: null
     },
     air: { aqi: null, timestamp: null },  // Air quality data cache
     openUV: { value: null, status: "unknown", displayText: null, timestamp: null },
@@ -13798,7 +13898,15 @@
     if (CONFIG.gisOverlays.enabled) {
       html += `<div class="dockSectionTitle">Map Overlays</div>`;
 
-      // Group overlays by municipality
+      // Show catalog fetch error if any
+      if (store.gis.catalogError) {
+        html += `<div class="dockCard" style="border:1px solid var(--warn,#f59e0b);background:rgba(245,158,11,0.08);padding:8px 10px;margin-bottom:8px;">`;
+        html += `<div class="dockRowTitle" style="color:var(--warn,#f59e0b);">GIS Catalog Error</div>`;
+        html += `<div class="dockRowMeta" style="color:var(--warn,#f59e0b);word-break:break-word;">${escapeHtml(store.gis.catalogError)}</div>`;
+        html += `</div>`;
+      }
+
+      // Group overlays by municipality — always render ALL entries even with missing names
       const groups = {};
       CONFIG.gisOverlays.overlays.forEach(overlay => {
         const group = overlay.group || "OTHER";
@@ -13829,10 +13937,13 @@
 
         overlays.forEach(overlay => {
           const isEnabled = store.gis.enabled.has(overlay.id);
+          const displayName = (overlay.name && String(overlay.name).trim())
+            ? overlay.name
+            : gisOverlayFallbackName(overlay);
           html += `<div class="dockRow">`;
           html += `<label>`;
           html += `<input type="checkbox" data-overlay-id="${escapeAttr(overlay.id)}" ${isEnabled ? 'checked' : ''}>`;
-          html += `<span>${escapeHtml(overlay.name)}</span>`;
+          html += `<span>${escapeHtml(displayName)}</span>`;
           html += `</label>`;
           html += `</div>`;
         });
@@ -13840,6 +13951,12 @@
         html += `</div>`; // overlayGroup__body
         html += `</div>`; // overlayGroup
       });
+
+      // Hydrate GIS names hint
+      html += `<div class="dockCard" style="margin-top:10px;padding:8px 10px;opacity:0.7;">`;
+      html += `<div class="dockRowMeta">To resolve missing layer names from ArcGIS metadata:</div>`;
+      html += `<code style="font-size:11px;background:rgba(255,255,255,0.06);padding:2px 6px;border-radius:3px;display:inline-block;margin-top:4px;">npm run gis:names</code>`;
+      html += `</div>`;
     }
 
     if (uniqueMissing.length > 0) {
@@ -13998,10 +14115,18 @@
     if (dockState.tab === "system") {
       bind("dockRunQuickSmoke", "click", () => runQuickSmoke());
 
+      // Ensure GIS catalog is fetched; re-render once ready if it wasn't already
+      if (!store.gis.catalogReady) {
+        ensureGisCatalogReady().then(() => {
+          if (dockState.isOpen && dockState.tab === 'system') renderDock();
+        });
+      }
+
       // Bind GIS overlay toggles
       dockPanelBody.querySelectorAll('input[data-overlay-id]').forEach(checkbox => {
         checkbox.addEventListener("change", async (e) => {
           const overlayId = e.target.dataset.overlayId;
+          await ensureGisCatalogReady();
           if (e.target.checked) {
             await enableOverlay(overlayId);
           } else {
@@ -14012,7 +14137,8 @@
 
       // Bind accordion toggle handlers
       dockPanelBody.querySelectorAll('.overlayGroup__toggle').forEach(toggle => {
-        toggle.addEventListener("click", (e) => {
+        toggle.addEventListener("click", async (e) => {
+          await ensureGisCatalogReady();
           const groupName = toggle.dataset.group;
           const groupEl = toggle.closest('.overlayGroup');
 

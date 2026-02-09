@@ -1,0 +1,222 @@
+{
+  "version": 1,
+  "updated": "2026-02-09T00:00:00Z",
+  "overlays": [
+    {
+      "id": "fred_routes",
+      "name": "FRED Bus Routes",
+      "group": "FXBG",
+      "type": "arcgis",
+      "url": "https://maps.fredericksburgva.gov/arcgis/rest/services/OpenData/OpenData/MapServer/7",
+      "style": { "color": "#00d1ff", "weight": 4, "dashArray": "8 6", "fillOpacity": 0.0 }
+    },
+    {
+      "id": "fred_trails",
+      "name": "Trails",
+      "group": "FXBG",
+      "type": "arcgis",
+      "url": "https://maps.fredericksburgva.gov/arcgis/rest/services/OpenData/OpenData/MapServer/9",
+      "style": { "color": "#7CFF6B", "weight": 3, "dashArray": "2 8", "fillOpacity": 0.0 }
+    },
+    {
+      "id": "fred_rail",
+      "name": "Railroad",
+      "group": "FXBG",
+      "type": "arcgis",
+      "url": "https://maps.fredericksburgva.gov/arcgis/rest/services/OpenData/OpenData/MapServer/8",
+      "style": { "color": "#ffb300", "weight": 4, "dashArray": null, "fillOpacity": 0.0 }
+    },
+    {
+      "id": "fred_parks",
+      "name": "Parks",
+      "group": "FXBG",
+      "type": "arcgis",
+      "url": "https://maps.fredericksburgva.gov/arcgis/rest/services/OpenData/OpenData/MapServer/20",
+      "style": { "color": "#00ff9d", "weight": 2, "dashArray": null, "fillOpacity": 0.08 }
+    },
+    {
+      "id": "fred_wards",
+      "name": "Council Wards",
+      "group": "FXBG",
+      "type": "arcgis",
+      "url": "https://maps.fredericksburgva.gov/arcgis/rest/services/OpenData/OpenData/MapServer/21",
+      "style": { "color": "#a78bfa", "weight": 3, "dashArray": "10 8", "fillOpacity": 0.06 }
+    },
+    {
+      "id": "fred_zoning",
+      "name": "Zoning",
+      "group": "FXBG",
+      "type": "arcgis",
+      "url": "https://maps.fredericksburgva.gov/arcgis/rest/services/OpenData/OpenData/MapServer/22",
+      "style": { "color": "#ff4d6d", "weight": 2, "dashArray": null, "fillOpacity": 0.05 }
+    },
+    {
+      "id": "staff_parcels",
+      "name": "Parcels",
+      "group": "STAFFORD",
+      "type": "arcgis",
+      "url": "https://services1.arcgis.com/qKiA6JuCrE2l72iL/ArcGIS/rest/services/Parcels/FeatureServer/0",
+      "style": { "color": "#60a5fa", "weight": 1, "dashArray": null, "fillOpacity": 0.03 },
+      "minZoom": 15,
+      "heavy": true
+    },
+    {
+      "id": "staff_zoning",
+      "name": "Zoning",
+      "group": "STAFFORD",
+      "type": "arcgis",
+      "url": "https://services1.arcgis.com/qKiA6JuCrE2l72iL/ArcGIS/rest/services/Zoning/FeatureServer/0",
+      "style": { "color": "#2563eb", "weight": 1, "dashArray": null, "fillOpacity": 0.03 }
+    },
+    {
+      "id": "staff_structures",
+      "name": "Structures (Buildings)",
+      "group": "STAFFORD",
+      "type": "arcgis",
+      "url": "https://services1.arcgis.com/qKiA6JuCrE2l72iL/ArcGIS/rest/services/Structures/FeatureServer/0",
+      "style": { "color": "#7dd3fc", "weight": 2, "dashArray": null, "fillOpacity": 0.05 },
+      "minZoom": 16,
+      "heavy": true
+    },
+    {
+      "id": "spotsy_parcels",
+      "name": "Parcels",
+      "group": "SPOTSYLVANIA",
+      "type": "arcgis",
+      "url": "https://gis.spotsylvania.va.us/arcgis/rest/services/Subdivisions/Subdivisions/FeatureServer/6",
+      "style": { "color": "#f59e0b", "weight": 1, "dashArray": null, "fillOpacity": 0.03 },
+      "minZoom": 15,
+      "heavy": true
+    },
+    {
+      "id": "spotsy_zoning",
+      "name": "Zoning",
+      "group": "SPOTSYLVANIA",
+      "type": "arcgis",
+      "url": "https://gis.spotsylvania.va.us/arcgis/rest/services/GeoHub/GeoHub/FeatureServer/39",
+      "style": { "color": "#ea580c", "weight": 1, "dashArray": null, "fillOpacity": 0.03 }
+    },
+    {
+      "id": "spotsy_roads",
+      "name": "Roads",
+      "group": "SPOTSYLVANIA",
+      "type": "arcgis",
+      "url": "https://gis.spotsylvania.va.us/arcgis/rest/services/GeoHub/GeoHub/MapServer/7",
+      "style": { "color": "#fbbf24", "weight": 2, "dashArray": "4 4", "fillOpacity": 0.0 }
+    },
+    {
+      "id": "spotsy_addresses",
+      "name": "Address Points",
+      "group": "SPOTSYLVANIA",
+      "type": "arcgis",
+      "url": "https://gis.spotsylvania.va.us/arcgis/rest/services/GeoHub/GeoHub/FeatureServer/0",
+      "style": { "color": "#fb923c", "weight": 1, "dashArray": null, "fillOpacity": 0.02 }
+    },
+    {
+      "id": "spotsy_emergency",
+      "name": "Emergency Response Facilities",
+      "group": "SPOTSYLVANIA",
+      "type": "arcgis",
+      "url": "https://gis.spotsylvania.va.us/arcgis/rest/services/GeoHub/GeoHub/MapServer/3",
+      "style": { "color": "#dc2626", "weight": 3, "dashArray": null, "fillOpacity": 0.08 }
+    },
+    {
+      "id": "kg_parcels",
+      "name": "Parcels",
+      "group": "KING GEORGE",
+      "type": "arcgis",
+      "url": "https://services2.arcgis.com/S8zMJrpz61FbvL5t/arcgis/rest/services/Parcels/FeatureServer/0",
+      "style": { "color": "#34d399", "weight": 1, "dashArray": null, "fillOpacity": 0.03 },
+      "minZoom": 15,
+      "heavy": true
+    },
+    {
+      "id": "kg_zoning",
+      "name": "Zoning",
+      "group": "KING GEORGE",
+      "type": "arcgis",
+      "url": "https://services2.arcgis.com/S8zMJrpz61FbvL5t/arcgis/rest/services/Zoning/FeatureServer/0",
+      "style": { "color": "#10b981", "weight": 1, "dashArray": null, "fillOpacity": 0.03 }
+    },
+    {
+      "id": "kg_water_towers",
+      "name": "Water Towers",
+      "group": "KING GEORGE",
+      "type": "arcgis",
+      "url": "https://services2.arcgis.com/S8zMJrpz61FbvL5t/arcgis/rest/services/Water_Towers/FeatureServer/0",
+      "style": { "color": "#06b6d4", "weight": 3, "dashArray": null, "fillOpacity": 0.08 }
+    },
+    {
+      "id": "caroline_parcels",
+      "name": "Parcels",
+      "group": "CAROLINE",
+      "type": "arcgis",
+      "url": "https://parcelviewer.geodecisions.com/arcgis/rest/services/Caroline_CivQuest/caroline/MapServer/0",
+      "style": { "color": "#a78bfa", "weight": 1, "dashArray": null, "fillOpacity": 0.03 }
+    },
+    {
+      "id": "caroline_zoning",
+      "name": "Zoning",
+      "group": "CAROLINE",
+      "type": "arcgis",
+      "url": "https://parcelviewer.geodecisions.com/arcgis/rest/services/Caroline_CivQuest/caroline/MapServer/45",
+      "style": { "color": "#8b5cf6", "weight": 1, "dashArray": null, "fillOpacity": 0.03 }
+    },
+    {
+      "id": "caroline_roads",
+      "name": "Roads",
+      "group": "CAROLINE",
+      "type": "arcgis",
+      "url": "https://parcelviewer.geodecisions.com/arcgis/rest/services/Caroline/Public/MapServer/16",
+      "style": { "color": "#c4b5fd", "weight": 2, "dashArray": "4 4", "fillOpacity": 0.0 }
+    },
+    {
+      "id": "caroline_addresses",
+      "name": "Addresses",
+      "group": "CAROLINE",
+      "type": "arcgis",
+      "url": "https://parcelviewer.geodecisions.com/arcgis/rest/services/Caroline/Public/MapServer/23",
+      "style": { "color": "#d8b4fe", "weight": 1, "dashArray": null, "fillOpacity": 0.02 }
+    },
+    {
+      "id": "caroline_fire",
+      "name": "Fire Stations",
+      "group": "CAROLINE",
+      "type": "arcgis",
+      "url": "https://parcelviewer.geodecisions.com/arcgis/rest/services/Caroline/Public/MapServer/69",
+      "style": { "color": "#dc2626", "weight": 3, "dashArray": null, "fillOpacity": 0.08 }
+    },
+    {
+      "id": "caroline_schools",
+      "name": "Schools",
+      "group": "CAROLINE",
+      "type": "arcgis",
+      "url": "https://parcelviewer.geodecisions.com/arcgis/rest/services/Caroline/Public/MapServer/72",
+      "style": { "color": "#7c3aed", "weight": 3, "dashArray": null, "fillOpacity": 0.08 }
+    },
+    {
+      "id": "culpeper_parcels",
+      "name": "Parcels",
+      "group": "CULPEPER",
+      "type": "arcgis",
+      "url": "https://www.webgis.net/arcgis/rest/services/VA/CulpeperWebGIS_Pro/MapServer/202",
+      "style": { "color": "#fb7185", "weight": 1, "dashArray": null, "fillOpacity": 0.03 }
+    },
+    {
+      "id": "culpeper_zoning",
+      "name": "Zoning",
+      "group": "CULPEPER",
+      "type": "arcgis",
+      "url": "https://www.webgis.net/arcgis/rest/services/VA/CulpeperWebGIS_Pro/MapServer/215",
+      "style": { "color": "#e11d48", "weight": 1, "dashArray": null, "fillOpacity": 0.03 }
+    },
+    {
+      "id": "vdot_districts",
+      "name": "VDOT Districts",
+      "group": "REGIONAL",
+      "type": "arcgis",
+      "url": "https://services.arcgis.com/p5v98VHDX9Atv3l7/arcgis/rest/services/VDOTAdministrativeBoundaries/FeatureServer/2",
+      "style": { "color": "#38bdf8", "weight": 2, "dashArray": "6 6", "fillOpacity": 0.03 }
+    }
+  ]
+}
