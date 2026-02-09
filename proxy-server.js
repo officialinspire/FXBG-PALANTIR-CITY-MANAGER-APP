@@ -545,6 +545,28 @@ function listGisCatalogEntries(catalog) {
   return entries;
 }
 
+function updateGisCatalogEntryName(catalog, key, name) {
+  if (!catalog || !key || !name) return false;
+  const groups = [
+    "basemapEnhancers",
+    "toggleLayers",
+    "cityLayers",
+    "fredBusMode",
+    "environmentalTopo",
+    "spotsy"
+  ];
+  let updated = false;
+  for (const group of groups) {
+    const items = Array.isArray(catalog[group]) ? catalog[group] : [];
+    const target = items.find((entry) => entry?.key === key);
+    if (target && !target.name) {
+      target.name = name;
+      updated = true;
+    }
+  }
+  return updated;
+}
+
 function findGisCatalogEntry(catalog, key) {
   if (!catalog || !key) return null;
   return listGisCatalogEntries(catalog).find((entry) => entry.key === key) || null;
@@ -620,6 +642,33 @@ async function updateGisCacheIndexItem(key, updater) {
   return next;
 }
 
+async function markGisCacheAttempt(key, entry) {
+  const now = Date.now();
+  return updateGisCacheIndexItem(key, (current) => ({
+    ...current,
+    key,
+    name: current.name || entry?.name || null,
+    lastAttemptAt: now
+  }));
+}
+
+async function markGisCacheFailure(key, entry, error) {
+  const now = Date.now();
+  return updateGisCacheIndexItem(key, (current) => ({
+    ...current,
+    key,
+    name: current.name || entry?.name || null,
+    lastAttemptAt: now,
+    lastError: error || "unknown"
+  }));
+}
+
+function sanitizeArcgisItemId(value) {
+  const text = String(value || "").trim().toLowerCase();
+  if (!text || !/^[a-f0-9]{32}$/.test(text)) return null;
+  return text;
+}
+
 function offlineTierMatchesPack(entry, pack) {
   const tier = entry?.offline?.tier;
   if (!tier) return false;
@@ -684,6 +733,43 @@ async function fetchPortalItem(portalBase, itemId) {
   }
 
   return { ok: true, data: upstream.json || null };
+}
+
+async function fetchArcgisItemInfo(itemId, { retries = 2 } = {}) {
+  const safeItemId = sanitizeArcgisItemId(itemId);
+  if (!safeItemId) {
+    return { ok: false, error: "invalid_item_id" };
+  }
+  const itemUrl = `https://www.arcgis.com/sharing/rest/content/items/${safeItemId}?f=pjson`;
+  const urlCheck = checkUrlAllowed(itemUrl);
+  if (!urlCheck.allowed) {
+    return { ok: false, error: "blocked_url", reason: urlCheck.reason };
+  }
+
+  let lastResult = null;
+  for (let attempt = 0; attempt <= retries; attempt += 1) {
+    const result = await upstreamFetch(itemUrl, {
+      expectedType: "json",
+      timeoutMs: 15000,
+      maxBytes: 512 * 1024,
+      maxRedirects: 2,
+      upstreamName: `gis-iteminfo-${safeItemId}`,
+      route: "/api/gis/iteminfo"
+    });
+    if (result.ok && result.json) {
+      return { ok: true, data: result.json };
+    }
+    lastResult = result;
+    if (attempt < retries) {
+      await sleep(500 * (attempt + 1));
+    }
+  }
+
+  return {
+    ok: false,
+    error: lastResult?.error || "upstream_failed",
+    status: lastResult?.status || 0
+  };
 }
 
 async function fetchPortalRelatedItems(portalBase, itemId, relationshipType, direction) {
@@ -1002,6 +1088,8 @@ async function cacheGisDownloadResult(key, entry, buffer, contentType, fetchedAt
     name: entry?.name || current.name || null,
     cached: true,
     cachedAt: now,
+    lastAttemptAt: now,
+    lastError: null,
     bytes: meta.bytes,
     format: meta.format,
     source,
@@ -1014,8 +1102,10 @@ async function cacheGisDownloadResult(key, entry, buffer, contentType, fetchedAt
 }
 
 async function downloadGisFileEntry(key, entry) {
+  await markGisCacheAttempt(key, entry);
   const urlCheck = checkUrlAllowed(entry.url);
   if (!urlCheck.allowed) {
+    await markGisCacheFailure(key, entry, "blocked_url");
     return { ok: false, error: "blocked_url", reason: urlCheck.reason };
   }
 
@@ -1028,6 +1118,7 @@ async function downloadGisFileEntry(key, entry) {
   });
 
   if (!upstream.ok || !upstream.bodyBuffer) {
+    await markGisCacheFailure(key, entry, upstream.error || "upstream_failed");
     return { ok: false, error: upstream.error || "upstream_failed", status: upstream.status || 0 };
   }
 
@@ -1038,16 +1129,21 @@ async function downloadGisFileEntry(key, entry) {
 async function downloadGisArcgisSnapshot(key, entry) {
   const bounds = offlineAoiBounds(entry?.offline?.aoi);
   if (!bounds) {
+    await markGisCacheFailure(key, entry, "missing_aoi_bounds");
     return { ok: false, error: "missing_aoi_bounds" };
   }
 
+  await markGisCacheAttempt(key, entry);
+
   const resolution = await resolveGisLayerUrl(key, entry);
   if (!resolution?.ok || !resolution.layerUrl) {
+    await markGisCacheFailure(key, entry, resolution?.error || "missing_layer_url");
     return { ok: false, error: resolution?.error || "missing_layer_url" };
   }
 
   const countResult = await fetchArcgisFeatureCount(resolution.layerUrl, bounds);
   if (!countResult.ok) {
+    await markGisCacheFailure(key, entry, countResult.error || "count_failed");
     return { ok: false, error: countResult.error || "count_failed" };
   }
 
@@ -1063,7 +1159,9 @@ async function downloadGisArcgisSnapshot(key, entry) {
       etag: current.etag || null,
       lastModified: current.lastModified || null,
       lastUsedAt: current.lastUsedAt || null,
-      error: "too_large_for_pack"
+      error: "too_large_for_pack",
+      lastAttemptAt: Date.now(),
+      lastError: "too_large_for_pack"
     }));
     return { ok: false, error: "too_large_for_pack" };
   }
@@ -1123,7 +1221,9 @@ async function downloadGisArcgisSnapshot(key, entry) {
       etag: current.etag || null,
       lastModified: current.lastModified || null,
       lastUsedAt: current.lastUsedAt || null,
-      error: errorCode
+      error: errorCode,
+      lastAttemptAt: Date.now(),
+      lastError: errorCode
     }));
     return { ok: false, error: errorCode };
   }
@@ -1141,6 +1241,8 @@ async function downloadGisArcgisSnapshot(key, entry) {
     name: entry?.name || current.name || null,
     cached: true,
     cachedAt: now,
+    lastAttemptAt: now,
+    lastError: null,
     bytes: stats.size,
     format: "arcgis_snapshot",
     source: buildGisCacheSource(entry, resolution),
@@ -1180,6 +1282,75 @@ async function removeGisCacheFiles(key, item) {
   }
   const geojsonPath = path.join(GIS_CACHE_DIR, `${key}.geojson`);
   await fsp.rm(geojsonPath, { force: true });
+}
+
+async function buildGisStatusSnapshot() {
+  const catalog = await readGisCatalog();
+  const entries = listGisCatalogEntries(catalog);
+  const index = await readGisCacheIndex();
+  const diskBytes = fs.existsSync(GIS_CACHE_DIR) ? await getDirectorySizeBytes(GIS_CACHE_DIR) : 0;
+  const statusEntries = [];
+  const failures = [];
+
+  for (const entry of entries) {
+    const item = index.items?.[entry.key] || {};
+    const cached = item.cached ? await isGisCacheItemValid(entry.key, item) : false;
+    const updatedAt = item.cachedAt || item.lastAttemptAt || item.lastUsedAt || null;
+    const name = entry?.name || item?.name || null;
+    statusEntries.push({
+      key: entry.key,
+      name,
+      group: entry.category,
+      cached,
+      bytes: item.bytes || 0,
+      updatedAt: Number.isFinite(updatedAt) ? new Date(updatedAt).toISOString() : null
+    });
+
+    const lastError = item.lastError || item.error || null;
+    if (lastError) {
+      const attemptAt = item.lastAttemptAt || item.cachedAt || null;
+      failures.push({
+        key: entry.key,
+        lastError,
+        lastAttemptAt: Number.isFinite(attemptAt) ? new Date(attemptAt).toISOString() : null
+      });
+    }
+  }
+
+  return {
+    ok: true,
+    cacheDir: GIS_CACHE_DIR,
+    diskBytes,
+    entries: statusEntries,
+    failures
+  };
+}
+
+async function hydrateGisCatalogNamesInBackground() {
+  const catalog = await readGisCatalog();
+  const entries = listGisCatalogEntries(catalog);
+  const pending = entries.filter((entry) => !entry?.name && entry?.itemId);
+  if (!pending.length) return;
+
+  console.log(`[GIS] Hydrating ${pending.length} catalog names in background...`);
+  for (const entry of pending) {
+    const portalBase = entry.portalBase || portalBaseForUrl(entry.url);
+    const itemId = sanitizeArcgisItemId(entry.itemId) || extractItemId(entry.url);
+    if (!portalBase || !itemId) continue;
+    try {
+      const itemResult = await fetchPortalItem(portalBase, itemId);
+      if (itemResult?.ok && itemResult.data?.title) {
+        const updated = updateGisCatalogEntryName(catalog, entry.key, itemResult.data.title);
+        if (updated) {
+          await writeJsonFile(GIS_CATALOG_FILE, catalog);
+          console.log(`[GIS] Catalog name updated for ${entry.key}`);
+        }
+      }
+    } catch (err) {
+      console.warn(`[GIS] Catalog name hydrate failed for ${entry.key}:`, err.message || err);
+    }
+    await sleep(1000);
+  }
 }
 
 async function evictOfflineCache({ targetBytes, pack, catalog }) {
@@ -4627,8 +4798,30 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (urlObj.pathname === "/api/gis/catalog" && req.method === "GET") {
+      const refresh = urlObj.searchParams.get("refresh");
+      if (refresh === "1") {
+        const catalog = await readGisCatalog();
+        await writeJsonFile(GIS_CATALOG_FILE, catalog);
+        return send(res, 200, JSON.stringify(catalog, null, 2), { "Content-Type": "application/json" });
+      }
       const catalog = await readGisCatalog();
       return send(res, 200, JSON.stringify(catalog, null, 2), { "Content-Type": "application/json" });
+    }
+
+    if (urlObj.pathname === "/api/gis/status" && req.method === "GET") {
+      const payload = await buildGisStatusSnapshot();
+      return send(res, 200, JSON.stringify(payload, null, 2), { "Content-Type": "application/json" });
+    }
+
+    if (urlObj.pathname === "/api/gis/iteminfo" && req.method === "GET") {
+      const itemId = urlObj.searchParams.get("itemId");
+      const result = await fetchArcgisItemInfo(itemId);
+      if (!result.ok) {
+        return send(res, 502, JSON.stringify({ ok: false, error: result.error || "upstream_failed" }, null, 2), {
+          "Content-Type": "application/json"
+        });
+      }
+      return send(res, 200, JSON.stringify({ ok: true, data: result.data }, null, 2), { "Content-Type": "application/json" });
     }
 
     if (urlObj.pathname === "/api/gis/resolve" && req.method === "GET") {
@@ -4685,9 +4878,11 @@ const server = http.createServer(async (req, res) => {
 
       const urlCheck = checkUrlAllowed(entry.url);
       if (!urlCheck.allowed) {
+        await markGisCacheFailure(key, entry, "blocked_url");
         return send(res, 400, JSON.stringify({ ok: false, error: "blocked_url", reason: urlCheck.reason }, null, 2), { "Content-Type": "application/json" });
       }
 
+      await markGisCacheAttempt(key, entry);
       const upstream = await upstreamFetch(entry.url, {
         includeBodyBuffer: true,
         maxBytes: MAX_LAYER_BYTES,
@@ -4697,6 +4892,7 @@ const server = http.createServer(async (req, res) => {
       });
 
       if (!upstream.ok || !upstream.bodyBuffer) {
+        await markGisCacheFailure(key, entry, upstream.error || "upstream_failed");
         return send(res, 502, JSON.stringify({
           ok: false,
           error: upstream.error || "upstream_failed",
@@ -6038,6 +6234,11 @@ async function startServer() {
   runAllowlistSanityCheck();
   await validateRequiredUpstreams();
   await loadHubClients();
+  setTimeout(() => {
+    hydrateGisCatalogNamesInBackground().catch((err) => {
+      console.warn("[GIS] Background name hydration failed:", err.message || err);
+    });
+  }, 0);
 
   server.on("error", (err) => {
     if (err && err.code === "EADDRINUSE") {
