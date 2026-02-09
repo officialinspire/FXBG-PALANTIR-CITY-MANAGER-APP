@@ -6960,6 +6960,7 @@
     } catch {}
     if (!store.loadShedding) {
       autoLoadBasemapEnhancers();
+      redrawThrottled();
     }
     refreshLayersPanelUI();
   }
@@ -8620,11 +8621,13 @@
       updateCategoryCounts();
       return;
     }
-    clusters.clearLayers();
-    markerLayer.clearLayers();
-    if (map.hasLayer(clusters)) map.removeLayer(clusters);
-    if (map.hasLayer(markerLayer)) map.removeLayer(markerLayer);
-    store.markersById.clear();
+    if (!store.loadShedding) {
+      clusters.clearLayers();
+      markerLayer.clearLayers();
+      if (map.hasLayer(clusters)) map.removeLayer(clusters);
+      if (map.hasLayer(markerLayer)) map.removeLayer(markerLayer);
+      store.markersById.clear();
+    }
 
     let markerCount = 0;
     let filtered = { category: 0, bbox: 0, crime: 0 };
