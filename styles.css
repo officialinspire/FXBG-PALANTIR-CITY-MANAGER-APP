@@ -1999,6 +1999,39 @@ body.debug-ui button {
   overflow-x: auto;
 }
 
+.dockSubnav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.dockSubnavBtn {
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--btnStroke);
+  background: var(--btnBg);
+  color: var(--btnTxt);
+  font-weight: 700;
+  font-size: 12px;
+  line-height: 1.2;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.15s ease;
+}
+
+.dockSubnavBtn:hover {
+  background: var(--btnBgHover);
+  border-color: var(--accent);
+  box-shadow: var(--shadow2);
+}
+
+.dockSubnavBtn.isActive {
+  border-color: var(--accent);
+  background: var(--btnBgHover);
+  box-shadow: var(--shadow2);
+}
+
  .dockTab {
   padding: 8px 10px;
   border-radius: 999px;
@@ -2172,6 +2205,20 @@ body.debug-ui button {
   display: grid;
   gap: 8px;
   grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.dockActionRow {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.dockActionRow--two {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.dockActionRow--three {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 .themeRecentChips {
