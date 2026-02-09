@@ -468,7 +468,8 @@
     bbox: { minLat: 37.9, maxLat: 38.9, minLon: -78.0, maxLon: -77.0 },
 
     // Primary AOI (FXBG + Stafford + Spotsylvania) — used to keep mobile clean
-    primaryAoiBbox: { minLat: 38.10, maxLat: 38.55, minLon: -77.75, maxLon: -77.20 },
+    // maxLat tightened from 38.55 to 38.48 to exclude Dumfries/Triangle (Prince William County)
+    primaryAoiBbox: { minLat: 38.10, maxLat: 38.48, minLon: -77.75, maxLon: -77.20 },
 
     // GPS AOI radius (miles). When user is outside primary AOI, we load markers near them only.
     gpsAoiMilesRadius: 15,
@@ -479,6 +480,13 @@
 
     // I‑95 corridor bbox near FXBG metro (for traffic indicator)
     i95Bbox: { minLat: 38.15, maxLat: 38.55, minLon: -77.70, maxLon: -77.20 },
+
+    // Per-county bounding boxes for accurate region tagging (used by assignRegionTag)
+    countyBboxes: {
+      fxbg:     { minLat: 38.28, maxLat: 38.34, minLon: -77.52, maxLon: -77.42 },  // Fredericksburg City
+      stafford: { minLat: 38.35, maxLat: 38.53, minLon: -77.60, maxLon: -77.32 },  // Stafford County
+      spotsy:   { minLat: 38.10, maxLat: 38.28, minLon: -77.72, maxLon: -77.38 },  // Spotsylvania County
+    },
 
     // Freshness (CURRENT ONLY)
     freshness: {
@@ -7968,8 +7976,22 @@
     return event;
   }
 
-  function registerEvent(item) {
+  function registerEvent(item, options) {
     const event = ensureEventSchema(item);
+    // Early mobile AOI filter: reject out-of-area items at ingestion to save memory/CPU.
+    // Only filter items that already have coordinates; items without coords are kept
+    // (they'll get fallback locations at render time and be filtered there).
+    // Skip this filter when re-registering from enforceCaps (items already passed filtering).
+    if (IS_MOBILE_UI && !(options && options.skipAoiFilter)) {
+      const lat = Number(event.lat);
+      const lon = Number(event.lon ?? event.lng);
+      if (Number.isFinite(lat) && Number.isFinite(lon)) {
+        assignRegionTag(event);
+        if (!isAllowedByMobileAOI(event)) {
+          return null;
+        }
+      }
+    }
     store.itemsById.set(event.id, event);
     return event;
   }
@@ -8767,8 +8789,19 @@
       "clinics",
       "colleges"
     ]);
-    const cams = items.filter(i => stableSources.has(i.sourceId));
+    let cams = items.filter(i => stableSources.has(i.sourceId));
     const others = items.filter(i => !stableSources.has(i.sourceId));
+
+    // On mobile, cap stable sources to prevent them from bypassing the total item limit.
+    // Prioritize by marker priority (cameras > POIs) then by proximity to map center.
+    if ((IS_MOBILE_UI || store.mobilePerf) && cams.length > MOBILE_MARKER_CAP) {
+      cams.sort((a, b) => {
+        const pa = getMarkerPriority(a);
+        const pb = getMarkerPriority(b);
+        return pb - pa;
+      });
+      cams = cams.slice(0, MOBILE_MARKER_CAP);
+    }
 
     others.sort((a,b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
     const trimmed = others.slice(0, CONFIG.perf.maxTotalItems);
@@ -8780,7 +8813,7 @@
     store.itemsById.clear();
     store.markersById.clear();
 
-    for (const it of [...cams, ...trimmed]) registerEvent(it);
+    for (const it of [...cams, ...trimmed]) registerEvent(it, { skipAoiFilter: true });
 
     // Round 3: Clean up seenKeys for removed items (prevent unbounded growth)
     // Note: seenKeys uses dedupeKey, not id, so we can't clean it precisely here

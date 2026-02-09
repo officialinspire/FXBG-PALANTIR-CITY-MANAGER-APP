@@ -5425,9 +5425,31 @@ const server = http.createServer(async (req, res) => {
       return send(res, payload.ok ? 200 : 200, JSON.stringify(payload, null, 2), { "Content-Type": "application/json" });
     }
 
-    // --- VA511 Events (server-side cached) ---
+    // --- VA511 Events (server-side cached, AOI-filtered) ---
     if (urlObj.pathname === "/api/va511/events" && req.method === "GET") {
       const payload = await fetchVa511Events();
+      // Filter events to AOI_BBOX (same region as cameras) to avoid sending
+      // statewide events to the client, reducing payload size for mobile.
+      if (payload.ok && payload.data) {
+        const bboxParam = urlObj.searchParams.get("bbox");
+        const filterBbox = parseBboxParam(bboxParam) || AOI_BBOX;
+        const raw = payload.data;
+        const items = Array.isArray(raw) ? raw : (raw?.features || raw?.items || []);
+        const filtered = items.filter((item) => {
+          const props = item.properties || item;
+          const geom = item.geometry || null;
+          let lat = null, lon = null;
+          if (geom && geom.coordinates) {
+            [lon, lat] = geom.coordinates;
+          } else {
+            lat = parseFloat(props.latitude || props.lat || props.y || 0);
+            lon = parseFloat(props.longitude || props.lon || props.lng || props.x || 0);
+          }
+          return inBbox(lat, lon, filterBbox);
+        });
+        const filteredPayload = { ...payload, data: filtered, count: filtered.length, bbox: filterBbox, totalBeforeFilter: items.length };
+        return send(res, 200, JSON.stringify(filteredPayload, null, 2), { "Content-Type": "application/json" });
+      }
       return send(res, payload.ok ? 200 : 502, JSON.stringify(payload, null, 2), { "Content-Type": "application/json" });
     }
 
