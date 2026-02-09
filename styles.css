@@ -960,6 +960,19 @@ body.debug-ui button {
   animation: pulseRing 1.2s ease-out 0s 2;
 }
 
+.mobile-perf .emojiMarker,
+.mobile-perf .emojiMarker::before,
+.mobile-perf .emojiMarker--selected,
+.mobile-perf .emojiMarker--pulse,
+.mobile-perf .leaflet-marker-icon,
+.mobile-perf .leaflet-marker-shadow{
+  box-shadow: none !important;
+  filter: none !important;
+  animation: none !important;
+  transition: none !important;
+  transform: none !important;
+}
+
 /* --- Panel list (category focus) --- */
 .panelList{
   display:flex;
