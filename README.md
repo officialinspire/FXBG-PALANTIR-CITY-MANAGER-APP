@@ -37,14 +37,39 @@ npm run dev    # Starts on port 8000
 npm start      # Uses PORT from .env or default 8000
 ```
 
-### Android (Termux) Quick Start
+### Mobile (Termux)
 ```bash
-pkg install nodejs
-npm install
-./scripts/up.sh
+bash scripts/termux-bootstrap.sh
 ```
 
-`./scripts/up.sh` now detects Android/Termux and uses an Android-safe global env path when needed. Open `http://127.0.0.1:8000` from the same device browser.
+Then clone the repo (if you haven't already) and install dependencies:
+```bash
+git clone <repo-url>
+cd FXBG-PALANTIR-CITY-MANAGER-APP
+npm install
+```
+
+Environment placement:
+- The bootstrap script creates `$HOME/.config/fxbg-palantir/.env` from `.env.example` if it doesn't exist.
+- Edit that file to add any required API keys.
+
+Start the app:
+```bash
+bash scripts/mobile.sh
+```
+
+Open `http://127.0.0.1:8000` on the phone. For LAN access from another device, use `http://<phone-ip>:8000`.
+
+#### One-command Termux run
+From anywhere inside the repo:
+```bash
+bash scripts/termux-run.sh
+```
+
+Need a reminder for the full path?
+```bash
+bash scripts/termux-quickstart.sh
+```
 
 ### 5. Open in Browser
 ```
@@ -379,4 +404,3 @@ The hub now serves two small local datasets used by the client geocoder when off
 5. Restart the server after edits for immediate refresh, or wait up to 60s for server cache expiry.
 
 The server auto-creates empty defaults if either file is missing, so startup remains safe.
-

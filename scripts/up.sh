@@ -11,6 +11,49 @@ if [ "$OS_NAME" = "Android" ] || [ -n "${ANDROID_ROOT:-}" ] || [ -d "/data/data/
   ANDROID_ENV="1"
 fi
 
+ensure_command() {
+  local cmd="$1"
+  local tip="$2"
+  if ! command -v "$cmd" >/dev/null 2>&1; then
+    echo "[up] ERROR: Required command not found: $cmd"
+    if [ -n "$tip" ]; then
+      echo "[up] Tip: $tip"
+    fi
+    return 1
+  fi
+  return 0
+}
+
+missing_required="0"
+if [ "$ANDROID_ENV" = "1" ]; then
+  ensure_command "npm" "Termux: pkg install nodejs" || missing_required="1"
+  ensure_command "node" "Termux: pkg install nodejs" || missing_required="1"
+  ensure_command "grep" "Termux: pkg install grep" || missing_required="1"
+  ensure_command "sed" "Termux: pkg install sed" || missing_required="1"
+  ensure_command "cut" "Termux: pkg install coreutils" || missing_required="1"
+  ensure_command "cp" "Termux: pkg install coreutils" || missing_required="1"
+  ensure_command "mkdir" "Termux: pkg install coreutils" || missing_required="1"
+else
+  ensure_command "npm" "Install Node.js/npm (e.g., brew install node or apt-get install nodejs npm)" || missing_required="1"
+  ensure_command "node" "Install Node.js (e.g., brew install node or apt-get install nodejs)" || missing_required="1"
+  ensure_command "grep" "Install grep (e.g., brew install grep or apt-get install grep)" || missing_required="1"
+  ensure_command "sed" "Install sed (e.g., brew install gnu-sed or apt-get install sed)" || missing_required="1"
+  ensure_command "cut" "Install coreutils (e.g., brew install coreutils or apt-get install coreutils)" || missing_required="1"
+  ensure_command "cp" "Install coreutils (e.g., brew install coreutils or apt-get install coreutils)" || missing_required="1"
+  ensure_command "mkdir" "Install coreutils (e.g., brew install coreutils or apt-get install coreutils)" || missing_required="1"
+fi
+if [ "$missing_required" = "1" ]; then
+  exit 1
+fi
+
+if [ "$ANDROID_ENV" = "1" ]; then
+  if command -v termux-wake-lock >/dev/null 2>&1; then
+    termux-wake-lock || true
+  fi
+  echo "[up] Note: On Termux, allow battery optimization exemptions for stable background use."
+  echo "[up] Note: termux-wake-lock requires Termux:API and associated permissions."
+fi
+
 echo "[up] cwd: $(pwd)"
 
 # 1) Ensure deps
@@ -26,11 +69,18 @@ mkdir -p data
 
 # 3) Ensure .env exists (portable)
 GLOBAL_ENV="${XDG_CONFIG_HOME:-$HOME/.config}/fxbg-palantir/.env"
+TERMUX_GLOBAL_ENV=""
+if [ "$ANDROID_ENV" = "1" ] && [ -n "${PREFIX:-}" ]; then
+  TERMUX_GLOBAL_ENV="${PREFIX}/etc/fxbg-palantir.env"
+fi
 if [ "$ANDROID_ENV" = "1" ] && [ ! -f "$GLOBAL_ENV" ] && [ -f "$HOME/.fxbg-palantir/.env" ]; then
   GLOBAL_ENV="$HOME/.fxbg-palantir/.env"
 fi
 if [ ! -f .env ]; then
-  if [ -f "$GLOBAL_ENV" ]; then
+  if [ -n "$TERMUX_GLOBAL_ENV" ] && [ -f "$TERMUX_GLOBAL_ENV" ]; then
+    echo "[up] Using Termux global env: $TERMUX_GLOBAL_ENV"
+    cp "$TERMUX_GLOBAL_ENV" .env
+  elif [ -f "$GLOBAL_ENV" ]; then
     echo "[up] Using GLOBAL env: $GLOBAL_ENV"
     cp "$GLOBAL_ENV" .env
   elif [ -f .env.example ]; then
@@ -94,6 +144,9 @@ echo ""
 if [ "$ANDROID_ENV" = "1" ]; then
   echo "[up] Android/Termux environment detected"
   echo "[up] Tip: open http://127.0.0.1:${PORT:-8000} from the same device/browser"
+fi
+if [ -z "${PORT:-}" ]; then
+  echo "[up] PORT not set; defaulting to 8000. If busy, try: PORT=8001 bash scripts/up.sh"
 fi
 echo "== API Key Check (length only) =="
 

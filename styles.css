@@ -36,6 +36,12 @@
   --topbarActual: var(--topH);
   --bottombarActual: var(--botH);
   --radius: 18px;
+  --safeTop: env(safe-area-inset-top, 0px);
+  --safeBottom: env(safe-area-inset-bottom, 0px);
+  --mobileHeaderH: 118px;
+  --mobileDockH: 74px;
+  --mapTopInset: calc(var(--safeTop) + var(--mobileHeaderH));
+  --mapBottomInset: calc(var(--safeBottom) + var(--mobileDockH) + 10px);
 }
 
 
@@ -411,6 +417,21 @@ body{
   box-shadow: 0 0 12px rgba(68,240,166,.6);
 }
 
+button,
+.btn,
+.iconBtn,
+.filterBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1.2;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
 .btn{
   box-sizing: border-box;
   display: inline-flex;
@@ -441,11 +462,19 @@ body{
   background: var(--btnBgActive);
   box-shadow: var(--shadow2);
 }
+.btn:focus-visible,
+.iconBtn:focus-visible,
+.filterBtn:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+  box-shadow: var(--glow);
+}
 .btn__label{
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  max-width: 100%;
   font-size: 12px;
   font-weight: 700;
   letter-spacing: .05em;
@@ -750,6 +779,11 @@ body.debug-ui button {
   color: var(--txt);
   transition: all 0.15s ease;
 }
+.iconBtn svg{
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+}
 .iconBtn:hover{
   background: var(--btnBgHover);
   border-color: var(--accent);
@@ -932,6 +966,19 @@ body.debug-ui button {
   animation: pulseRing 1.2s ease-out 0s 2;
 }
 
+.mobile-perf .emojiMarker,
+.mobile-perf .emojiMarker::before,
+.mobile-perf .emojiMarker--selected,
+.mobile-perf .emojiMarker--pulse,
+.mobile-perf .leaflet-marker-icon,
+.mobile-perf .leaflet-marker-shadow{
+  box-shadow: none !important;
+  filter: none !important;
+  animation: none !important;
+  transition: none !important;
+  transform: none !important;
+}
+
 /* --- Panel list (category focus) --- */
 .panelList{
   display:flex;
@@ -954,6 +1001,40 @@ body.debug-ui button {
 .panelList__emoji{ font-size: 18px; }
 .panelList__title{ font-weight:700; font-size: 13px; line-height:1.2; }
 .panelList__meta{ margin-top:6px; display:flex; gap:10px; justify-content:space-between; font-size:11px; color: rgba(255,255,255,.70); }
+.locationBadge{
+  display:inline-flex;
+  align-items:center;
+  padding:2px 6px;
+  border-radius:999px;
+  font-size:10px;
+  font-weight:600;
+  border:1px solid rgba(255,255,255,.15);
+  color: rgba(255,255,255,.8);
+  background: rgba(255,255,255,.08);
+}
+.locationBadge--missing{
+  border-color: rgba(255, 216, 107, 0.6);
+  color: rgba(255, 216, 107, 0.95);
+}
+
+.dockPipelineGroup{
+  margin-top: 12px;
+  display:flex;
+  flex-direction:column;
+  gap:6px;
+}
+.dockPipelineList{
+  display:flex;
+  flex-direction:column;
+  gap:6px;
+}
+.dockPipelineList__row{
+  display:flex;
+  justify-content:space-between;
+  gap:12px;
+  font-size:12px;
+  color: rgba(255,255,255,.82);
+}
 
 /* Make panel body show full text comfortably */
 .panel__body{
@@ -1085,6 +1166,7 @@ body.debug-ui button {
   padding: 14px 16px;
   border-bottom: 1px solid var(--stroke);
   background: rgba(255, 255, 255, .03);
+  min-width: 0;
 }
 
 .newsFlashPanel__title {
@@ -1094,6 +1176,7 @@ body.debug-ui button {
   font-size: 16px;
   font-weight: 600;
   color: var(--txt);
+  min-width: 0;
 }
 
 .newsFlashPanel__emoji {
@@ -1107,15 +1190,24 @@ body.debug-ui button {
   padding: 12px 16px;
   border-bottom: 1px solid var(--stroke);
   background: rgba(255, 255, 255, .02);
+  min-width: 0;
 }
 
 .filterBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   padding: 6px 12px;
   border-radius: 10px;
   border: 1px solid rgba(255, 255, 255, .10);
   background: rgba(255, 255, 255, .05);
   color: var(--muted);
   font-size: 12px;
+  line-height: 1.1;
+  white-space: nowrap;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
   cursor: pointer;
   transition: all 0.2s ease;
 }
@@ -1129,6 +1221,32 @@ body.debug-ui button {
   background: rgba(126, 240, 255, .15);
   border-color: var(--accent);
   color: var(--accent);
+}
+
+@media (max-width: 720px) {
+  .btn,
+  .filterBtn {
+    min-height: 44px;
+  }
+
+  .filterBtn {
+    white-space: normal;
+    line-height: 1.2;
+  }
+
+  .topbarRow {
+    flex-wrap: wrap;
+    overflow-x: visible;
+    row-gap: 6px;
+  }
+
+  .topbarRow--actions {
+    align-items: flex-start;
+  }
+
+  .leaflet-top {
+    top: calc(var(--topbarActual) + 24px);
+  }
 }
 
 .newsFlashPanel__jurisdiction {
@@ -1652,6 +1770,7 @@ body.debug-ui button {
   border-bottom: 1px solid var(--stroke);
   background: rgba(255, 255, 255, .03);
   gap: 12px;
+  min-width: 0;
 }
 
 .timelinePanel__title {
@@ -1661,6 +1780,7 @@ body.debug-ui button {
   font-size: 15px;
   font-weight: 700;
   flex-shrink: 0;
+  min-width: 0;
 }
 
 .timelinePanel__emoji {
@@ -1675,6 +1795,7 @@ body.debug-ui button {
   font-size: 10px;
   color: var(--muted2);
   flex: 1;
+  min-width: 0;
 }
 
 .timelinePanel__filters {
@@ -1684,6 +1805,7 @@ body.debug-ui button {
   padding: 12px 16px;
   border-bottom: 1px solid var(--stroke);
   align-items: center;
+  min-width: 0;
 }
 
 .timelinePanel__filters label {
@@ -1717,6 +1839,7 @@ body.debug-ui button {
   gap: 6px;
   padding: 12px 16px;
   border-bottom: 1px solid var(--stroke);
+  min-width: 0;
 }
 
 .timelinePanel__sync {
@@ -1724,6 +1847,7 @@ body.debug-ui button {
   gap: 8px;
   padding: 12px 16px;
   border-bottom: 1px solid var(--stroke);
+  min-width: 0;
 }
 
 .timelinePanel__list {
@@ -1825,11 +1949,28 @@ body.debug-ui button {
 
  .dock {
   color: var(--txt);
+  width: 100%;
+}
+
+.dockBar {
   display: flex;
   gap: 8px;
   align-items: center;
   justify-content: space-around;
   width: 100%;
+}
+
+#dock .dockBar {
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+  mask-image: linear-gradient(to right, transparent 0, black 18px, black calc(100% - 18px), transparent 100%);
+  -webkit-mask-image: linear-gradient(to right, transparent 0, black 18px, black calc(100% - 18px), transparent 100%);
+}
+
+#dock .dockBar::-webkit-scrollbar {
+  display: none;
 }
 
  .dockBtn {
@@ -1928,6 +2069,39 @@ body.debug-ui button {
   overflow-x: auto;
 }
 
+.dockSubnav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.dockSubnavBtn {
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--btnStroke);
+  background: var(--btnBg);
+  color: var(--btnTxt);
+  font-weight: 700;
+  font-size: 12px;
+  line-height: 1.2;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.15s ease;
+}
+
+.dockSubnavBtn:hover {
+  background: var(--btnBgHover);
+  border-color: var(--accent);
+  box-shadow: var(--shadow2);
+}
+
+.dockSubnavBtn.isActive {
+  border-color: var(--accent);
+  background: var(--btnBgHover);
+  box-shadow: var(--shadow2);
+}
+
  .dockTab {
   padding: 8px 10px;
   border-radius: 999px;
@@ -1980,6 +2154,48 @@ body.debug-ui button {
   border-radius: 14px;
   padding: 10px 10px;
   margin-bottom: 10px;
+}
+
+.offlineMeter {
+  margin: 10px 6px 2px;
+}
+
+.offlineMeter__label {
+  font-size: 12px;
+  font-weight: 700;
+  margin-bottom: 6px;
+}
+
+.offlineMeter__bar {
+  height: 8px;
+  background: rgba(255,255,255,0.12);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.offlineMeter__fill {
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.2s ease;
+}
+
+.offlineMeter--over .offlineMeter__fill {
+  background: var(--warn);
+}
+
+.offlineMeter__meta {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  opacity: 0.8;
+  margin-top: 4px;
+}
+
+.offlineMeter__warning {
+  margin-top: 4px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--warn);
 }
 
 .dockRow {
@@ -2101,6 +2317,20 @@ body.debug-ui button {
   display: grid;
   gap: 8px;
   grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.dockActionRow {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.dockActionRow--two {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.dockActionRow--three {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 .themeRecentChips {
@@ -2609,22 +2839,23 @@ button {
     height: auto;
   }
 
-  .dock {
+  .dock .dockBar {
     display: flex;
     flex-wrap: nowrap;
     overflow-x: auto;
     gap: 8px;
+    padding-bottom: calc(10px + env(safe-area-inset-bottom));
     -webkit-overflow-scrolling: touch;
     scrollbar-width: none;
     justify-content: flex-start;
   }
-  .dock::-webkit-scrollbar {
+  .dock .dockBar::-webkit-scrollbar {
     display: none;
   }
 
   /* Footer tab buttons: smaller, clear active state */
   .dockBtn {
-    min-height: 40px;
+    min-height: 44px;
     padding: 8px 12px;
     border-radius: 14px;
     font-size: 12px;
@@ -2638,6 +2869,17 @@ button {
     outline: 2px solid rgba(255,255,255,.20);
     opacity: 1;
     background: rgba(255,255,255,.14);
+  }
+
+  .dock .btn {
+    min-height: 44px;
+  }
+
+  .dock .btnLabel {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 28vw;
   }
 
   /* Prevent the bottom panel from being hidden behind footer */
@@ -2695,6 +2937,10 @@ button {
     padding: 6px 10px;
     font-size: 12px;
     flex-shrink: 0;
+  }
+
+  .leaflet-control-container {
+    padding-bottom: 90px;
   }
 
   /* Optional: ultra-compact mode for very narrow screens */
@@ -2771,6 +3017,10 @@ button {
     min-width: 0;
   }
   .topbarRow::-webkit-scrollbar{ display:none; }
+
+  .topbarRow { flex-wrap: nowrap !important; overflow-x: auto !important; }
+  .topbarRow--status .chip { max-width: 72vw; }
+  #chipTraffic, #chipWeather { min-width: unset !important; width: auto !important; max-width: 72vw !important; }
 
   /* Status row: chips/widgets */
   .topbarRow--status{
@@ -2850,7 +3100,7 @@ button {
     padding: 8px 10px;
     border-radius: 18px;
   }
-  .bottombar .dock, .footerTabs, .tabRow{
+  .bottombar .dockBar, .footerTabs, .tabRow{
     display:flex;
     gap: 8px;
     overflow-x:auto;
@@ -2858,7 +3108,7 @@ button {
     -webkit-overflow-scrolling: touch;
     scrollbar-width:none;
   }
-  .bottombar .dock::-webkit-scrollbar, .footerTabs::-webkit-scrollbar, .tabRow::-webkit-scrollbar { display:none; }
+  .bottombar .dockBar::-webkit-scrollbar, .footerTabs::-webkit-scrollbar, .tabRow::-webkit-scrollbar { display:none; }
   .dockTab, .dockBtn, .footerTab{
     min-height: 40px;
     height: 40px;
@@ -2991,7 +3241,7 @@ button {
    MOBILE HEADER COLLAPSE (for NewsFlash/Radio panels)
    ======================================== */
 
-@media (max-width: 899px) {
+@media (max-width: 980px) {
   #mobileHeader {
     transition: transform 220ms ease;
     will-change: transform;
@@ -3000,6 +3250,27 @@ button {
   #mobileHeader.mobileHeader--collapsed {
     transform: translateY(-110%);
     pointer-events: none; /* ensure collapsed header doesn't block interactions */
+  }
+}
+
+@media (max-width: 1024px) and (pointer: coarse) {
+  #mobileHeader .mobileHudMoreBtn {
+    display: none;
+    padding: 4px 8px;
+    font-size: 12px;
+    line-height: 1;
+  }
+
+  #mobileHeader.mobileHeader--compact .mobileHudMoreBtn {
+    display: inline-flex;
+  }
+
+  #mobileHeader.mobileHeader--compact #chipLive,
+  #mobileHeader.mobileHeader--compact #chipAir,
+  #mobileHeader.mobileHeader--compact #chipCameras,
+  #mobileHeader.mobileHeader--compact #swStatusChipMobile,
+  #mobileHeader.mobileHeader--compact #freshnessBadgesMobile {
+    display: none;
   }
 }
 
@@ -3014,12 +3285,12 @@ button {
 .mobile-only  { display: none; }
 
 /* Mobile breakpoint: small screen + coarse pointer => show mobile UI */
-@media (max-width: 899px) and (pointer: coarse) {
+@media (max-width: 1024px) and (pointer: coarse) {
   .desktop-only { display: none; }
   .mobile-only  { display: block; }
 }
 
-@media (max-width: 899px) and (pointer: coarse) {
+@media (max-width: 1024px) and (pointer: coarse) {
   .ui-mobile #mobileHeader .chip__text,
   .ui-mobile #mobileHeader .weatherWidget .weatherText,
   .ui-mobile #mobileHeader .weatherChip .weatherText,
@@ -3027,6 +3298,124 @@ button {
     max-width: 100%;
     overflow: hidden;
     text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}
+
+@media (max-width: 1024px) and (pointer: coarse) {
+  /* Hard reset: prevent wrap chaos */
+  .topbar, .topbar * { box-sizing: border-box; }
+  .topbar { padding: 10px 10px 8px; }
+
+  #mobileHeader .topbar__center--stacked {
+    display: grid;
+    grid-template-rows: auto auto auto;
+    gap: 6px;
+    padding-top: var(--safeTop);
+  }
+
+  /* Force a two-row layout */
+  .topbar .topbarRow { display: flex; gap: 10px; align-items: center; }
+  .topbar .topbarRow { flex-wrap: nowrap !important; }
+
+  /* Row 1: title */
+  .topbarRow--title {
+    justify-content: space-between;
+  }
+  .topbarTitleWrap {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+  }
+  .topbarTitleWrap .titleText {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 65vw;
+  }
+
+  /* Row 2: status chips scroll, never wrap */
+  .topbarRow--status {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+  .topbarRow--status::-webkit-scrollbar { display: none; }
+
+  .topbarRow--status .chip {
+    flex: 0 0 auto;
+    max-width: 78vw;
+    white-space: nowrap;
+  }
+
+  /* Actions row scroll */
+  .topbarRow--actions {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+  .topbarRow--actions::-webkit-scrollbar { display: none; }
+
+  .topbarRow--actions .btn {
+    flex: 0 0 auto;
+  }
+
+  /* Prevent status chips from expanding weirdly */
+  #chipTraffic, #chipWeather, #chipAQI, #chipAir, #chipCameras {
+    min-width: unset !important;
+    width: auto !important;
+    max-width: 78vw !important;
+  }
+
+  /* If any chip uses grid/flex internally, keep it tight */
+  .chipInner { display: flex; gap: 8px; align-items: center; min-width: 0; }
+  .chipText { overflow: hidden; text-overflow: ellipsis; }
+
+  /* If your header is 'disjointed' due to absolute/fixed, force stable stacking */
+  .topbar { position: relative; }
+}
+
+@media (max-width: 720px) and (pointer: coarse) {
+  .topbar__center--stacked {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .topbar__center--stacked .topbarRow {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    min-height: 40px;
+    padding: 4px 2px;
+    align-items: center;
+  }
+
+  .topbar__center--stacked .topbarRow::-webkit-scrollbar {
+    display: none;
+  }
+
+  .topbar__center--stacked .topbarRow--chips,
+  .topbar__center--stacked .topbarRow--status,
+  .topbar__center--stacked .topbarRow--actions {
+    gap: 8px;
+  }
+
+  .topbarRow--status .freshnessBadges {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: nowrap;
+    white-space: nowrap;
+  }
+
+  .topbarRow--status .freshnessPill,
+  .topbarRow--status .freshnessPillBtn {
+    min-height: 28px;
+    display: inline-flex;
+    align-items: center;
     white-space: nowrap;
   }
 }
@@ -3851,7 +4240,7 @@ button {
   display: none;
 }
 
-@media (max-width: 899px) {
+@media (max-width: 980px) {
   .diagnosticsDrawer {
     left: 0;
     right: 0;
@@ -3899,6 +4288,37 @@ button {
 
 .leaflet-right .leaflet-control {
   margin-right: 12px;
+}
+
+body.isMobile .leaflet-top {
+  top: var(--mapTopInset) !important;
+}
+
+body.isMobile .leaflet-bottom {
+  bottom: var(--mapBottomInset) !important;
+}
+
+body.isMobile .leaflet-top .leaflet-control {
+  margin-top: 10px;
+}
+
+body.isMobile .leaflet-bottom .leaflet-control {
+  margin-bottom: 10px;
+}
+
+body.isMobile .leaflet-control-container {
+  pointer-events: none;
+}
+
+body.isMobile .leaflet-control {
+  pointer-events: auto;
+}
+
+body.isMobile .leaflet-control-zoom,
+body.isMobile .leaflet-control-layers,
+body.isMobile .locateControl.leaflet-control {
+  margin-top: 10px;
+  margin-bottom: 10px;
 }
 
 /* Style basemap layer control to match app theme */
@@ -4102,9 +4522,15 @@ button {
 }
 .activeMissionBar--hidden { display: none; }
 .activeMissionBar__label { font-size: 11px; color: var(--warn); text-transform: uppercase; letter-spacing: .04em; }
-.activeMissionBar__name { font-size: 14px; font-weight: 700; }
-.activeMissionBar__meta { display: flex; flex-direction: column; }
-.activeMissionBar__actions { display: flex; align-items: center; gap: 10px; }
+.activeMissionBar__name {
+  font-size: 14px;
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.activeMissionBar__meta { display: flex; flex-direction: column; min-width: 0; }
+.activeMissionBar__actions { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .activeMissionBar__timer { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-weight: 700; }
 
 body.field-mode .timelinePanel {

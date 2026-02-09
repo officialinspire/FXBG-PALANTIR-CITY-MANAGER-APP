@@ -18,7 +18,11 @@ const path = require("path");
 const os = require("os");
 const { Writable } = require("stream");
 const crypto = require("crypto");
-const dotenv = require("dotenv");
+let dotenv = null;
+try {
+  dotenv = require("dotenv");
+  dotenv.config();
+} catch {}
 const { upstreamFetch } = require("./server/upstreamFetch");
 const { createCache } = require("./server/cache");
 
@@ -26,7 +30,9 @@ const { createCache } = require("./server/cache");
 // Environment & Logging Setup
 // -----------------------------
 const ENV_PATH = path.join(__dirname, ".env");
-dotenv.config({ path: ENV_PATH });
+if (dotenv?.config) {
+  dotenv.config({ path: ENV_PATH });
+}
 
 const REQUIRED_ENV = [];
 
@@ -132,6 +138,25 @@ function logUpstream(payload) {
   writeLog(upstreamLogStream, payload);
 }
 
+function logOfflinePack(message, extra = {}) {
+  logUpstream({
+    level: "INFO",
+    kind: "offline-pack",
+    msg: `[offline-pack] ${message}`,
+    ...extra
+  });
+}
+
+const offlinePrefetchState = {
+  running: false,
+  currentKey: null,
+  done: 0,
+  total: 0,
+  errors: [],
+  startedAt: null,
+  lastUpdatedAt: null
+};
+
 function redactUrl(rawUrl) {
   try {
     const url = new URL(rawUrl);
@@ -155,6 +180,93 @@ function requestLogUrl(urlObj) {
     return target ? redactUrl(target) : "/proxy";
   }
   return urlObj.pathname;
+}
+
+function matchStringField(block, fieldName) {
+  const regex = new RegExp(`${fieldName}\\s*:\\s*"([^"]+)"`);
+  const match = block.match(regex);
+  return match ? match[1] : null;
+}
+
+function parseRssFeedEntry(entry) {
+  const key = matchStringField(entry, "id") || matchStringField(entry, "key");
+  const name = matchStringField(entry, "name");
+  const url = matchStringField(entry, "url");
+  const category = matchStringField(entry, "category");
+  const enabledMatch = entry.match(/enabledByDefault\\s*:\\s*(true|false)/);
+  const enabledByDefault = enabledMatch ? enabledMatch[1] === "true" : true;
+
+  if (!url) return null;
+
+  return {
+    key: key || url,
+    name: name || key || url,
+    url,
+    category: category || null,
+    enabledByDefault
+  };
+}
+
+function extractRssFeedRegistry(content) {
+  const rssIndex = content.indexOf("rss: [");
+  if (rssIndex === -1) return [];
+
+  const arrayStart = content.indexOf("[", rssIndex);
+  if (arrayStart === -1) return [];
+
+  let depth = 0;
+  let arrayEnd = -1;
+  for (let i = arrayStart; i < content.length; i += 1) {
+    const char = content[i];
+    if (char === "[") depth += 1;
+    if (char === "]") depth -= 1;
+    if (depth === 0) {
+      arrayEnd = i;
+      break;
+    }
+  }
+
+  if (arrayEnd === -1) return [];
+
+  const rssBlock = content.slice(arrayStart + 1, arrayEnd);
+  const feeds = [];
+  const seen = new Set();
+  let entryStart = -1;
+  let braceDepth = 0;
+
+  for (let i = 0; i < rssBlock.length; i += 1) {
+    const char = rssBlock[i];
+    if (char === "{") {
+      if (braceDepth === 0) {
+        entryStart = i;
+      }
+      braceDepth += 1;
+    } else if (char === "}") {
+      braceDepth -= 1;
+      if (braceDepth === 0 && entryStart !== -1) {
+        const entry = rssBlock.slice(entryStart, i + 1);
+        const feed = parseRssFeedEntry(entry);
+        if (feed && !seen.has(feed.url)) {
+          feeds.push(feed);
+          seen.add(feed.url);
+        }
+        entryStart = -1;
+      }
+    }
+  }
+
+  return feeds;
+}
+
+async function loadRssFeedRegistry() {
+  const configPath = path.join(__dirname, "index.js");
+  try {
+    const content = await fsp.readFile(configPath, "utf8");
+    return extractRssFeedRegistry(content);
+  } catch (error) {
+    console.warn(`[feeds] Failed to read RSS registry from index.js: ${error.message}`);
+    return [];
+  }
 }
 
 function toCacheMeta(cache, ttlMs) {
@@ -212,6 +324,14 @@ const PAYLOAD_LIMITS = {
   image: 5 * 1024 * 1024,
   binary: 5 * 1024 * 1024
 };
+const MAX_LAYER_BYTES = Number(process.env.MAX_LAYER_BYTES) || 25 * 1024 * 1024;
+const MAX_OFFLINE_SNAPSHOT_FEATURES = Number(process.env.MAX_OFFLINE_SNAPSHOT_FEATURES) || 250000;
+const MAX_OFFLINE_SNAPSHOT_MB = Number(process.env.MAX_OFFLINE_SNAPSHOT_MB) || 200;
+const OFFLINE_PREFETCH_DELAY_MS = Number(process.env.OFFLINE_PREFETCH_DELAY_MS) || 500;
+const OFFLINE_AOI_BOUNDS = {
+  fxbg: [-77.55, 38.26, -77.41, 38.35],
+  spotsy: [-77.72, 38.07, -77.32, 38.42]
+};
 
 class UpstreamError extends Error {
   constructor(code, message) {
@@ -247,6 +367,23 @@ function resolvePayloadLimit(contentType, expectedType) {
   return PAYLOAD_LIMITS.binary;
 }
 
+function isLayerDownloadRequest(targetUrl, acceptHeader) {
+  if (!targetUrl) return false;
+  const accept = String(acceptHeader || "").toLowerCase();
+  if (!accept.includes("geojson") && !accept.includes("application/json")) return false;
+  try {
+    const urlObj = new URL(targetUrl);
+    const pathLower = urlObj.pathname.toLowerCase();
+    const looksArcgis = pathLower.includes("/featureserver/") || pathLower.includes("/mapserver/");
+    const looksQuery = pathLower.endsWith("/query") || urlObj.searchParams.has("geometry") || urlObj.searchParams.has("where");
+    const format = String(urlObj.searchParams.get("f") || "").toLowerCase();
+    const isGeoFormat = format.includes("geojson") || format.includes("json");
+    return looksArcgis && (looksQuery || isGeoFormat);
+  } catch {
+    return false;
+  }
+}
+
 const REPORTS_FILE = path.join(__dirname, "data", "reports.json");
 const REPORT_UPLOAD_DIR = path.join(__dirname, "data", "uploads", "reports");
 const REPORT_ALLOWED_MIME = new Set(["image/jpeg", "image/png", "image/webp"]);
@@ -263,13 +400,34 @@ const PLACES_FILE = path.join(__dirname, "data", "places.json");
 const DOWNTOWN_CENTRAL_PARK_PLACES_FILE = path.join(__dirname, "data", "places-downtown-centralpark.json");
 const DORMS_FILE = path.join(__dirname, "data", "dorms_fxbg.json");
 const SCHOOLS_OVERRIDES_FILE = path.join(__dirname, "data", "schools_address_overrides.json");
+const SCHOOLS_DATASET_FILE = path.join(__dirname, "data", "schools_fxbg.json");
+const SPOTSY_STREETLIST_FILE = path.join(__dirname, "data", "streetlists", "spotsy_streets.json");
+const SPOTSY_STREETLIST_SOURCE_URL = "https://www.spotsylvania.va.us/DocumentCenter/View/7321/Street-List-February-2026";
 const GIS_CATALOG_FILE = path.join(__dirname, "data", "gis-catalog.json");
 const CACHE_DIR = path.join(__dirname, "data", "cache");
+const GIS_CACHE_DIR = path.join(CACHE_DIR, "gis");
+const GIS_CACHE_INDEX_FILE = path.join(GIS_CACHE_DIR, "index.json");
 const VA511_ICONS_CACHE_FILE = path.join(CACHE_DIR, "va511-icons-metadata.json");
 const geoDataCache = new Map();
 const va511IconsMemoryCache = { ts: 0, payload: null };
 const VA511_ICONS_CACHE_TTL_MS = 5 * 60 * 1000;
 const VA511_ICONS_SOURCE_URL = "https://files5.iteriscdn.com/WebApps/VA/SafeTravel/data/local/icons/metadata/icons.incident.geojsonp";
+
+// VA511 Events + Cams endpoints (first-class server-side fetch with caching)
+const VA511_EVENTS_SOURCE_URL = "https://511.vdot.virginia.gov/services/map/layers/map/events";
+const VA511_CAMS_SOURCE_URL = "https://511.vdot.virginia.gov/services/map/layers/map/cams";
+const VA511_EVENTS_CACHE_FILE = path.join(CACHE_DIR, "va511-events.json");
+const VA511_CAMS_CACHE_FILE = path.join(CACHE_DIR, "va511-cams.json");
+const VA511_EVENTS_CACHE_TTL_MS = 3 * 60 * 1000;   // 3 minutes fresh
+const VA511_EVENTS_STALE_TTL_MS = 60 * 60 * 1000;   // 1 hour stale fallback
+const VA511_CAMS_CACHE_TTL_MS = 5 * 60 * 1000;      // 5 minutes fresh
+const VA511_CAMS_STALE_TTL_MS = 60 * 60 * 1000;     // 1 hour stale fallback
+const va511EventsMemoryCache = { ts: 0, payload: null };
+const va511CamsMemoryCache = { ts: 0, payload: null };
+
+// FXBG I-95 corridor bounding box for status summary
+const FXBG_I95_BBOX = { minLat: 38.15, maxLat: 38.55, minLon: -77.70, maxLon: -77.20 };
+
 const CDC_SOURCE_URL = "https://data.cdc.gov/api/v3/views/psx4-wq38/query.json";
 const CDC_BACKOFF_MS = 30 * 60 * 1000;
 const cdcState = { backoffUntil: 0, lastReason: null, cache: null };
@@ -305,6 +463,863 @@ async function writeJsonFile(filePath, value) {
   await fsp.writeFile(filePath, JSON.stringify(value, null, 2), "utf8");
 }
 
+function defaultGisCatalog() {
+  return {
+    version: 1,
+    basemapEnhancers: [],
+    toggleLayers: [],
+    cityLayers: [],
+    fredBusMode: [],
+    environmentalTopo: [],
+    spotsy: []
+  };
+}
+
+async function readGisCatalog() {
+  const catalog = await readJsonFile(GIS_CATALOG_FILE);
+  if (!catalog) return defaultGisCatalog();
+  return {
+    ...defaultGisCatalog(),
+    ...catalog
+  };
+}
+
+function listGisCatalogEntries(catalog) {
+  const groups = [
+    "basemapEnhancers",
+    "toggleLayers",
+    "cityLayers",
+    "fredBusMode",
+    "environmentalTopo",
+    "spotsy"
+  ];
+  const entries = [];
+  for (const group of groups) {
+    const items = Array.isArray(catalog[group]) ? catalog[group] : [];
+    for (const item of items) {
+      if (!item || !item.key) continue;
+      entries.push({ ...item, category: group });
+    }
+  }
+  return entries;
+}
+
+function findGisCatalogEntry(catalog, key) {
+  if (!catalog || !key) return null;
+  return listGisCatalogEntries(catalog).find((entry) => entry.key === key) || null;
+}
+
+function sanitizeGisKey(value) {
+  const key = String(value || "").trim();
+  if (!key || !/^[a-z0-9_-]+$/i.test(key)) return null;
+  return key;
+}
+
+function detectGisFormat(contentType, buffer) {
+  const ct = String(contentType || "").toLowerCase();
+  const prefix = buffer?.slice(0, 64)?.toString("utf8")?.trimStart() || "";
+  if (ct.includes("json") || prefix.startsWith("{")) {
+    return "geojson";
+  }
+  if (buffer && buffer.length >= 2 && buffer[0] === 0x50 && buffer[1] === 0x4b) {
+    return "zip";
+  }
+  return "unknown";
+}
+
+function getGisCachePaths(key, format) {
+  const base = path.join(GIS_CACHE_DIR, key);
+  const ext = format === "geojson" ? ".json" : format === "zip" ? ".zip" : ".bin";
+  return {
+    rawPath: `${base}${ext}`,
+    geojsonPath: `${base}.geojson`,
+    metaPath: `${base}.meta.json`,
+    savedAs: path.basename(`${base}${ext}`)
+  };
+}
+
+async function readGisCacheMeta(key) {
+  const metaPath = path.join(GIS_CACHE_DIR, `${key}.meta.json`);
+  const meta = await readJsonFile(metaPath);
+  if (!meta || !meta.savedAs) return null;
+  const rawPath = path.join(GIS_CACHE_DIR, meta.savedAs);
+  const hasRaw = fs.existsSync(rawPath);
+  if (!hasRaw) return null;
+  return { ...meta, rawPath, metaPath };
+}
+
+function defaultGisCacheIndex() {
+  return { version: 1, items: {} };
+}
+
+async function readGisCacheIndex() {
+  const index = await readJsonFile(GIS_CACHE_INDEX_FILE);
+  if (!index || typeof index !== "object") {
+    const initial = defaultGisCacheIndex();
+    await writeGisCacheIndex(initial);
+    return initial;
+  }
+  return {
+    ...defaultGisCacheIndex(),
+    ...index,
+    items: typeof index.items === "object" && index.items ? index.items : {}
+  };
+}
+
+async function writeGisCacheIndex(index) {
+  await writeJsonFile(GIS_CACHE_INDEX_FILE, index);
+}
+
+async function updateGisCacheIndexItem(key, updater) {
+  const index = await readGisCacheIndex();
+  const current = index.items[key] || { key };
+  const next = typeof updater === "function" ? updater(current) : { ...current, ...updater };
+  index.items[key] = next;
+  await writeGisCacheIndex(index);
+  return next;
+}
+
+function offlineTierMatchesPack(entry, pack) {
+  const tier = entry?.offline?.tier;
+  if (!tier) return false;
+  if (pack === "core") return tier === "core";
+  if (pack === "field") return tier === "core" || tier === "optional" || tier === "field";
+  return false;
+}
+
+function offlineAoiBounds(aoi) {
+  if (!aoi) return null;
+  return OFFLINE_AOI_BOUNDS[aoi] || null;
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function extractItemId(url) {
+  const text = String(url || "");
+  if (!text) return null;
+  const patterns = [
+    /\/content\/items\/([a-f0-9]{32})\/data/i,
+    /\/datasets\/([a-f0-9]{32})(?:[/?#]|$)/i,
+    /#\/geohub\/datasets\/([a-f0-9]{32})(?:[/?#]|$)/i
+  ];
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    if (match?.[1]) return match[1].toLowerCase();
+  }
+  return null;
+}
+
+function portalBaseForUrl(url) {
+  const text = String(url || "");
+  if (text.includes("gis.spotsylvania.va.us")) {
+    return "https://gis.spotsylvania.va.us/portal";
+  }
+  return "https://www.arcgis.com";
+}
+
+async function fetchPortalItem(portalBase, itemId) {
+  if (!portalBase || !itemId) return null;
+  const itemUrl = `${portalBase.replace(/\/$/, "")}/sharing/rest/content/items/${itemId}?f=pjson`;
+  const urlCheck = checkUrlAllowed(itemUrl);
+  if (!urlCheck.allowed) {
+    return { ok: false, error: "blocked_url", reason: urlCheck.reason };
+  }
+
+  const upstream = await upstreamFetch(itemUrl, {
+    expectedType: "json",
+    timeoutMs: 15000,
+    upstreamName: `gis-resolve-${itemId}`,
+    route: "/api/gis/resolve"
+  });
+
+  if (!upstream.ok) {
+    return {
+      ok: false,
+      error: upstream.error || "upstream_failed",
+      status: upstream.status || 0
+    };
+  }
+
+  return { ok: true, data: upstream.json || null };
+}
+
+async function fetchPortalRelatedItems(portalBase, itemId, relationshipType, direction) {
+  if (!portalBase || !itemId || !relationshipType || !direction) return null;
+  const relatedUrl = `${portalBase.replace(/\/$/, "")}/sharing/rest/content/items/${itemId}/relatedItems?relationshipType=${encodeURIComponent(relationshipType)}&direction=${encodeURIComponent(direction)}&f=pjson`;
+  const urlCheck = checkUrlAllowed(relatedUrl);
+  if (!urlCheck.allowed) {
+    return { ok: false, error: "blocked_url", reason: urlCheck.reason };
+  }
+
+  const upstream = await upstreamFetch(relatedUrl, {
+    expectedType: "json",
+    timeoutMs: 15000,
+    upstreamName: `gis-related-${itemId}`,
+    route: "/api/gis/resolve"
+  });
+
+  if (!upstream.ok) {
+    return {
+      ok: false,
+      error: upstream.error || "upstream_failed",
+      status: upstream.status || 0
+    };
+  }
+
+  return { ok: true, data: upstream.json || null };
+}
+
+async function resolveArcgis(entry) {
+  const url = entry?.url || "";
+  const itemId = extractItemId(url);
+  if (!itemId) {
+    return { ok: false, error: "missing_item_id" };
+  }
+
+  const portalBase = portalBaseForUrl(url);
+  const itemResult = await fetchPortalItem(portalBase, itemId);
+  if (!itemResult?.ok) {
+    return { ok: false, error: itemResult?.error || "item_fetch_failed", reason: itemResult?.reason, status: itemResult?.status };
+  }
+
+  const item = itemResult.data || {};
+  const serviceUrl = item.url || null;
+  let relatedItemId = null;
+  let relatedServiceUrl = null;
+  let layerUrl = null;
+
+  if (!serviceUrl) {
+    const relationshipTypes = ["Service2Data", "Data2Service"];
+    const directions = ["forward", "reverse"];
+    for (const relationshipType of relationshipTypes) {
+      for (const direction of directions) {
+        const relatedResult = await fetchPortalRelatedItems(portalBase, itemId, relationshipType, direction);
+        const relatedItems = relatedResult?.data?.relatedItems || [];
+        const candidate = relatedItems.find((rel) => rel?.type?.toLowerCase().includes("feature")) || relatedItems[0];
+        if (candidate?.id) {
+          relatedItemId = candidate.id.toLowerCase();
+          const relatedItem = await fetchPortalItem(portalBase, relatedItemId);
+          if (relatedItem?.ok) {
+            relatedServiceUrl = relatedItem.data?.url || null;
+          }
+        }
+        if (relatedServiceUrl) break;
+      }
+      if (relatedServiceUrl) break;
+    }
+  }
+
+  const finalServiceUrl = serviceUrl || relatedServiceUrl;
+  if (finalServiceUrl) {
+    if (/\/(feature|map)server\/\d+$/i.test(finalServiceUrl)) {
+      layerUrl = finalServiceUrl;
+    } else if (/\/featureserver\/?$/i.test(finalServiceUrl)) {
+      layerUrl = `${finalServiceUrl.replace(/\/$/, "")}/0`;
+    } else if (/\/mapserver\/?$/i.test(finalServiceUrl)) {
+      layerUrl = `${finalServiceUrl.replace(/\/$/, "")}/0`;
+    } else {
+      layerUrl = finalServiceUrl;
+    }
+  }
+
+  return {
+    ok: true,
+    itemId,
+    portalBase,
+    title: item.title || null,
+    type: item.type || null,
+    serviceUrl: finalServiceUrl,
+    layerUrl,
+    relatedItemId
+  };
+}
+
+function buildGisCacheSource(entry, resolution) {
+  return {
+    url: entry?.url || null,
+    layerUrl: resolution?.layerUrl || entry?.layerUrl || entry?.offline?.layerUrl || null,
+    portalBase: resolution?.portalBase || entry?.portalBase || null,
+    itemId: resolution?.itemId || entry?.itemId || extractItemId(entry?.url || "") || null
+  };
+}
+
+const DEFAULT_OFFLINE_PACK_BUDGET_MB = {
+  core: 500,
+  field: 4000
+};
+
+function getOfflinePackBudgetMB(catalog, pack) {
+  const budget = catalog?.offlinePacks?.[pack]?.storageBudgetMB;
+  if (Number.isFinite(budget)) return budget;
+  if (pack && Object.prototype.hasOwnProperty.call(DEFAULT_OFFLINE_PACK_BUDGET_MB, pack)) {
+    return DEFAULT_OFFLINE_PACK_BUDGET_MB[pack];
+  }
+  return null;
+}
+
+function getOfflinePackBudgetBytes(catalog, pack) {
+  const budgetMB = getOfflinePackBudgetMB(catalog, pack);
+  if (!Number.isFinite(budgetMB)) return null;
+  return budgetMB * 1024 * 1024;
+}
+
+function getOfflinePackUsageBytes(catalog, pack, index) {
+  if (!pack) return null;
+  const entries = listGisCatalogEntries(catalog);
+  const entryMap = new Map(entries.map((entry) => [entry.key, entry]));
+  const items = Object.values(index.items || {}).filter((item) => item?.cached);
+  return items.reduce((acc, item) => {
+    const entry = entryMap.get(item.key);
+    if (!offlineTierMatchesPack(entry, pack)) return acc;
+    return acc + (item.bytes || 0);
+  }, 0);
+}
+
+async function resolveGisLayerUrl(key, entry) {
+  const cachedPath = path.join(GIS_CACHE_DIR, `${key}.resolved.json`);
+  const cached = await readJsonFile(cachedPath);
+  if (cached?.ok && cached.layerUrl) {
+    return cached;
+  }
+  const resolution = await resolveArcgis(entry);
+  if (resolution?.ok) {
+    await writeJsonFile(cachedPath, resolution);
+  }
+  return resolution;
+}
+
+async function isGisCacheItemValid(key, item) {
+  if (!item?.cached) return false;
+  if (item.format === "arcgis_snapshot") {
+    return fs.existsSync(path.join(GIS_CACHE_DIR, `${key}.geojson`));
+  }
+  const meta = await readGisCacheMeta(key);
+  return Boolean(meta);
+}
+
+async function touchGisCacheIndexItem(key, entry) {
+  const now = Date.now();
+  return updateGisCacheIndexItem(key, (current) => ({
+    ...current,
+    key,
+    name: current.name || entry?.name || null,
+    lastUsedAt: now
+  }));
+}
+
+async function syncGisCacheIndexFromMeta(key, entry, cachedMeta) {
+  if (!cachedMeta) return null;
+  const cachedAt = cachedMeta.fetchedAt ? Date.parse(cachedMeta.fetchedAt) : null;
+  const now = Date.now();
+  return updateGisCacheIndexItem(key, (current) => ({
+    ...current,
+    key,
+    name: entry?.name || current.name || null,
+    cached: true,
+    cachedAt: Number.isFinite(cachedAt) ? cachedAt : current.cachedAt || now,
+    bytes: cachedMeta.bytes || current.bytes || 0,
+    format: cachedMeta.format || current.format || "unknown",
+    source: current.source || buildGisCacheSource(entry, null),
+    etag: current.etag || null,
+    lastModified: current.lastModified || null,
+    lastUsedAt: now
+  }));
+}
+
+async function getDirectorySizeBytes(dirPath) {
+  try {
+    const entries = await fsp.readdir(dirPath, { withFileTypes: true });
+    let total = 0;
+    for (const entry of entries) {
+      const fullPath = path.join(dirPath, entry.name);
+      if (entry.isDirectory()) {
+        total += await getDirectorySizeBytes(fullPath);
+      } else if (entry.isFile()) {
+        const stats = await fsp.stat(fullPath);
+        total += stats.size;
+      }
+    }
+    return total;
+  } catch {
+    return 0;
+  }
+}
+
+function buildArcgisQueryUrl(layerUrl, params) {
+  const base = layerUrl.replace(/\/+$/, "");
+  const url = new URL(`${base}/query`);
+  Object.entries(params).forEach(([key, value]) => {
+    if (value === undefined || value === null) return;
+    url.searchParams.set(key, String(value));
+  });
+  return url.toString();
+}
+
+async function fetchArcgisFeatureCount(layerUrl, bbox) {
+  const url = buildArcgisQueryUrl(layerUrl, {
+    f: "json",
+    where: "1=1",
+    geometry: bbox.join(","),
+    geometryType: "esriGeometryEnvelope",
+    spatialRel: "esriSpatialRelIntersects",
+    inSR: 4326,
+    outSR: 4326,
+    returnCountOnly: "true"
+  });
+
+  const result = await upstreamFetch(url, {
+    expectedType: "json",
+    timeoutMs: 20000,
+    upstreamName: "gis-offline-count",
+    route: "/api/gis/offline/prefetch"
+  });
+
+  if (!result.ok || !result.json) {
+    return { ok: false, error: result.error || "count_failed", status: result.status || 0 };
+  }
+
+  const count = Number(result.json.count);
+  if (!Number.isFinite(count)) {
+    return { ok: false, error: "invalid_count" };
+  }
+
+  return { ok: true, count };
+}
+
+async function fetchArcgisGeojsonPage(layerUrl, bbox, offset, pageSize) {
+  const url = buildArcgisQueryUrl(layerUrl, {
+    f: "geojson",
+    where: "1=1",
+    geometry: bbox.join(","),
+    geometryType: "esriGeometryEnvelope",
+    spatialRel: "esriSpatialRelIntersects",
+    inSR: 4326,
+    outSR: 4326,
+    outFields: "*",
+    resultOffset: offset,
+    resultRecordCount: pageSize,
+    returnGeometry: "true"
+  });
+
+  const result = await upstreamFetch(url, {
+    expectedType: "json",
+    timeoutMs: 25000,
+    maxBytes: MAX_LAYER_BYTES,
+    upstreamName: "gis-offline-page",
+    route: "/api/gis/offline/prefetch"
+  });
+
+  if (!result.ok || !result.json) {
+    return { ok: false, error: result.error || "page_failed", status: result.status || 0 };
+  }
+
+  return { ok: true, data: result.json };
+}
+
+async function cacheGisDownloadResult(key, entry, buffer, contentType, fetchedAt) {
+  const format = detectGisFormat(contentType, buffer);
+  const cachePaths = getGisCachePaths(key, format);
+
+  await fsp.mkdir(GIS_CACHE_DIR, { recursive: true });
+  await fsp.writeFile(cachePaths.rawPath, buffer);
+
+  let normalizedGeojsonPath = null;
+  if (format === "geojson") {
+    try {
+      const parsed = JSON.parse(buffer.toString("utf8"));
+      const normalized = JSON.stringify(parsed, null, 2);
+      await fsp.writeFile(cachePaths.geojsonPath, normalized, "utf8");
+      normalizedGeojsonPath = cachePaths.geojsonPath;
+    } catch (err) {
+      logApp({
+        level: "WARN",
+        kind: "gis_normalize",
+        msg: "Failed to normalize GIS payload",
+        errorCode: err.message,
+        key
+      });
+    }
+  }
+
+  const meta = {
+    key,
+    bytes: buffer.length,
+    contentType: contentType || null,
+    savedAs: cachePaths.savedAs,
+    fetchedAt,
+    format
+  };
+  await writeJsonFile(cachePaths.metaPath, meta);
+
+  const now = Date.now();
+  const source = buildGisCacheSource(entry, null);
+  await updateGisCacheIndexItem(key, (current) => ({
+    ...current,
+    key,
+    name: entry?.name || current.name || null,
+    cached: true,
+    cachedAt: now,
+    bytes: meta.bytes,
+    format: meta.format,
+    source,
+    etag: current.etag || null,
+    lastModified: current.lastModified || null,
+    lastUsedAt: now
+  }));
+
+  return { meta, normalized: Boolean(normalizedGeojsonPath) };
+}
+
+async function downloadGisFileEntry(key, entry) {
+  const urlCheck = checkUrlAllowed(entry.url);
+  if (!urlCheck.allowed) {
+    return { ok: false, error: "blocked_url", reason: urlCheck.reason };
+  }
+
+  const upstream = await upstreamFetch(entry.url, {
+    includeBodyBuffer: true,
+    maxBytes: MAX_LAYER_BYTES,
+    timeoutMs: 20000,
+    upstreamName: `gis-${key}`,
+    route: "/api/gis/offline/prefetch"
+  });
+
+  if (!upstream.ok || !upstream.bodyBuffer) {
+    return { ok: false, error: upstream.error || "upstream_failed", status: upstream.status || 0 };
+  }
+
+  const cached = await cacheGisDownloadResult(key, entry, upstream.bodyBuffer, upstream.contentType, upstream.fetchedAt);
+  return { ok: true, cached };
+}
+
+async function downloadGisArcgisSnapshot(key, entry) {
+  const bounds = offlineAoiBounds(entry?.offline?.aoi);
+  if (!bounds) {
+    return { ok: false, error: "missing_aoi_bounds" };
+  }
+
+  const resolution = await resolveGisLayerUrl(key, entry);
+  if (!resolution?.ok || !resolution.layerUrl) {
+    return { ok: false, error: resolution?.error || "missing_layer_url" };
+  }
+
+  const countResult = await fetchArcgisFeatureCount(resolution.layerUrl, bounds);
+  if (!countResult.ok) {
+    return { ok: false, error: countResult.error || "count_failed" };
+  }
+
+  if (countResult.count > MAX_OFFLINE_SNAPSHOT_FEATURES) {
+    await updateGisCacheIndexItem(key, (current) => ({
+      ...current,
+      key,
+      name: entry?.name || current.name || null,
+      cached: false,
+      bytes: 0,
+      format: "arcgis_snapshot",
+      source: buildGisCacheSource(entry, resolution),
+      etag: current.etag || null,
+      lastModified: current.lastModified || null,
+      lastUsedAt: current.lastUsedAt || null,
+      error: "too_large_for_pack"
+    }));
+    return { ok: false, error: "too_large_for_pack" };
+  }
+
+  const pageSize = Number(process.env.OFFLINE_SNAPSHOT_PAGE_SIZE) || 2000;
+  const snapshotPath = path.join(GIS_CACHE_DIR, `${key}.geojson`);
+  await fsp.mkdir(GIS_CACHE_DIR, { recursive: true });
+
+  const stream = fs.createWriteStream(snapshotPath, { encoding: "utf8" });
+  let totalFeatures = 0;
+  let totalBytes = 0;
+  let first = true;
+  const prefix = "{\"type\":\"FeatureCollection\",\"features\":[";
+  stream.write(prefix);
+  totalBytes += Buffer.byteLength(prefix);
+
+  try {
+    for (let offset = 0; ; offset += pageSize) {
+      const page = await fetchArcgisGeojsonPage(resolution.layerUrl, bounds, offset, pageSize);
+      if (!page.ok) {
+        throw new Error(page.error || "page_failed");
+      }
+
+      const features = Array.isArray(page.data?.features) ? page.data.features : [];
+      if (features.length === 0) break;
+
+      for (const feature of features) {
+        if (totalFeatures >= MAX_OFFLINE_SNAPSHOT_FEATURES) {
+          throw new Error("too_large_for_pack");
+        }
+        const chunk = JSON.stringify(feature);
+        const prefixChunk = first ? "" : ",";
+        const chunkBytes = Buffer.byteLength(prefixChunk) + Buffer.byteLength(chunk);
+        totalBytes += chunkBytes;
+        if (totalBytes > MAX_OFFLINE_SNAPSHOT_MB * 1024 * 1024) {
+          throw new Error("too_large_for_pack");
+        }
+        stream.write(prefixChunk + chunk);
+        first = false;
+        totalFeatures += 1;
+      }
+
+      if (features.length < pageSize) break;
+    }
+  } catch (err) {
+    await new Promise((resolve) => stream.end(resolve));
+    await fsp.rm(snapshotPath, { force: true });
+    const errorCode = err.message === "too_large_for_pack" ? "too_large_for_pack" : "snapshot_failed";
+    await updateGisCacheIndexItem(key, (current) => ({
+      ...current,
+      key,
+      name: entry?.name || current.name || null,
+      cached: false,
+      bytes: 0,
+      format: "arcgis_snapshot",
+      source: buildGisCacheSource(entry, resolution),
+      etag: current.etag || null,
+      lastModified: current.lastModified || null,
+      lastUsedAt: current.lastUsedAt || null,
+      error: errorCode
+    }));
+    return { ok: false, error: errorCode };
+  }
+
+  const suffix = "]}";
+  stream.write(suffix);
+  totalBytes += Buffer.byteLength(suffix);
+  await new Promise((resolve) => stream.end(resolve));
+
+  const stats = await fsp.stat(snapshotPath);
+  const now = Date.now();
+  await updateGisCacheIndexItem(key, (current) => ({
+    ...current,
+    key,
+    name: entry?.name || current.name || null,
+    cached: true,
+    cachedAt: now,
+    bytes: stats.size,
+    format: "arcgis_snapshot",
+    source: buildGisCacheSource(entry, resolution),
+    etag: current.etag || null,
+    lastModified: current.lastModified || null,
+    lastUsedAt: now
+  }));
+
+  return { ok: true, bytes: stats.size, features: totalFeatures };
+}
+
+function buildOfflineQueue(catalog, { pack, keys } = {}) {
+  const entries = listGisCatalogEntries(catalog);
+  let filtered = entries.filter((entry) => entry?.offline);
+  if (Array.isArray(keys) && keys.length > 0) {
+    const keySet = new Set(keys);
+    filtered = filtered.filter((entry) => keySet.has(entry.key));
+  } else if (pack) {
+    filtered = filtered.filter((entry) => offlineTierMatchesPack(entry, pack));
+  }
+  filtered.sort((a, b) => {
+    const aPriority = Number.isFinite(a?.offline?.priority) ? a.offline.priority : 999;
+    const bPriority = Number.isFinite(b?.offline?.priority) ? b.offline.priority : 999;
+    if (aPriority !== bPriority) return aPriority - bPriority;
+    return String(a.key).localeCompare(String(b.key));
+  });
+  return filtered;
+}
+
+async function removeGisCacheFiles(key, item) {
+  const meta = await readGisCacheMeta(key);
+  if (meta?.rawPath) {
+    await fsp.rm(meta.rawPath, { force: true });
+  }
+  if (meta?.metaPath) {
+    await fsp.rm(meta.metaPath, { force: true });
+  }
+  const geojsonPath = path.join(GIS_CACHE_DIR, `${key}.geojson`);
+  await fsp.rm(geojsonPath, { force: true });
+}
+
+async function evictOfflineCache({ targetBytes, pack, catalog }) {
+  const index = await readGisCacheIndex();
+  const entries = listGisCatalogEntries(catalog);
+  const entryMap = new Map(entries.map((entry) => [entry.key, entry]));
+  const items = Object.values(index.items || {}).filter((item) => item?.cached);
+  let filtered = items;
+
+  if (pack) {
+    filtered = items.filter((item) => {
+      const entry = entryMap.get(item.key);
+      return offlineTierMatchesPack(entry, pack);
+    });
+  }
+
+  const target = Number.isFinite(targetBytes) ? targetBytes : null;
+  let totalBytes = filtered.reduce((acc, item) => acc + (item.bytes || 0), 0);
+  if (target !== null && totalBytes <= target) {
+    return { evicted: 0, remainingBytes: totalBytes };
+  }
+
+  filtered.sort((a, b) => {
+    const aUsed = Number.isFinite(a.lastUsedAt) ? a.lastUsedAt : a.cachedAt || 0;
+    const bUsed = Number.isFinite(b.lastUsedAt) ? b.lastUsedAt : b.cachedAt || 0;
+    return aUsed - bUsed;
+  });
+
+  let evicted = 0;
+  for (const item of filtered) {
+    if (target !== null && totalBytes <= target) break;
+    await removeGisCacheFiles(item.key, item);
+    totalBytes -= item.bytes || 0;
+    evicted += 1;
+    await updateGisCacheIndexItem(item.key, (current) => ({
+      ...current,
+      key: item.key,
+      cached: false,
+      bytes: 0,
+      cachedAt: null,
+      lastUsedAt: null
+    }));
+  }
+
+  return { evicted, remainingBytes: totalBytes };
+}
+
+async function summarizeOfflineStatus(catalog) {
+  const index = await readGisCacheIndex();
+  const entries = listGisCatalogEntries(catalog);
+  const entryMap = new Map(entries.map((entry) => [entry.key, entry]));
+  const items = Object.values(index.items || {});
+  const cachedItems = items.filter((item) => item?.cached);
+  const totalBytes = cachedItems.reduce((acc, item) => acc + (item.bytes || 0), 0);
+  const byTier = {};
+
+  for (const item of cachedItems) {
+    const tier = entryMap.get(item.key)?.offline?.tier || "unknown";
+    if (!byTier[tier]) {
+      byTier[tier] = { count: 0, bytes: 0 };
+    }
+    byTier[tier].count += 1;
+    byTier[tier].bytes += item.bytes || 0;
+  }
+
+  const budgets = {
+    core: getOfflinePackBudgetMB(catalog, "core"),
+    field: getOfflinePackBudgetMB(catalog, "field")
+  };
+
+  return {
+    cacheBytes: totalBytes,
+    cacheCount: cachedItems.length,
+    byTier,
+    budgets,
+    lastErrors: offlinePrefetchState.errors.slice(-10)
+  };
+}
+
+async function runOfflinePrefetch(entries, { force = false, pack = null, catalog = null } = {}) {
+  offlinePrefetchState.running = true;
+  offlinePrefetchState.currentKey = null;
+  offlinePrefetchState.done = 0;
+  offlinePrefetchState.total = entries.length;
+  offlinePrefetchState.errors = [];
+  offlinePrefetchState.startedAt = Date.now();
+  offlinePrefetchState.lastUpdatedAt = Date.now();
+
+  logOfflinePack(`prefetch_start total=${entries.length}`);
+
+  const budgetBytes = catalog && pack ? getOfflinePackBudgetBytes(catalog, pack) : null;
+  let usageBytes = 0;
+  if (budgetBytes !== null) {
+    const index = await readGisCacheIndex();
+    usageBytes = getOfflinePackUsageBytes(catalog, pack, index) || 0;
+    if (usageBytes >= budgetBytes) {
+      const message = "budget_exceeded: Evict offline packs or increase storageBudgetMB.";
+      offlinePrefetchState.errors.push({ key: "pack", error: message });
+      logOfflinePack(`prefetch_stop reason=${message}`);
+      offlinePrefetchState.running = false;
+      offlinePrefetchState.currentKey = null;
+      offlinePrefetchState.lastUpdatedAt = Date.now();
+      return;
+    }
+  }
+
+  for (const entry of entries) {
+    offlinePrefetchState.currentKey = entry.key;
+    offlinePrefetchState.lastUpdatedAt = Date.now();
+    try {
+      const index = await readGisCacheIndex();
+      const cachedItem = index.items[entry.key];
+      const cachedBytes = cachedItem?.bytes || 0;
+      if (budgetBytes !== null) {
+        usageBytes = getOfflinePackUsageBytes(catalog, pack, index) || usageBytes;
+        const estMB = Number.isFinite(entry?.offline?.estSizeMB) ? entry.offline.estSizeMB : null;
+        const estBytes = Number.isFinite(estMB) ? estMB * 1024 * 1024 : null;
+        const projectedBytes = estBytes !== null ? Math.max(0, usageBytes - cachedBytes) + estBytes : null;
+        if (projectedBytes !== null && projectedBytes > budgetBytes) {
+          const message = "budget_exceeded: Evict offline packs or increase storageBudgetMB.";
+          offlinePrefetchState.errors.push({ key: entry.key, error: message });
+          logOfflinePack(`prefetch_stop key=${entry.key} reason=${message}`);
+          break;
+        }
+      }
+      if (!force && cachedItem && await isGisCacheItemValid(entry.key, cachedItem)) {
+        await touchGisCacheIndexItem(entry.key, entry);
+        logOfflinePack(`prefetch_skip_cached key=${entry.key}`);
+      } else {
+        let result = null;
+        if (entry.offline?.downloadMode === "serviceQuery") {
+          result = await downloadGisArcgisSnapshot(entry.key, entry);
+        } else {
+          result = await downloadGisFileEntry(entry.key, entry);
+        }
+
+        if (!result?.ok) {
+          const errorCode = result?.error || "download_failed";
+          offlinePrefetchState.errors.push({ key: entry.key, error: errorCode });
+          logOfflinePack(`prefetch_error key=${entry.key} error=${errorCode}`);
+        } else {
+          const newBytes = result?.bytes || result?.cached?.meta?.bytes || cachedBytes;
+          if (budgetBytes !== null) {
+            usageBytes = Math.max(0, usageBytes - cachedBytes + (newBytes || 0));
+            if (usageBytes > budgetBytes) {
+              const message = "budget_exceeded: Evict offline packs or increase storageBudgetMB.";
+              await removeGisCacheFiles(entry.key, cachedItem);
+              await updateGisCacheIndexItem(entry.key, (current) => ({
+                ...current,
+                key: entry.key,
+                cached: false,
+                bytes: 0,
+                cachedAt: null,
+                lastUsedAt: null
+              }));
+              offlinePrefetchState.errors.push({ key: entry.key, error: message });
+              logOfflinePack(`prefetch_stop key=${entry.key} reason=${message}`);
+              break;
+            }
+          }
+          logOfflinePack(`prefetch_ok key=${entry.key}`);
+        }
+      }
+    } catch (err) {
+      const message = err?.message || "prefetch_failed";
+      offlinePrefetchState.errors.push({ key: entry.key, error: message });
+      logOfflinePack(`prefetch_error key=${entry.key} error=${message}`);
+    }
+    offlinePrefetchState.done += 1;
+    offlinePrefetchState.lastUpdatedAt = Date.now();
+    if (OFFLINE_PREFETCH_DELAY_MS > 0) {
+      await sleep(OFFLINE_PREFETCH_DELAY_MS);
+    }
+  }
+
+  offlinePrefetchState.running = false;
+  offlinePrefetchState.currentKey = null;
+  offlinePrefetchState.lastUpdatedAt = Date.now();
+  logOfflinePack(`prefetch_done total=${offlinePrefetchState.total} done=${offlinePrefetchState.done}`);
+}
+
 async function fetchVa511IconsMetadata() {
   const now = Date.now();
   if (va511IconsMemoryCache.payload && (now - va511IconsMemoryCache.ts) < VA511_ICONS_CACHE_TTL_MS) {
@@ -312,20 +1327,23 @@ async function fetchVa511IconsMetadata() {
   }
 
   try {
-    const res = await fetch(VA511_ICONS_SOURCE_URL, {
+    const result = await upstreamFetch(VA511_ICONS_SOURCE_URL, {
+      expectedType: "json",
+      allowJsonp: true,
+      timeoutMs: 15000,
       headers: {
         "Accept": "application/javascript,text/javascript,text/plain,application/json,*/*",
         "Referer": "https://511.vdot.virginia.gov/",
         "Origin": "https://511.vdot.virginia.gov",
         "User-Agent": "FXBG-PALANTIR-CityManager/1.0"
-      }
+      },
+      upstreamName: "va511-icons-metadata",
+      route: "/api/va511/icons-metadata"
     });
-    if (!res.ok) {
-      throw new Error(`HTTP ${res.status}`);
+    if (!result.ok || !result.json) {
+      throw new Error(result.error || `HTTP ${result.status}`);
     }
-    const text = await res.text();
-    const parsed = parseJsonpPayload(text, "va511_icons_metadata");
-    const payload = { ok: true, data: parsed, sourceUrl: VA511_ICONS_SOURCE_URL, fetchedAt: new Date().toISOString() };
+    const payload = { ok: true, data: result.json, sourceUrl: VA511_ICONS_SOURCE_URL, fetchedAt: new Date().toISOString() };
     va511IconsMemoryCache.ts = now;
     va511IconsMemoryCache.payload = payload;
     await writeJsonFile(VA511_ICONS_CACHE_FILE, payload);
@@ -355,6 +1373,140 @@ async function fetchVa511IconsMetadata() {
       data: null
     };
   }
+}
+
+// ---------------------------------------------------------------------------
+// VA511 Events (server-side fetch with memory + disk cache + stale fallback)
+// ---------------------------------------------------------------------------
+const VA511_UPSTREAM_HEADERS = {
+  "Accept": "application/json,*/*",
+  "Referer": "https://511.vdot.virginia.gov/",
+  "Origin": "https://511.vdot.virginia.gov",
+  "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+};
+
+async function fetchVa511Layer(sourceUrl, memCache, ttlMs, staleTtlMs, diskCacheFile, layerName) {
+  const now = Date.now();
+  // 1. Fresh memory cache?
+  if (memCache.payload && (now - memCache.ts) < ttlMs) {
+    return { ok: true, data: memCache.payload.data, sourceUrl, fetchedAt: memCache.payload.fetchedAt, cached: true, degraded: false };
+  }
+
+  // 2. Try upstream
+  try {
+    const result = await upstreamFetch(sourceUrl, {
+      expectedType: "json",
+      timeoutMs: 15000,
+      headers: VA511_UPSTREAM_HEADERS,
+      upstreamName: `va511-${layerName}`,
+      route: `/api/va511/${layerName}`
+    });
+
+    if (!result.ok || !result.json) {
+      throw new Error(result.error || `upstream returned status ${result.status}`);
+    }
+
+    const payload = { ok: true, data: result.json, sourceUrl, fetchedAt: result.fetchedAt };
+    memCache.ts = now;
+    memCache.payload = payload;
+    await writeJsonFile(diskCacheFile, payload);
+    return { ...payload, cached: false, degraded: false };
+  } catch (err) {
+    // 3. Stale memory cache within stale window?
+    if (memCache.payload && (now - memCache.ts) < staleTtlMs) {
+      return { ok: true, data: memCache.payload.data, sourceUrl, fetchedAt: memCache.payload.fetchedAt, cached: true, degraded: true, reason: err.message };
+    }
+
+    // 4. Disk cache fallback
+    const diskCached = await readJsonFile(diskCacheFile);
+    if (diskCached?.ok && diskCached?.data) {
+      memCache.ts = now;
+      memCache.payload = diskCached;
+      return { ok: true, data: diskCached.data, sourceUrl, fetchedAt: diskCached.fetchedAt || null, cached: true, degraded: true, reason: err.message };
+    }
+
+    // 5. Total failure
+    return { ok: false, data: null, sourceUrl, fetchedAt: null, cached: false, degraded: true, error: err.message };
+  }
+}
+
+async function fetchVa511Events() {
+  return fetchVa511Layer(VA511_EVENTS_SOURCE_URL, va511EventsMemoryCache, VA511_EVENTS_CACHE_TTL_MS, VA511_EVENTS_STALE_TTL_MS, VA511_EVENTS_CACHE_FILE, "events");
+}
+
+async function fetchVa511Cams() {
+  return fetchVa511Layer(VA511_CAMS_SOURCE_URL, va511CamsMemoryCache, VA511_CAMS_CACHE_TTL_MS, VA511_CAMS_STALE_TTL_MS, VA511_CAMS_CACHE_FILE, "cams");
+}
+
+// ---------------------------------------------------------------------------
+// VA511 Status Summary (computed from events)
+// ---------------------------------------------------------------------------
+function computeVa511Status(eventsPayload) {
+  if (!eventsPayload || !eventsPayload.ok || !eventsPayload.data) {
+    if (eventsPayload?.degraded && eventsPayload?.data) {
+      // degraded but have cached data — still compute
+    } else {
+      return {
+        ok: false,
+        totalEvents: 0,
+        i95ApproxCount: 0,
+        byCategory: {},
+        fetchedAt: eventsPayload?.fetchedAt || null,
+        degraded: eventsPayload?.degraded || true,
+        cached: eventsPayload?.cached || false,
+        error: eventsPayload?.error || "no events data"
+      };
+    }
+  }
+
+  const data = eventsPayload.data;
+  // VA511 events can be a FeatureCollection or an array
+  const items = Array.isArray(data) ? data : (data?.features || data?.items || []);
+  const totalEvents = items.length;
+
+  const byCategory = { incident: 0, crash: 0, congestion: 0, closure: 0, construction: 0, other: 0 };
+  let i95ApproxCount = 0;
+
+  for (const item of items) {
+    // Support both GeoJSON features and flat objects
+    const props = item.properties || item;
+    const geom = item.geometry || null;
+    let lat = null, lon = null;
+
+    if (geom && geom.coordinates) {
+      [lon, lat] = geom.coordinates;
+    } else {
+      lat = parseFloat(props.latitude || props.lat || props.y || 0);
+      lon = parseFloat(props.longitude || props.lon || props.lng || props.x || 0);
+    }
+
+    // Categorize
+    const combined = `${props.title || ""} ${props.event || ""} ${props.description || ""} ${props.incident_type || ""} ${props.road || ""}`.toLowerCase();
+    if (/crash|collision|accident|wreck/.test(combined)) byCategory.crash++;
+    else if (/closed|closure|blocked|detour/.test(combined)) byCategory.closure++;
+    else if (/congestion|slow|delay|queue/.test(combined)) byCategory.congestion++;
+    else if (/construction|work\s*zone|lane\s*closure|paving/.test(combined)) byCategory.construction++;
+    else if (/incident/.test(combined)) byCategory.incident++;
+    else byCategory.other++;
+
+    // I-95 corridor count
+    if (isFinite(lat) && isFinite(lon)) {
+      const isI95 = /\bi\-?95\b|\binterstate\s*95\b/.test(combined);
+      if (isI95 && lat >= FXBG_I95_BBOX.minLat && lat <= FXBG_I95_BBOX.maxLat && lon >= FXBG_I95_BBOX.minLon && lon <= FXBG_I95_BBOX.maxLon) {
+        i95ApproxCount++;
+      }
+    }
+  }
+
+  return {
+    ok: true,
+    totalEvents,
+    i95ApproxCount,
+    byCategory,
+    fetchedAt: eventsPayload.fetchedAt,
+    degraded: Boolean(eventsPayload.degraded),
+    cached: Boolean(eventsPayload.cached)
+  };
 }
 
 async function readOrInitGeoDataset(filePath, context) {
@@ -696,6 +1848,49 @@ try {
   console.warn("[Crime Reports] pdf-parse not installed. Run 'npm install' to enable PDF parsing.");
 }
 
+function normalizeSpotsyStreetEntry(value) {
+  const text = String(value || "").replace(/\s+/g, " ").trim();
+  if (!text) return null;
+  const lower = text.toLowerCase();
+  const headerPatterns = [
+    /^street list/i,
+    /spotsylvania county/i,
+    /document center/i,
+    /department of/i,
+    /^page\s+\d+/i,
+    /page\s+\d+\s+of\s+\d+/i,
+    /february\s+\d{4}/i,
+    /updated\s+\d{4}/i
+  ];
+  if (headerPatterns.some((pattern) => pattern.test(lower))) return null;
+  if (!/[a-z]/i.test(text)) return null;
+  return text;
+}
+
+function parseSpotsyStreetListText(rawText) {
+  const lines = String(rawText || "").split(/\r?\n/);
+  const streets = [];
+  const seen = new Set();
+
+  for (const line of lines) {
+    const parts = String(line || "")
+      .split(/\s{2,}/g)
+      .map((part) => part.trim())
+      .filter(Boolean);
+
+    for (const part of parts.length ? parts : [line]) {
+      const cleaned = normalizeSpotsyStreetEntry(part);
+      if (!cleaned) continue;
+      const key = cleaned.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      streets.push(cleaned);
+    }
+  }
+
+  return streets;
+}
+
 // Support environment aliases for API keys
 const OPENUV_API_KEY = process.env.OPENUV_API_KEY || process.env.OPENUV_KEY || "";
 const WAQI_TOKEN = process.env.WAQI_TOKEN || process.env.WAQI_API_KEY || process.env.AQICN_TOKEN || "";
@@ -742,8 +1937,11 @@ const MIME = {
   ".jpeg": "image/jpeg",
   ".webp": "image/webp",
   ".json": "application/json; charset=utf-8",
+  ".geojson": "application/geo+json; charset=utf-8",
   ".ico": "image/x-icon",
   ".txt": "text/plain; charset=utf-8",
+  ".zip": "application/zip",
+  ".bin": "application/octet-stream",
 };
 
 /**
@@ -829,6 +2027,8 @@ const ALLOWED_UPSTREAM_DOMAINS = [
   // GIS / Map Services
   'maps.fredericksburgva.gov',
   'p5v98VHDX9Atv3l7.maps.arcgis.com', // VDOT ArcGIS subdomain
+  'data-fredericksburg.opendata.arcgis.com',
+  'gis.spotsylvania.va.us',
 
   // Testing/Dev (remove in production if needed)
   'httpbin.org',
@@ -1292,6 +2492,48 @@ const TTL_CONFIG = {
     { pattern: /\.(jpg|jpeg|png|webp|gif)($|\?)/i, ttl: 'cameras' },
   ]
 };
+
+const RSS_HEADER_HOSTS = [
+  "fredericksburgva.gov",
+  "spotsylvania.va.us",
+  "staffordcountyva.gov",
+  "staffordschools.net"
+];
+
+const RSS_ACCEPT_HEADER = "application/rss+xml, application/atom+xml, application/xml, text/xml, */*";
+const RSS_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+
+function shouldApplyRssHeaderShim(targetUrl, acceptHeader) {
+  let host = "";
+  let path = "";
+  try {
+    const url = new URL(targetUrl);
+    host = url.hostname;
+    path = url.pathname || "";
+  } catch {
+    return false;
+  }
+
+  const hostMatch = RSS_HEADER_HOSTS.some((allowed) => host === allowed || host.endsWith(`.${allowed}`));
+  if (!hostMatch) return false;
+
+  const accept = String(acceptHeader || "").toLowerCase();
+  const rssAccept = accept.includes("rss+xml") || accept.includes("atom+xml") || accept.includes("application/xml") || accept.includes("text/xml");
+  const rssUrl = /RSSFeed\.aspx/i.test(targetUrl) || /\.(rss|xml)(\?|$)/i.test(path);
+  return rssAccept || rssUrl;
+}
+
+function buildRssHeaderShim(targetUrl) {
+  const url = new URL(targetUrl);
+  const origin = `https://${url.hostname}`;
+  return {
+    "User-Agent": RSS_USER_AGENT,
+    "Accept": RSS_ACCEPT_HEADER,
+    "Accept-Language": "en-US,en;q=0.9",
+    "Referer": `${origin}/`,
+    "Origin": origin
+  };
+}
 
 function parseTtl(reqUrl, reqHeaders) {
   // 1. Check for explicit client hint header
@@ -1765,6 +3007,10 @@ async function proxyFetch(targetUrl, reqHeaders) {
         }
       }
 
+      if (shouldApplyRssHeaderShim(targetUrl, accept)) {
+        Object.assign(upstreamHeaders, buildRssHeaderShim(targetUrl));
+      }
+
       // Add timeout support via AbortController
       const timeoutMs = Number(reqHeaders["x-timeout-ms"]) || DEFAULT_TIMEOUT_MS;
       const controller = new AbortController();
@@ -1925,7 +3171,16 @@ async function proxyFetch(targetUrl, reqHeaders) {
       let buf;
       try {
         const limitBytes = resolvePayloadLimit(contentType, expectedType);
-        buf = await readResponseBodyWithLimit(upstream, limitBytes);
+        const isLayerDownload = isLayerDownloadRequest(finalUrl, accept);
+        const effectiveLimit = isLayerDownload ? Math.min(limitBytes, MAX_LAYER_BYTES) : limitBytes;
+        if (isLayerDownload) {
+          const contentLength = Number(upstream.headers.get("content-length"));
+          if (Number.isFinite(contentLength) && contentLength > MAX_LAYER_BYTES) {
+            const maxMb = Math.round(MAX_LAYER_BYTES / (1024 * 1024));
+            throw new UpstreamError("payload_too_large", `Layer payload exceeds ${maxMb}MB limit`);
+          }
+        }
+        buf = await readResponseBodyWithLimit(upstream, effectiveLimit);
       } catch (err) {
         if (err instanceof UpstreamError && err.code === "payload_too_large") {
           logApp({
@@ -2211,6 +3466,18 @@ const LOCAL_JURISDICTIONS = new Set([
   "culpeper",
   "regional"
 ]);
+
+function hasStateInQuery(value) {
+  const q = String(value || "");
+  return /\b(va|virginia)\b/i.test(q);
+}
+
+function ensureVirginiaQuery(query, jurisdiction) {
+  const j = String(jurisdiction || "").toLowerCase();
+  if (!LOCAL_JURISDICTIONS.has(j)) return query;
+  if (hasStateInQuery(query)) return query;
+  return `${query}, Virginia`;
+}
 
 function normalizeKeyPart(value) {
   return String(value || "")
@@ -3258,6 +4525,402 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, JSON.stringify(health, null, 2), { "Content-Type": "application/json" });
     }
 
+    if (urlObj.pathname === "/api/feeds/registry") {
+      const feeds = await loadRssFeedRegistry();
+      const payload = {
+        ok: true,
+        feeds
+      };
+      return send(res, 200, JSON.stringify(payload), { "Content-Type": "application/json" });
+    }
+
+    if (urlObj.pathname === "/api/health/offline-readiness") {
+      const serverTime = new Date().toISOString();
+      const hasLogsDir = Boolean(resolvedLogDir && fs.existsSync(resolvedLogDir));
+      const cacheDirExists = fs.existsSync(CACHE_DIR);
+      const diskCacheBytes = cacheDirExists ? await getDirectorySizeBytes(CACHE_DIR) : 0;
+      const hasSchoolsDataset = fs.existsSync(SCHOOLS_DATASET_FILE);
+      const hasStreetlists = {
+        spotsy: fs.existsSync(SPOTSY_STREETLIST_FILE)
+      };
+      const canServeStatic = fs.existsSync(path.join(PUBLIC_DIR, "index.html"));
+
+      const degradedUpstreams = REQUIRED_UPSTREAMS.filter((upstream) => upstream.required).filter((upstream) => {
+        const state = upstreamStatus.get(upstream.name) || {};
+        if (state.lastOk === true && !state.stale) return false;
+        if (state.cacheHit && !state.stale) return false;
+        return true;
+      }).map((upstream) => upstream.name);
+
+      const lastUpstreamSuccessAt = REQUIRED_UPSTREAMS.reduce((acc, upstream) => {
+        acc[upstream.name] = upstreamLastSuccess.get(upstream.name) || null;
+        return acc;
+      }, {});
+
+      const payload = {
+        ok: true,
+        serverTime,
+        hasLogsDir,
+        cacheDir: CACHE_DIR,
+        diskCacheBytes,
+        hasSchoolsDataset,
+        hasStreetlists,
+        canServeStatic,
+        canServeTiles: false,
+        degradedUpstreams,
+        lastUpstreamSuccessAt
+      };
+
+      return send(res, 200, JSON.stringify(payload, null, 2), { "Content-Type": "application/json" });
+    }
+
+    if (urlObj.pathname === "/api/gis/catalog" && req.method === "GET") {
+      const catalog = await readGisCatalog();
+      return send(res, 200, JSON.stringify(catalog, null, 2), { "Content-Type": "application/json" });
+    }
+
+    if (urlObj.pathname === "/api/gis/resolve" && req.method === "GET") {
+      const rawKey = urlObj.searchParams.get("key");
+      const key = sanitizeGisKey(rawKey);
+      if (!key) {
+        return send(res, 400, JSON.stringify({ ok: false, error: "invalid_key" }), { "Content-Type": "application/json" });
+      }
+
+      const catalog = await readGisCatalog();
+      const entry = findGisCatalogEntry(catalog, key);
+      if (!entry) {
+        return send(res, 404, JSON.stringify({ ok: false, error: "unknown_key" }), { "Content-Type": "application/json" });
+      }
+
+      const resolvedPath = path.join(GIS_CACHE_DIR, `${key}.resolved.json`);
+      const cachedResolution = await readJsonFile(resolvedPath);
+      if (cachedResolution) {
+        return send(res, 200, JSON.stringify(cachedResolution, null, 2), { "Content-Type": "application/json" });
+      }
+
+      const resolution = await resolveArcgis(entry);
+      await writeJsonFile(resolvedPath, resolution);
+      return send(res, 200, JSON.stringify(resolution, null, 2), { "Content-Type": "application/json" });
+    }
+
+    if (urlObj.pathname === "/api/gis/fetch" && req.method === "GET") {
+      const rawKey = urlObj.searchParams.get("key");
+      const key = sanitizeGisKey(rawKey);
+      if (!key) {
+        return send(res, 400, JSON.stringify({ ok: false, error: "invalid_key" }), { "Content-Type": "application/json" });
+      }
+
+      const catalog = await readGisCatalog();
+      const entry = findGisCatalogEntry(catalog, key);
+      if (!entry) {
+        return send(res, 404, JSON.stringify({ ok: false, error: "unknown_key" }), { "Content-Type": "application/json" });
+      }
+
+      const cachedMeta = await readGisCacheMeta(key);
+      if (cachedMeta) {
+        await syncGisCacheIndexFromMeta(key, entry, cachedMeta);
+        return send(res, 200, JSON.stringify({
+          ok: true,
+          key,
+          cached: true,
+          bytes: cachedMeta.bytes,
+          contentType: cachedMeta.contentType || null,
+          savedAs: cachedMeta.savedAs,
+          fetchedAt: cachedMeta.fetchedAt,
+          format: cachedMeta.format || "unknown"
+        }, null, 2), { "Content-Type": "application/json" });
+      }
+
+      const urlCheck = checkUrlAllowed(entry.url);
+      if (!urlCheck.allowed) {
+        return send(res, 400, JSON.stringify({ ok: false, error: "blocked_url", reason: urlCheck.reason }, null, 2), { "Content-Type": "application/json" });
+      }
+
+      const upstream = await upstreamFetch(entry.url, {
+        includeBodyBuffer: true,
+        maxBytes: MAX_LAYER_BYTES,
+        timeoutMs: 20000,
+        upstreamName: `gis-${key}`,
+        route: "/api/gis/fetch"
+      });
+
+      if (!upstream.ok || !upstream.bodyBuffer) {
+        return send(res, 502, JSON.stringify({
+          ok: false,
+          error: upstream.error || "upstream_failed",
+          status: upstream.status || 0
+        }, null, 2), { "Content-Type": "application/json" });
+      }
+
+      const cached = await cacheGisDownloadResult(key, entry, upstream.bodyBuffer, upstream.contentType, upstream.fetchedAt);
+      const meta = cached.meta;
+
+      return send(res, 200, JSON.stringify({
+        ok: true,
+        key,
+        cached: false,
+        bytes: meta.bytes,
+        contentType: meta.contentType,
+        savedAs: meta.savedAs,
+        fetchedAt: meta.fetchedAt,
+        format: meta.format,
+        normalized: cached.normalized
+      }, null, 2), { "Content-Type": "application/json" });
+    }
+
+    if (urlObj.pathname === "/api/gis/data" && req.method === "GET") {
+      const rawKey = urlObj.searchParams.get("key");
+      const key = sanitizeGisKey(rawKey);
+      if (!key) {
+        return send(res, 400, JSON.stringify({ ok: false, error: "invalid_key" }), { "Content-Type": "application/json" });
+      }
+
+      const geojsonPath = path.join(GIS_CACHE_DIR, `${key}.geojson`);
+      if (fs.existsSync(geojsonPath)) {
+        const payload = await fsp.readFile(geojsonPath);
+        const catalog = await readGisCatalog();
+        const entry = findGisCatalogEntry(catalog, key);
+        const cachedMeta = await readGisCacheMeta(key);
+        if (cachedMeta) {
+          await syncGisCacheIndexFromMeta(key, entry, cachedMeta);
+        } else {
+          const stats = await fsp.stat(geojsonPath);
+          const now = Date.now();
+          await updateGisCacheIndexItem(key, (current) => ({
+            ...current,
+            key,
+            name: entry?.name || current.name || null,
+            cached: true,
+            cachedAt: current.cachedAt || now,
+            bytes: stats.size,
+            format: current.format || "arcgis_snapshot",
+            source: current.source || buildGisCacheSource(entry, null),
+            etag: current.etag || null,
+            lastModified: current.lastModified || null,
+            lastUsedAt: now
+          }));
+        }
+        return send(res, 200, payload, { "Content-Type": MIME[".geojson"] });
+      }
+
+      const cachedMeta = await readGisCacheMeta(key);
+      if (cachedMeta) {
+        const ext = path.extname(cachedMeta.rawPath).toLowerCase();
+        const type = MIME[ext] || "application/octet-stream";
+        const payload = await fsp.readFile(cachedMeta.rawPath);
+        const catalog = await readGisCatalog();
+        const entry = findGisCatalogEntry(catalog, key);
+        await touchGisCacheIndexItem(key, entry);
+        return send(res, 200, payload, { "Content-Type": type });
+      }
+
+      return send(res, 404, JSON.stringify({ ok: false, error: "not_cached_yet" }), { "Content-Type": "application/json" });
+    }
+
+    if (urlObj.pathname === "/api/gis/offline/status" && req.method === "GET") {
+      const catalog = await readGisCatalog();
+      const summary = await summarizeOfflineStatus(catalog);
+      return send(res, 200, JSON.stringify({ ok: true, ...summary }, null, 2), { "Content-Type": "application/json" });
+    }
+
+    if (urlObj.pathname === "/api/gis/offline/prefetch" && req.method === "POST") {
+      try {
+        const body = await readBody(req, PAYLOAD_LIMITS.json);
+        const payload = safeJsonParse(body.toString("utf8"), {}, "offline prefetch");
+        const pack = payload.pack ? String(payload.pack) : null;
+        const force = Boolean(payload.force);
+        const keys = Array.isArray(payload.keys) ? payload.keys.map((key) => sanitizeGisKey(key)).filter(Boolean) : null;
+
+        if (!pack && (!keys || keys.length === 0)) {
+          return send(res, 400, JSON.stringify({ ok: false, error: "missing_pack_or_keys" }), { "Content-Type": "application/json" });
+        }
+        if (pack && pack !== "core" && pack !== "field") {
+          return send(res, 400, JSON.stringify({ ok: false, error: "invalid_pack" }), { "Content-Type": "application/json" });
+        }
+        if (offlinePrefetchState.running) {
+          return send(res, 409, JSON.stringify({ ok: false, error: "job_running" }, null, 2), { "Content-Type": "application/json" });
+        }
+
+        const catalog = await readGisCatalog();
+        const entries = buildOfflineQueue(catalog, { pack, keys });
+        const budgetBytes = pack ? getOfflinePackBudgetBytes(catalog, pack) : null;
+
+        if (entries.length === 0) {
+          return send(res, 200, JSON.stringify({ ok: true, started: false, queued: 0 }, null, 2), { "Content-Type": "application/json" });
+        }
+
+        if (budgetBytes !== null) {
+          const index = await readGisCacheIndex();
+          const usageBytes = getOfflinePackUsageBytes(catalog, pack, index) || 0;
+          if (usageBytes >= budgetBytes) {
+            return send(res, 409, JSON.stringify({
+              ok: false,
+              error: "budget_exceeded",
+              message: "Offline pack is over budget. Evict cached items or increase storageBudgetMB."
+            }, null, 2), { "Content-Type": "application/json" });
+          }
+          const estimatedBytes = entries.reduce((acc, entry) => {
+            const estMB = Number.isFinite(entry?.offline?.estSizeMB) ? entry.offline.estSizeMB : null;
+            if (!Number.isFinite(estMB)) return acc;
+            return acc + (estMB * 1024 * 1024);
+          }, 0);
+          if (estimatedBytes > 0 && (usageBytes + estimatedBytes) > budgetBytes) {
+            return send(res, 409, JSON.stringify({
+              ok: false,
+              error: "budget_exceeded",
+              message: "Offline pack would exceed budget. Evict cached items or increase storageBudgetMB."
+            }, null, 2), { "Content-Type": "application/json" });
+          }
+        }
+
+        setImmediate(() => runOfflinePrefetch(entries, { force, pack, catalog }));
+        return send(res, 200, JSON.stringify({ ok: true, started: true, queued: entries.length }, null, 2), { "Content-Type": "application/json" });
+      } catch (err) {
+        return send(res, 400, JSON.stringify({ ok: false, error: "invalid_payload", message: err.message }, null, 2), { "Content-Type": "application/json" });
+      }
+    }
+
+    if (urlObj.pathname === "/api/gis/offline/progress" && req.method === "GET") {
+      return send(res, 200, JSON.stringify({ ok: true, ...offlinePrefetchState }, null, 2), { "Content-Type": "application/json" });
+    }
+
+    if (urlObj.pathname === "/api/gis/offline/evict" && req.method === "POST") {
+      try {
+        const body = await readBody(req, PAYLOAD_LIMITS.json);
+        const payload = safeJsonParse(body.toString("utf8"), {}, "offline evict");
+        const pack = payload.pack ? String(payload.pack) : null;
+        const targetMB = payload.targetMB !== undefined ? Number(payload.targetMB) : null;
+
+        if (!pack && !Number.isFinite(targetMB)) {
+          return send(res, 400, JSON.stringify({ ok: false, error: "missing_target" }, null, 2), { "Content-Type": "application/json" });
+        }
+
+        const catalog = await readGisCatalog();
+        let targetBytes = null;
+        if (Number.isFinite(targetMB)) {
+          targetBytes = targetMB * 1024 * 1024;
+        } else if (pack) {
+          const budgetMB = getOfflinePackBudgetMB(catalog, pack);
+          if (!Number.isFinite(budgetMB)) {
+            return send(res, 400, JSON.stringify({ ok: false, error: "missing_budget" }, null, 2), { "Content-Type": "application/json" });
+          }
+          targetBytes = budgetMB * 1024 * 1024;
+        }
+
+        const result = await evictOfflineCache({ targetBytes, pack, catalog });
+        return send(res, 200, JSON.stringify({ ok: true, ...result }, null, 2), { "Content-Type": "application/json" });
+      } catch (err) {
+        return send(res, 400, JSON.stringify({ ok: false, error: "invalid_payload", message: err.message }, null, 2), { "Content-Type": "application/json" });
+      }
+    }
+
+    if (urlObj.pathname === "/api/gis/offline/refresh" && req.method === "POST") {
+      try {
+        const body = await readBody(req, PAYLOAD_LIMITS.json);
+        const payload = safeJsonParse(body.toString("utf8"), {}, "offline refresh");
+        const key = sanitizeGisKey(payload.key);
+        const force = Boolean(payload.force);
+
+        if (!key) {
+          return send(res, 400, JSON.stringify({ ok: false, error: "invalid_key" }, null, 2), { "Content-Type": "application/json" });
+        }
+
+        const catalog = await readGisCatalog();
+        const entry = findGisCatalogEntry(catalog, key);
+        if (!entry) {
+          return send(res, 404, JSON.stringify({ ok: false, error: "unknown_key" }, null, 2), { "Content-Type": "application/json" });
+        }
+
+        const refreshDays = entry.offline?.refreshDays;
+        if (!force && !Number.isFinite(refreshDays)) {
+          return send(res, 400, JSON.stringify({ ok: false, error: "refresh_not_allowed" }, null, 2), { "Content-Type": "application/json" });
+        }
+
+        const index = await readGisCacheIndex();
+        const cachedAt = index.items?.[key]?.cachedAt;
+        if (!force && Number.isFinite(refreshDays) && Number.isFinite(cachedAt)) {
+          const ageMs = Date.now() - cachedAt;
+          if (ageMs < refreshDays * 86400000) {
+            return send(res, 200, JSON.stringify({ ok: true, refreshed: false, reason: "not_due" }, null, 2), { "Content-Type": "application/json" });
+          }
+        }
+
+        let result = null;
+        if (entry.offline?.downloadMode === "serviceQuery") {
+          result = await downloadGisArcgisSnapshot(key, entry);
+        } else {
+          result = await downloadGisFileEntry(key, entry);
+        }
+
+        if (!result?.ok) {
+          return send(res, 502, JSON.stringify({ ok: false, error: result?.error || "refresh_failed" }, null, 2), { "Content-Type": "application/json" });
+        }
+
+        return send(res, 200, JSON.stringify({ ok: true, refreshed: true }, null, 2), { "Content-Type": "application/json" });
+      } catch (err) {
+        return send(res, 400, JSON.stringify({ ok: false, error: "invalid_payload", message: err.message }, null, 2), { "Content-Type": "application/json" });
+      }
+    }
+
+    if (urlObj.pathname === "/api/spotsy/streets/refresh" && req.method === "GET") {
+      if (!pdfParse) {
+        return send(res, 500, JSON.stringify({ ok: false, error: "pdf_parse_unavailable" }), { "Content-Type": "application/json" });
+      }
+
+      try {
+        const upstream = await runUpstreamFetch("Spotsy Street List PDF", SPOTSY_STREETLIST_SOURCE_URL, {
+          expectedType: "pdf",
+          includeBodyBuffer: true,
+          timeoutMs: 20000,
+          maxBytes: MAX_LAYER_BYTES,
+          accept: "application/pdf",
+          route: "/api/spotsy/streets/refresh"
+        });
+
+        if (!upstream.ok || !upstream.bodyBuffer) {
+          return send(res, 502, JSON.stringify({
+            ok: false,
+            error: upstream.error || "upstream_failed",
+            status: upstream.status || 0
+          }, null, 2), { "Content-Type": "application/json" });
+        }
+
+        const parsed = await pdfParse(upstream.bodyBuffer);
+        const streets = parseSpotsyStreetListText(parsed.text);
+        const fetchedAt = new Date().toISOString();
+        const payload = {
+          ok: true,
+          count: streets.length,
+          streets,
+          sourceUrl: SPOTSY_STREETLIST_SOURCE_URL,
+          fetchedAt,
+          savedAs: path.basename(SPOTSY_STREETLIST_FILE)
+        };
+        await writeJsonFile(SPOTSY_STREETLIST_FILE, payload);
+
+        return send(res, 200, JSON.stringify({
+          ok: true,
+          count: streets.length,
+          savedAs: payload.savedAs,
+          fetchedAt
+        }, null, 2), { "Content-Type": "application/json" });
+      } catch (err) {
+        return send(res, 500, JSON.stringify({
+          ok: false,
+          error: "streetlist_refresh_failed",
+          message: err.message
+        }, null, 2), { "Content-Type": "application/json" });
+      }
+    }
+
+    if (urlObj.pathname === "/api/spotsy/streets" && req.method === "GET") {
+      const payload = await readJsonFile(SPOTSY_STREETLIST_FILE);
+      if (!payload) {
+        return send(res, 404, JSON.stringify({ ok: false, error: "not_found" }, null, 2), { "Content-Type": "application/json" });
+      }
+      return send(res, 200, JSON.stringify(payload, null, 2), { "Content-Type": "application/json" });
+    }
+
 
     if (urlObj.pathname === "/api/geo/gazetteer" && req.method === "GET") {
       const payload = await readOrInitGeoDataset(GAZETTEER_FILE, "gazetteer");
@@ -3304,6 +4967,25 @@ const server = http.createServer(async (req, res) => {
       return send(res, payload.ok ? 200 : 200, JSON.stringify(payload, null, 2), { "Content-Type": "application/json" });
     }
 
+    // --- VA511 Events (server-side cached) ---
+    if (urlObj.pathname === "/api/va511/events" && req.method === "GET") {
+      const payload = await fetchVa511Events();
+      return send(res, payload.ok ? 200 : 502, JSON.stringify(payload, null, 2), { "Content-Type": "application/json" });
+    }
+
+    // --- VA511 Cameras (server-side cached) ---
+    if (urlObj.pathname === "/api/va511/cams" && req.method === "GET") {
+      const payload = await fetchVa511Cams();
+      return send(res, payload.ok ? 200 : 502, JSON.stringify(payload, null, 2), { "Content-Type": "application/json" });
+    }
+
+    // --- VA511 Status Summary (computed from events, for UI indicator) ---
+    if (urlObj.pathname === "/api/va511/status" && req.method === "GET") {
+      const eventsPayload = await fetchVa511Events();
+      const status = computeVa511Status(eventsPayload);
+      return send(res, status.ok ? 200 : 502, JSON.stringify(status, null, 2), { "Content-Type": "application/json" });
+    }
+
     if (urlObj.pathname === "/api/cdc/wonder" && req.method === "GET") {
       const token = String(process.env.CDC_APP_TOKEN || "").trim();
       if (!token) {
@@ -3322,23 +5004,27 @@ const server = http.createServer(async (req, res) => {
       }
 
       try {
-        const upstream = await fetch(CDC_SOURCE_URL, {
+        const upstream = await upstreamFetch(CDC_SOURCE_URL, {
+          expectedType: "json",
+          timeoutMs: 15000,
           headers: {
             "Accept": "application/json",
             "X-App-Token": token,
             "User-Agent": "FXBG-PALANTIR-CityManager/1.0"
-          }
+          },
+          upstreamName: "cdc-wonder",
+          route: "/api/cdc/wonder"
         });
 
-        if (!upstream.ok) {
+        if (!upstream.ok || !upstream.json) {
           if (upstream.status === 403 || upstream.status === 429) {
             cdcState.backoffUntil = Date.now() + CDC_BACKOFF_MS;
             cdcState.lastReason = `HTTP ${upstream.status}`;
           }
-          throw new Error(`HTTP ${upstream.status}`);
+          throw new Error(upstream.error || `HTTP ${upstream.status}`);
         }
 
-        const data = await upstream.json();
+        const data = upstream.json;
         cdcState.cache = data;
         cdcState.backoffUntil = 0;
         cdcState.lastReason = null;
@@ -3380,11 +5066,12 @@ const server = http.createServer(async (req, res) => {
         return send(res, 405, JSON.stringify({ ok: false, error: "method_not_allowed" }), { "Content-Type": "application/json" });
       }
 
-      const q = String(urlObj.searchParams.get("q") || "").trim();
+      const rawQ = String(urlObj.searchParams.get("q") || "").trim();
       const j = String(urlObj.searchParams.get("j") || "").trim();
+      const q = ensureVirginiaQuery(rawQ, j);
       const normalizedQ = normalizeKeyPart(q);
 
-      if (q.length < 3 || q.length > 140 || normalizedQ.length < 3) {
+      if (q.length < 3 || q.length > 160 || normalizedQ.length < 3) {
         return send(res, 400, JSON.stringify({ ok: false, error: "invalid_query" }), { "Content-Type": "application/json" });
       }
 
@@ -3728,6 +5415,25 @@ const server = http.createServer(async (req, res) => {
     }
 
     // Diagnostics endpoint - test upstream service connectivity
+    if (urlObj.pathname === "/api/diagnostics/allowlist" && req.method === "GET") {
+      const allowlistedHosts = Array.from(NORMALIZED_ALLOWED_HOSTS).sort();
+      const blockedHostsSample = Array.from(new Set([
+        ...BLOCKED_HOSTNAMES.map(normalizeHost),
+        "10.0.0.1",
+        "172.16.0.1",
+        "192.168.0.1",
+        "169.254.1.1",
+        "::1"
+      ])).filter(Boolean);
+      const response = {
+        ok: true,
+        allowlistedHosts,
+        blockedHostsSample,
+        notes: "If a feed fails due to blocked host, add to DEV_NOTES allowlist"
+      };
+      return send(res, 200, JSON.stringify(response, null, 2), { "Content-Type": "application/json" });
+    }
+
     if (urlObj.pathname === "/api/diag/upstreams") {
       const cachePolicy = UPSTREAM_CACHE_TTLS.diagnostics;
       const cacheKey = "diag-upstreams";

@@ -20,7 +20,7 @@
   // -----------------------------
   function computeIsMobileUI() {
     // Prefer capability-based detection: small screen + coarse pointer (phones/tablets)
-    const mqlCoarse = window.matchMedia && window.matchMedia("(max-width: 899px) and (pointer: coarse)").matches;
+    const mqlCoarse = window.matchMedia && window.matchMedia("(max-width: 1024px) and (pointer: coarse)").matches;
     if (mqlCoarse) return true;
 
     // UA fallback for iPhone/Android/iPad (some iPads report differently depending on settings)
@@ -28,29 +28,89 @@
     const uaMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini|Mobi/i.test(ua);
 
     // If it's a narrow window but pointer is fine (desktop), treat as desktop
-    return uaMobile && window.matchMedia && window.matchMedia("(max-width: 899px)").matches;
+    return uaMobile && window.matchMedia && window.matchMedia("(max-width: 1024px)").matches;
   }
 
   let IS_MOBILE_UI = computeIsMobileUI();
+
+  // -----------------------------
+  // Storage Keys for localStorage persistence
+  // -----------------------------
+  const STORAGE_KEYS = {
+    PORTRAIT_DISMISSED: 'fxbg-palantir-portrait-dismissed',
+    CRIME_UI: 'fxbg-crime-ui',
+    REPORTS: 'fxbg-reports',
+    UI_MODE_DESKTOP: 'fxbg.uiMode.desktop',
+    UI_MODE_MOBILE: 'fxbg.uiMode.mobile',
+    MOBILE_HUD_COMPACT: 'fxbg.mobileHudCompact',
+    ACTIVE_MISSION: 'fxbg.activeMission',
+    HUB_DEVICE_ID: 'fxbg.hubDeviceId',
+    TRACK_HAPTICS: 'fxbg.trackHaptics',
+    THEME_CURRENT: 'fxbg_theme_current',
+    THEME_RECENT: 'fxbg_theme_recent',
+    OFFLINE_PACK_INSTALLED: 'fxbg.offlinePackInstalled',
+    LOCATION_PROMPT_SEEN: 'fxbg.locationPromptSeen'
+  };
 
   const UI_MODES = {
     FIELD: 'field',
     DISPATCH: 'dispatch'
   };
 
+  function getUiModeStorageKey(isMobile = computeIsMobileUI()) {
+    return isMobile ? STORAGE_KEYS.UI_MODE_MOBILE : STORAGE_KEYS.UI_MODE_DESKTOP;
+  }
+
   function getDefaultUiMode() {
     return computeIsMobileUI() ? UI_MODES.FIELD : UI_MODES.DISPATCH;
   }
 
+  function hasStoredUiMode(isMobile = computeIsMobileUI()) {
+    try {
+      const stored = localStorage.getItem(getUiModeStorageKey(isMobile));
+      return stored === UI_MODES.FIELD || stored === UI_MODES.DISPATCH;
+    } catch {
+      return false;
+    }
+  }
+
   function readStoredUiMode() {
     try {
-      const stored = localStorage.getItem(STORAGE_KEYS.UI_MODE);
+      const stored = localStorage.getItem(getUiModeStorageKey());
       if (stored === UI_MODES.FIELD || stored === UI_MODES.DISPATCH) return stored;
     } catch {}
     return getDefaultUiMode();
   }
 
+  function hasStoredMobileHudCompact() {
+    try {
+      const stored = localStorage.getItem(STORAGE_KEYS.MOBILE_HUD_COMPACT);
+      return stored === 'true' || stored === 'false';
+    } catch {
+      return false;
+    }
+  }
+
+  function readStoredMobileHudCompact() {
+    try {
+      const stored = localStorage.getItem(STORAGE_KEYS.MOBILE_HUD_COMPACT);
+      if (stored === 'true') return true;
+      if (stored === 'false') return false;
+    } catch {}
+    return IS_MOBILE_UI;
+  }
+
   let currentUiMode = getDefaultUiMode();
+  if (IS_MOBILE_UI && !hasStoredUiMode(true)) {
+    currentUiMode = UI_MODES.FIELD;
+    try { localStorage.setItem(STORAGE_KEYS.UI_MODE_MOBILE, currentUiMode); } catch {}
+  }
+
+  let initialMobileHudCompact = readStoredMobileHudCompact();
+  if (IS_MOBILE_UI && !hasStoredMobileHudCompact()) {
+    initialMobileHudCompact = true;
+    try { localStorage.setItem(STORAGE_KEYS.MOBILE_HUD_COMPACT, 'true'); } catch {}
+  }
 
   const missionState = {
     active: null,
@@ -80,6 +140,21 @@
     quickSmokeReport: []
   };
 
+  const SYSTEM_SUBTABS = {
+    STATUS: "status",
+    OFFLINE: "offline"
+  };
+
+  let systemSubtab = SYSTEM_SUBTABS.STATUS;
+
+  const offlinePackState = {
+    status: null,
+    progress: null,
+    error: null,
+    pollTimer: null,
+    activePrefetchPack: null
+  };
+
   function bind(id, event, handler) {
     const el = document.getElementById(id);
     if (!el) {
@@ -95,20 +170,93 @@
     navigator.vibrate(p);
   }
 
-  // -----------------------------
-  // Storage Keys for localStorage persistence
-  // -----------------------------
-  const STORAGE_KEYS = {
-    PORTRAIT_DISMISSED: 'fxbg-palantir-portrait-dismissed',
-    CRIME_UI: 'fxbg-crime-ui',
-    REPORTS: 'fxbg-reports',
-    UI_MODE: 'fxbg.uiMode',
-    ACTIVE_MISSION: 'fxbg.activeMission',
-    HUB_DEVICE_ID: 'fxbg.hubDeviceId',
-    TRACK_HAPTICS: 'fxbg.trackHaptics',
-    THEME_CURRENT: 'fxbg_theme_current',
-    THEME_RECENT: 'fxbg_theme_recent'
-  };
+  const OFFLINE_PACK_UPDATED_KEY = 'fxbg.offlinePackUpdated';
+  const LOAD_SHEDDING_STORAGE_KEY = "fxbg.loadShedding";
+  const AOI_MODE_STORAGE_KEY = "fxbg.aoiMode";
+  const MOBILE_PERF_STORAGE_KEY = "fxbg.mobilePerf";
+  const ACTIVE_CATEGORIES_STORAGE_KEY = "fxbg.activeCategories";
+  const MOBILE_MARKER_CAP = 200;
+  const MAP_REDRAW_DEBOUNCE_MS = 320;
+  const LOAD_SHEDDING_CORE_POLL_MS = 90 * 1000;
+  const GIS_LAYERS = new Map(); // key -> { leafletLayer, enabled, meta, loaded }
+  const GIS_PANEL_GROUPS = [
+    { key: "basemapEnhancers", label: "Basemap Enhancers" },
+    { key: "toggleLayers", label: "Fredericksburg toggle layers" },
+    { key: "cityLayers", label: "City layers" },
+    { key: "fredBusMode", label: "Fred Bus Mode" },
+    { key: "environmentalTopo", label: "Environmental / Topo" },
+    { key: "spotsy", label: "Spotsylvania" }
+  ];
+  let gisCatalogCache = null;
+  let gisCatalogPromise = null;
+  let gisCatalogStatus = "idle";
+  let gisCatalogError = null;
+  let gisTitleHydrationPromise = null;
+
+  function readLoadSheddingPref() {
+    try {
+      return localStorage.getItem(LOAD_SHEDDING_STORAGE_KEY) === "1";
+    } catch {
+      return false;
+    }
+  }
+
+  function readMobilePerfPref() {
+    try {
+      const stored = localStorage.getItem(MOBILE_PERF_STORAGE_KEY);
+      if (stored === "1") return true;
+      if (stored === "0") return false;
+    } catch {}
+    return IS_MOBILE_UI;
+  }
+
+  function readAoiModePref() {
+    const fallback = IS_MOBILE_UI ? "mobile-smart" : "off";
+    try {
+      const stored = localStorage.getItem(AOI_MODE_STORAGE_KEY);
+      if (!stored) return fallback;
+      if (stored === "off" || stored === "primary-only" || stored === "mobile-smart") {
+        return stored;
+      }
+    } catch {}
+    return fallback;
+  }
+
+  function readOfflinePackInstalled() {
+    try {
+      const stored = localStorage.getItem(STORAGE_KEYS.OFFLINE_PACK_INSTALLED);
+      if (stored === "core" || stored === "field") return stored;
+    } catch {}
+    return "none";
+  }
+
+  function writeOfflinePackInstalled(value) {
+    try {
+      localStorage.setItem(STORAGE_KEYS.OFFLINE_PACK_INSTALLED, value);
+    } catch {}
+  }
+
+  function readOfflinePackUpdated() {
+    try {
+      const stored = localStorage.getItem(OFFLINE_PACK_UPDATED_KEY);
+      const parsed = JSON.parse(stored || "{}");
+      return {
+        core: Number.isFinite(parsed.core) ? parsed.core : null,
+        field: Number.isFinite(parsed.field) ? parsed.field : null
+      };
+    } catch {
+      return { core: null, field: null };
+    }
+  }
+
+  function writeOfflinePackUpdated(pack, ts) {
+    if (!pack) return;
+    const current = readOfflinePackUpdated();
+    current[pack] = ts;
+    try {
+      localStorage.setItem(OFFLINE_PACK_UPDATED_KEY, JSON.stringify(current));
+    } catch {}
+  }
 
   currentUiMode = readStoredUiMode();
 
@@ -244,6 +392,12 @@
     // Region filter bbox (expanded to include all data source areas: FXBG, Stafford, Spotsy, Caroline, Warrenton, etc.)
     bbox: { minLat: 37.9, maxLat: 38.9, minLon: -78.0, maxLon: -77.0 },
 
+    // Primary AOI (FXBG + Stafford + Spotsylvania) — used to keep mobile clean
+    primaryAoiBbox: { minLat: 38.10, maxLat: 38.55, minLon: -77.75, maxLon: -77.20 },
+
+    // GPS AOI radius (miles). When user is outside primary AOI, we load markers near them only.
+    gpsAoiMilesRadius: 15,
+
     // POI-specific bbox (bounds for schools, hospitals, clinics in FXBG metro area)
     // Expanded to include full K-12 schools dataset: lat 38.1285–38.5312, lon -77.6215–-77.3425
     poiBbox: { minLat: 38.12, maxLat: 38.54, minLon: -77.63, maxLon: -77.34 },
@@ -279,7 +433,7 @@
     },
 
     location: {
-      enabledByDefault: false,
+      enabledByDefault: IS_MOBILE_UI,
       watchOptions: {
         enableHighAccuracy: true,
         timeout: 8000,
@@ -2586,6 +2740,28 @@
     return lat >= bbox.minLat && lat <= bbox.maxLat && lon >= bbox.minLon && lon <= bbox.maxLon;
   }
 
+  function milesToLatDelta(miles) {
+    return miles / 69.0;
+  }
+
+  function milesToLonDelta(miles, atLat) {
+    const latRad = (atLat || 38.3) * Math.PI / 180;
+    const milesPerDeg = 69.172 * Math.cos(latRad);
+    return milesPerDeg > 0.0001 ? (miles / milesPerDeg) : (miles / 54.0);
+  }
+
+  function makeGpsBbox(lat, lon, milesRadius) {
+    const dLat = milesToLatDelta(milesRadius);
+    const dLon = milesToLonDelta(milesRadius, lat);
+    return { minLat: lat - dLat, maxLat: lat + dLat, minLon: lon - dLon, maxLon: lon + dLon };
+  }
+
+  function updateGpsAoiFromFix(lat, lon) {
+    if (!IS_MOBILE_UI) return;
+    store.aoi.gpsBbox = makeGpsBbox(lat, lon, CONFIG.gpsAoiMilesRadius);
+    store.aoi.lastGpsFixTs = Date.now();
+  }
+
   /**
    * Standardize coordinate keys on an item object.
    * Ensures every item has: lat (number), lon (number), lng (number) where lng === lon
@@ -2612,6 +2788,63 @@
       return CONFIG.poiBbox;
     }
     return CONFIG.bbox;
+  }
+
+  function assignRegionTag(item) {
+    if (!item) return "other";
+    const lat = Number(item.lat);
+    const lon = Number(item.lon ?? item.lng);
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+      item.regionTag = "other";
+      return item.regionTag;
+    }
+
+    const countyBboxes = CONFIG.countyBboxes || {};
+    if (countyBboxes.fxbg && inBbox(lat, lon, countyBboxes.fxbg)) {
+      item.regionTag = "fxbg";
+      return item.regionTag;
+    }
+    if (countyBboxes.stafford && inBbox(lat, lon, countyBboxes.stafford)) {
+      item.regionTag = "stafford";
+      return item.regionTag;
+    }
+    if (countyBboxes.spotsy && inBbox(lat, lon, countyBboxes.spotsy)) {
+      item.regionTag = "spotsy";
+      return item.regionTag;
+    }
+
+    if (inBbox(lat, lon, CONFIG.primaryAoiBbox)) {
+      item.regionTag = "fxbg";
+      return item.regionTag;
+    }
+
+    item.regionTag = "other";
+    return item.regionTag;
+  }
+
+  function isAllowedByMobileAOI(item) {
+    if (!IS_MOBILE_UI) return true;
+
+    // If user explicitly disables AOI gating
+    if (store?.aoi?.mode === "off") return true;
+
+    const lat = item.lat;
+    const lon = item.lon ?? item.lng;
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) return false;
+
+    const regionTag = item.regionTag || assignRegionTag(item);
+
+    // Always allow primary AOI regions
+    if (regionTag === "fxbg" || regionTag === "stafford" || regionTag === "spotsy") return true;
+
+    // If mode is primary-only, block everything else
+    if (store?.aoi?.mode === "primary-only") return false;
+
+    // mobile-smart: allow outside only if near the user (GPS AOI)
+    const gps = store?.aoi?.gpsBbox;
+    if (gps && inBbox(lat, lon, gps)) return true;
+
+    return false;
   }
 
   function pickEmojiCategory(text, fallbackEmoji, fallbackCategory, fallbackTone) {
@@ -3445,6 +3678,9 @@
     events: { lat: -0.004, lon: -0.002 }
   };
 
+  const FAR_AWAY_DISTANCE_MILES = 150;
+  const FAR_AWAY_DISTANCE_METERS = FAR_AWAY_DISTANCE_MILES * 1609.34;
+
   const KNOWN_LOCATION_OVERRIDES = (() => {
     const cams = CONFIG.externalCameras?.cameras || [];
     return cams
@@ -3585,29 +3821,31 @@
     return LOCATION_CONFIDENCE[type] ?? 50;
   }
 
-  function applyDeterministicJitter(base, seed) {
-    const seedText = seed || "rss-fallback";
+  function applyTinyJitter(base, seed, maxMeters = 10) {
+    if (!base || !Number.isFinite(base.lat) || !Number.isFinite(base.lon)) return base;
+    const seedText = seed || "fallback-jitter";
     const hash = parseInt(fnv1a(seedText), 16);
     const angleHash = parseInt(fnv1a(`${seedText}-angle`), 16);
-    const distanceMeters = 50 + (hash % 151); // 50–200m
+    const distanceMeters = hash % Math.max(1, Math.round(maxMeters));
     const angleRad = ((angleHash % 360) * Math.PI) / 180;
     const metersLat = distanceMeters * Math.cos(angleRad);
     const metersLon = distanceMeters * Math.sin(angleRad);
-    const lat = base.lat + (metersLat / 111320);
-    const lon = base.lon + (metersLon / (111320 * Math.cos((base.lat * Math.PI) / 180)));
-    return { lat, lon };
+    return {
+      lat: base.lat + (metersLat / 111320),
+      lon: base.lon + (metersLon / (111320 * Math.cos((base.lat * Math.PI) / 180)))
+    };
   }
 
   /**
    * Get fallback location based on jurisdiction centroid + category offset + deterministic jitter.
    * Returns { lat, lon } with best-guess location for ungeocodeable items.
    */
-  function getFallbackLocationForItem({ source, category, seed }) {
-    const jurisdiction = source.jurisdiction || "Regional";
-    const base = JURISDICTION_CENTROIDS[jurisdiction] || source.defaultLoc || CONFIG.center;
-    const offset = CATEGORY_CENTROID_OFFSETS[category] || { lat: 0, lon: 0 };
-    const centroid = { lat: base.lat + offset.lat, lon: base.lon + offset.lon };
-    return applyDeterministicJitter(centroid, seed);
+  function getFallbackLocationForItem({ source, seed, allowJitter = false } = {}) {
+    const jurisdiction = source?.jurisdiction || "Regional";
+    const base = JURISDICTION_CENTROIDS[jurisdiction] || source?.defaultLoc || CONFIG.center;
+    const centroid = { lat: base.lat, lon: base.lon };
+    if (!allowJitter) return centroid;
+    return applyTinyJitter(centroid, seed, 10);
   }
 
   /**
@@ -3628,7 +3866,9 @@
     }
 
     try {
-      const response = await fetch(`/api/geocode?q=${encodeURIComponent(locationString)}&j=${encodeURIComponent(jurisdiction || "")}`);
+      const response = await fetchJsonWithTimeout(`/api/geocode?q=${encodeURIComponent(locationString)}&j=${encodeURIComponent(jurisdiction || "")}`, {
+        timeoutMs: 12000
+      });
       if (!response.ok) {
         if (CONFIG.debug.rssGeo) {
           console.warn(`[Geocode] Server responded with ${response.status} for "${locationString}"`);
@@ -3636,7 +3876,7 @@
         return null;
       }
 
-      const payload = await response.json();
+      const payload = response.data;
       if (!payload.ok) {
         if (CONFIG.debug.rssGeo) {
           console.warn(`[Geocode] Server error for "${locationString}": ${payload.error}`);
@@ -3700,6 +3940,36 @@
                  .replace(/\s+/g, ' ')
                  .replace(/^[,.\s]+|[,.\s]+$/g, '')
                  .trim();
+  }
+
+  function normalizeStreetMatchKey(value) {
+    return String(value || '')
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  function isSpotsyJurisdiction(jurisdictionHint) {
+    return String(jurisdictionHint || '').toLowerCase().includes('spotsylvania');
+  }
+
+  function getSpotsyStreetMatch(phrase) {
+    if (!store?.spotsyStreetIndex?.length || !phrase) return null;
+    const normalizedPhrase = normalizeStreetMatchKey(phrase);
+    if (!normalizedPhrase) return null;
+    for (const street of store.spotsyStreetIndex) {
+      if (street && normalizedPhrase.includes(street)) {
+        return street;
+      }
+    }
+    return null;
+  }
+
+  const SPOTSY_STRICT_STREET_TYPE = /\b(road|street|st\.?|ave|avenue|blvd|boulevard|ln|lane|dr|drive|ct|court)\b/i;
+
+  function hasSpotsyStreetType(phrase) {
+    return SPOTSY_STRICT_STREET_TYPE.test(String(phrase || ''));
   }
 
   /**
@@ -3828,51 +4098,253 @@
     return null;
   }
 
-  async function resolveLatLngForPlace(item, category, opts = {}) {
-    const allowFallbackCenter = opts.allowFallbackCenter !== false;
-    const fallbackCenter = { lat: CONFIG.center.lat, lng: CONFIG.center.lon };
+  function buildStructuredAddress(item) {
+    if (!item) return null;
+    const parts = [item.address, item.city, item.state, item.zip]
+      .map(v => String(v || '').trim())
+      .filter(Boolean);
+    if (!parts.length) return null;
+    return parts.join(', ');
+  }
+
+  function isReasonableLatLon(lat, lon, opts = {}) {
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) return false;
+    if (Math.abs(lat) < 0.0001 && Math.abs(lon) < 0.0001) return false;
+    if (Math.abs(lat) > 90 || Math.abs(lon) > 180) return false;
+    const bbox = opts.bbox || null;
+    if (bbox && inBbox(lat, lon, bbox)) return true;
+    const distance = haversineDistance(CONFIG.center.lat, CONFIG.center.lon, lat, lon);
+    return distance <= FAR_AWAY_DISTANCE_METERS;
+  }
+
+  function logCoordinateFallback(contextLabel, notes = []) {
+    if (!(CONFIG.debug.poiCoords || CONFIG.debug.rssGeo || CONFIG.debug.geocoding)) return;
+    const detail = notes.length ? ` (${notes.join("; ")})` : "";
+    console.warn(`[Coords] Fallback for ${contextLabel}${detail}`);
+  }
+
+  async function resolveRssCandidateLocation(item, source) {
+    const textToSearch = `${item.title || ''} ${item.summary || item.message || ''}`;
+    const jurisdictionHint = source?.jurisdiction || 'Regional';
+    const candidates = collectLocationCandidates(textToSearch, jurisdictionHint);
+
+    if (CONFIG.debug.rssGeo) {
+      console.log(`[Location] "${item.title?.slice(0, 50)}..." - Found ${candidates.length} candidates`);
+    }
+
+    const gazetteerCandidates = candidates.filter(c => c.type === 'gazetteer' && c.gazetteerLat && c.gazetteerLon);
+    if (gazetteerCandidates.length > 0) {
+      const best = gazetteerCandidates[0];
+      return {
+        lat: best.gazetteerLat,
+        lon: best.gazetteerLon,
+        locationText: best.phrase,
+        locationMethod: 'gazetteer',
+        locationConfidence: LOCATION_CONFIDENCE.gazetteer,
+        chosenCandidate: { phrase: best.phrase, type: best.type },
+        _geocode: { confidence: LOCATION_CONFIDENCE.gazetteer, method: 'gazetteer', label: best.phrase }
+      };
+    }
+
+    const knownLocation = findKnownLocationFromText(textToSearch);
+    if (knownLocation) {
+      return {
+        lat: knownLocation.lat,
+        lon: knownLocation.lon,
+        locationText: knownLocation.label || 'known location',
+        locationMethod: 'override',
+        locationConfidence: LOCATION_CONFIDENCE.override,
+        _geocode: { confidence: LOCATION_CONFIDENCE.override, method: 'override', label: knownLocation.label || 'known location' }
+      };
+    }
+
+    const isSpotsy = isSpotsyJurisdiction(jurisdictionHint);
+    const best = pickBestCandidate(candidates, jurisdictionHint);
+    if (!best) return null;
+
+    const enrichedPhrase = enrichCandidatePhrase(best.phrase, jurisdictionHint);
+    const baseConfidence = getLocationConfidenceForCandidate(best.type);
+
+    if (CONFIG.debug.rssGeo) {
+      console.log(`[Location] Best candidate: [${best.type}] "${best.phrase}" (score: ${best.score})`);
+      console.log(`[Location] Enriched for geocoding: "${enrichedPhrase}"`);
+    }
+
+    const precise = await resolveWithPrecisionGeocoder({
+      text: enrichedPhrase,
+      cityHint: jurisdictionHint,
+      defaultCenter: { lat: source?.defaultLoc?.lat || CONFIG.center.lat, lng: source?.defaultLoc?.lon || CONFIG.center.lon }
+    });
+    if (precise && precise.locationMethod !== 'fallback_center') {
+      return {
+        lat: precise.lat,
+        lon: precise.lon,
+        locationText: best.rawPhrase,
+        locationMethod: precise.locationMethod,
+        locationConfidence: precise.locationConfidence,
+        chosenCandidate: { phrase: best.rawPhrase, type: best.type },
+        _geocode: precise.geocodeMeta
+      };
+    }
+
+    if (isSpotsy && hasSpotsyStreetType(best.phrase)) {
+      const strictQuery = `${best.phrase.replace(/[,.\s]+$/, '')}, Spotsylvania County, VA`;
+      if (CONFIG.debug.rssGeo) {
+        console.log(`[Location] Spotsy strict geocode: "${strictQuery}"`);
+      }
+      const strictGeocoded = await geocodeLocation(strictQuery, jurisdictionHint);
+      if (strictGeocoded) {
+        return {
+          lat: strictGeocoded.lat,
+          lon: strictGeocoded.lon,
+          locationText: best.rawPhrase,
+          locationMethod: 'extract+geocode_strict',
+          locationConfidence: baseConfidence,
+          chosenCandidate: { phrase: best.rawPhrase, type: best.type },
+          _geocode: { confidence: baseConfidence, method: 'extract+geocode_strict', label: best.rawPhrase },
+          flag: null
+        };
+      }
+    }
+
+    const geocoded = await geocodeLocation(enrichedPhrase, jurisdictionHint);
+    if (!geocoded) return null;
+
+    const result = {
+      lat: geocoded.lat,
+      lon: geocoded.lon,
+      locationText: best.rawPhrase,
+      locationMethod: 'extract+geocode',
+      locationConfidence: baseConfidence,
+      chosenCandidate: { phrase: best.rawPhrase, type: best.type },
+      _geocode: { confidence: baseConfidence, method: 'extract+geocode', label: best.rawPhrase },
+      flag: null
+    };
+    if (geocoded.aoi === "outside" && LOCAL_JURISDICTIONS.has(String(jurisdictionHint || "").toLowerCase()) && baseConfidence >= 80) {
+      result.locationConfidence = Math.max(0, baseConfidence - 20);
+      result.flag = "outside_aoi";
+      result._geocode = { confidence: result.locationConfidence, method: result.locationMethod, label: best.rawPhrase };
+    }
+    return result;
+  }
+
+  // Coordinate priority order:
+  // 1) Explicit lat/lon (finite, non-zero, reasonable bounds)
+  // 2) Structured address geocode (server /api/geocode)
+  // 3) RSS candidate extraction + geocode (if applicable)
+  // 4) Dataset overrides (places/schools/etc.)
+  // 5) Fallback centroid (no offsets/jitter unless explicitly allowed)
+  async function resolveBestLatLon(item, sourceContext = {}) {
+    const notes = [];
+    const source = sourceContext.source || {};
+    const category = sourceContext.category || item?.category || source?.category || null;
+    const jurisdiction = sourceContext.jurisdiction || item?.jurisdiction || source?.jurisdiction || 'Regional';
+    const defaultLoc = sourceContext.defaultLoc || source?.defaultLoc || CONFIG.center;
+    const bbox = sourceContext.bbox || getBboxForItem(item);
+    const allowFallbackCenter = sourceContext.allowFallbackCenter !== false;
+
+    const directCoords = getAnyLatLng(item || {});
+    if (directCoords && isReasonableLatLon(directCoords[0], directCoords[1], { bbox })) {
+      if (category === 'school' && (item?.ncesId || item?.nces || item?.nces_id)) {
+        return { lat: directCoords[0], lon: directCoords[1], method: 'nces_dataset', confidence: 95, notes };
+      }
+      return { lat: directCoords[0], lon: directCoords[1], method: 'explicit', confidence: 95, notes };
+    }
+    if (directCoords) {
+      notes.push('explicit_coords_out_of_bounds');
+    }
+
+    const addressText = buildStructuredAddress(item);
+    if (addressText) {
+      const geocoded = await geocodeLocation(addressText, jurisdiction);
+      if (geocoded && isReasonableLatLon(geocoded.lat, geocoded.lon, { bbox })) {
+        return { lat: geocoded.lat, lon: geocoded.lon, method: 'address_geocoded', confidence: 90, notes, locationText: addressText, _geocode: { confidence: 90, method: 'address_geocoded', label: addressText } };
+      }
+      notes.push('address_geocode_failed');
+    }
+
+    if (sourceContext.isRss) {
+      const rssResolved = await resolveRssCandidateLocation(item, source);
+      if (rssResolved && Number.isFinite(rssResolved.lat) && Number.isFinite(rssResolved.lon)) {
+        return {
+          lat: rssResolved.lat,
+          lon: rssResolved.lon,
+          method: rssResolved.locationMethod,
+          confidence: rssResolved.locationConfidence,
+          notes,
+          locationText: rssResolved.locationText,
+          chosenCandidate: rssResolved.chosenCandidate,
+          flag: rssResolved.flag,
+          _geocode: rssResolved._geocode
+        };
+      }
+      notes.push('rss_candidate_failed');
+    }
+
     const placeOverride = resolvePlaceOverride(item || {});
     if (placeOverride && Number.isFinite(placeOverride.lat) && Number.isFinite(placeOverride.lon)) {
-      return { lat: placeOverride.lat, lon: placeOverride.lon, method: placeOverride.method || 'precision_pack', confidence: placeOverride.confidence ?? 98, approximate: Boolean(placeOverride.approximate) };
+      return { lat: placeOverride.lat, lon: placeOverride.lon, method: placeOverride.method || 'places_dataset', confidence: placeOverride.confidence ?? 98, notes };
+    }
+    if (placeOverride?.address) {
+      const overrideAddr = buildStructuredAddress(placeOverride);
+      if (overrideAddr) {
+        const overrideGeo = await geocodeLocation(overrideAddr, jurisdiction);
+        if (overrideGeo) {
+          return { lat: overrideGeo.lat, lon: overrideGeo.lon, method: 'places_address', confidence: 88, notes, locationText: overrideAddr, _geocode: { confidence: 88, method: 'places_address', label: overrideAddr } };
+        }
+      }
+      notes.push('places_address_geocode_failed');
     }
 
     if (category === 'school') {
       const schoolCoords = getSchoolLatLng(item || {});
       if (schoolCoords) {
-        return { lat: schoolCoords[0], lon: schoolCoords[1], method: 'nces_dataset', confidence: 95, approximate: false };
+        return { lat: schoolCoords[0], lon: schoolCoords[1], method: 'nces_dataset', confidence: 95, notes };
       }
+      notes.push('school_dataset_missing');
     }
 
-    const directCoords = getAnyLatLng(item || {});
-    if (directCoords && category !== 'school') {
-      return { lat: directCoords[0], lon: directCoords[1], method: 'direct_coords', confidence: 92, approximate: false };
+    if (!allowFallbackCenter) {
+      logCoordinateFallback(item?.title || item?.name || item?.id || 'item', notes);
+      return { lat: null, lon: null, method: 'no_fallback', confidence: 0, notes };
     }
 
-    const addressText = [item?.address, item?.city, item?.state, item?.zip].filter(Boolean).join(', ');
+    if (!notes.length) notes.push('no_coordinate_candidates');
+    const fallbackLoc = getFallbackLocationForItem({ source: { jurisdiction, defaultLoc }, seed: item?.id || item?.title || item?.name || '' });
+    logCoordinateFallback(item?.title || item?.name || item?.id || 'item', notes);
+    return {
+      lat: fallbackLoc.lat,
+      lon: fallbackLoc.lon,
+      method: 'fallback_center',
+      confidence: LOCATION_CONFIDENCE.fallback,
+      notes
+    };
+  }
 
-    if (addressText && window.FXBGGeocode?.resolveLocation) {
-      const resolved = await resolveWithPrecisionGeocoder({ text: addressText, cityHint: 'Fredericksburg, VA', defaultCenter: fallbackCenter });
-      if (resolved && Number.isFinite(resolved.lat) && Number.isFinite(resolved.lon)) {
-        return {
-          lat: resolved.lat,
-          lon: resolved.lon,
-          method: resolved.locationMethod || 'address_precision',
-          confidence: Number.isFinite(resolved.locationConfidence) ? resolved.locationConfidence : 85,
-          approximate: false
-        };
-      }
+  async function resolveLatLngForPlace(item, category, opts = {}) {
+    const allowFallbackCenter = opts.allowFallbackCenter !== false;
+    const poiCategories = new Set(['school', 'dorm', 'college', 'campus', 'poi']);
+    const bbox = poiCategories.has(category) ? CONFIG.poiBbox : CONFIG.bbox;
+    const resolved = await resolveBestLatLon(item, {
+      category,
+      jurisdiction: item?.jurisdiction || 'Regional',
+      defaultLoc: CONFIG.center,
+      bbox,
+      allowFallbackCenter,
+      source: opts.source
+    });
+    if (!Number.isFinite(resolved?.lat) || !Number.isFinite(resolved?.lon)) {
+      return null;
     }
-
-    if (addressText && item?.address) {
-      const addrKey = normalizeAddressKey(item.address, item.city, item.state, item.zip);
-      const cachedGeo = addrKey ? geocodeCache.get(addrKey) : null;
-      if (cachedGeo && Number.isFinite(cachedGeo.lat) && Number.isFinite(cachedGeo.lon)) {
-        return { lat: Number(cachedGeo.lat), lon: Number(cachedGeo.lon), method: 'address_geocache', confidence: 80, approximate: false };
-      }
-    }
-
-    if (!allowFallbackCenter) return null;
-    return { lat: fallbackCenter.lat, lon: fallbackCenter.lng, method: 'fallback_center', confidence: 10, approximate: true };
+    return {
+      lat: resolved.lat,
+      lon: resolved.lon,
+      method: resolved.method,
+      confidence: resolved.confidence,
+      approximate: resolved.method === 'fallback_center',
+      locationText: resolved.locationText,
+      _geocode: resolved._geocode
+    };
   }
 
   function resolvePlaceOverride({ id, name, address, city, state, zip, lat, lon, lng }) {
@@ -3885,19 +4357,59 @@
     if (!hit) return null;
 
     if (Number.isFinite(hit.lat) && Number.isFinite(hit.lng)) {
-      return { lat: Number(hit.lat), lon: Number(hit.lng), confidence: 98, method: 'places_dataset', approximate: false };
+      return {
+        lat: Number(hit.lat),
+        lon: Number(hit.lng),
+        confidence: 98,
+        method: 'places_dataset',
+        approximate: false,
+        address: hit.address,
+        city: hit.city,
+        state: hit.state,
+        zip: hit.zip
+      };
     }
 
     const inputAddressKey = normalizeAddressKey(address, city, state, zip);
     const cachedGeo = inputAddressKey ? geocodeCache.get(inputAddressKey) : null;
     if (cachedGeo && Number.isFinite(cachedGeo.lat) && Number.isFinite(cachedGeo.lon)) {
-      return { lat: Number(cachedGeo.lat), lon: Number(cachedGeo.lon), confidence: 80, method: 'address_geocache', approximate: false };
+      return {
+        lat: Number(cachedGeo.lat),
+        lon: Number(cachedGeo.lon),
+        confidence: 80,
+        method: 'address_geocache',
+        approximate: false,
+        address,
+        city,
+        state,
+        zip
+      };
     }
 
     if (Number.isFinite(lat) && Number.isFinite(lon ?? lng)) {
-      return { lat: Number(lat), lon: Number(lon ?? lng), confidence: 40, method: 'upstream_coords', approximate: true };
+      return {
+        lat: Number(lat),
+        lon: Number(lon ?? lng),
+        confidence: 40,
+        method: 'upstream_coords',
+        approximate: true,
+        address,
+        city,
+        state,
+        zip
+      };
     }
-    return { lat: null, lon: null, confidence: 10, method: 'unknown_address', approximate: true };
+    return {
+      lat: null,
+      lon: null,
+      confidence: 10,
+      method: 'unknown_address',
+      approximate: true,
+      address,
+      city,
+      state,
+      zip
+    };
   }
 
   /**
@@ -4138,6 +4650,7 @@
       let score = candidate.confidenceBase || typeScores[candidate.type] || 50;
 
       const lowerPhrase = candidate.phrase.toLowerCase();
+      const spotsyStreetMatch = isSpotsyJurisdiction(jurisdictionHint) ? getSpotsyStreetMatch(candidate.phrase) : null;
 
       // Bonus: Contains street number
       if (/^\d{1,5}\s/.test(candidate.phrase)) {
@@ -4183,7 +4696,11 @@
         score += 5;
       }
 
-      return { ...candidate, score };
+      if (spotsyStreetMatch) {
+        score += 12;
+      }
+
+      return { ...candidate, score, spotsyStreetMatch };
     });
 
     // Sort by score descending
@@ -4193,7 +4710,8 @@
     if (CONFIG.debug.rssGeo && scored.length > 0) {
       console.log(`[Location] Top ${Math.min(3, scored.length)} candidates:`);
       scored.slice(0, 3).forEach((c, i) => {
-        console.log(`  ${i + 1}. [${c.type}] "${c.phrase}" (score: ${c.score})`);
+        const spotsyNote = c.spotsyStreetMatch ? ` (spotsy street match)` : '';
+        console.log(`  ${i + 1}. [${c.type}] "${c.phrase}" (score: ${c.score})${spotsyNote}`);
       });
     }
 
@@ -4260,150 +4778,26 @@
    * @returns {Promise<Object>} Object with { lat, lon, locationText, locationMethod }
    */
   async function resolveBestLatLonForRssItem(item, source) {
-    const result = {
-      lat: null,
-      lon: null,
-      locationText: null,
-      locationMethod: null,
-      locationConfidence: null,
-      chosenCandidate: null,
-      flag: null
-    };
-
-    // Build search text from title and description
-    const textToSearch = `${item.title || ''} ${item.summary || item.message || ''}`;
-    const jurisdictionHint = source.jurisdiction || 'Regional';
-
-    // Step 1: Collect all location candidates
-    const candidates = collectLocationCandidates(textToSearch, jurisdictionHint);
-
-    if (CONFIG.debug.rssGeo) {
-      console.log(`[Location] "${item.title?.slice(0, 50)}..." - Found ${candidates.length} candidates`);
-    }
-
-    // Step 2: Check for gazetteer matches first (they have exact coordinates)
-    const gazetteerCandidates = candidates.filter(c => c.type === 'gazetteer' && c.gazetteerLat && c.gazetteerLon);
-    if (gazetteerCandidates.length > 0) {
-      const best = gazetteerCandidates[0]; // First gazetteer match wins
-      result.lat = best.gazetteerLat;
-      result.lon = best.gazetteerLon;
-      result.locationText = best.phrase;
-      result.locationMethod = 'gazetteer';
-      result.locationConfidence = LOCATION_CONFIDENCE.gazetteer;
-      result.chosenCandidate = { phrase: best.phrase, type: best.type };
-      result._geocode = { confidence: result.locationConfidence, method: result.locationMethod, label: best.phrase };
-
-      if (CONFIG.debug.rssGeo) {
-        console.log(`[Location] Gazetteer match: "${best.phrase}" -> ${result.lat}, ${result.lon}`);
-      }
-      return result;
-    }
-
-    // Step 3: Try known location overrides (from external cameras config)
-    const knownLocation = findKnownLocationFromText(textToSearch);
-    if (knownLocation) {
-      result.lat = knownLocation.lat;
-      result.lon = knownLocation.lon;
-      result.locationText = knownLocation.label || 'known location';
-      result.locationMethod = 'override';
-      result.locationConfidence = LOCATION_CONFIDENCE.override;
-      result._geocode = { confidence: result.locationConfidence, method: result.locationMethod, label: result.locationText };
-
-      if (CONFIG.debug.rssGeo) {
-        console.log(`[Location] Known location override -> ${result.lat}, ${result.lon}`);
-      }
-      return result;
-    }
-
-    // Step 4: Pick best candidate and geocode
-    const best = pickBestCandidate(candidates, jurisdictionHint);
-
-    if (best) {
-      // Enrich with jurisdiction context
-      const enrichedPhrase = enrichCandidatePhrase(best.phrase, jurisdictionHint);
-      const baseConfidence = getLocationConfidenceForCandidate(best.type);
-      result.chosenCandidate = { phrase: best.rawPhrase, type: best.type };
-
-      if (CONFIG.debug.rssGeo) {
-        console.log(`[Location] Best candidate: [${best.type}] "${best.phrase}" (score: ${best.score})`);
-        console.log(`[Location] Enriched for geocoding: "${enrichedPhrase}"`);
-      }
-
-      // Geocode the enriched phrase (precision resolver first, legacy geocoder fallback)
-      const precise = await resolveWithPrecisionGeocoder({
-        text: enrichedPhrase,
-        cityHint: jurisdictionHint,
-        defaultCenter: { lat: source.defaultLoc?.lat || CONFIG.center.lat, lng: source.defaultLoc?.lon || CONFIG.center.lon }
-      });
-
-      if (precise) {
-        result.lat = precise.lat;
-        result.lon = precise.lon;
-        result.locationText = best.rawPhrase;
-        result.locationMethod = precise.locationMethod;
-        result.locationConfidence = precise.locationConfidence;
-        result._geocode = precise.geocodeMeta;
-        return result;
-      }
-
-      const geocoded = await geocodeLocation(enrichedPhrase, jurisdictionHint);
-
-      if (geocoded) {
-        result.lat = geocoded.lat;
-        result.lon = geocoded.lon;
-        result.locationText = best.rawPhrase;
-        result.locationMethod = 'extract+geocode';
-        result.locationConfidence = baseConfidence;
-        result._geocode = { confidence: result.locationConfidence, method: result.locationMethod, label: best.rawPhrase };
-
-        if (geocoded.aoi === "outside" && LOCAL_JURISDICTIONS.has(String(jurisdictionHint || "").toLowerCase()) && baseConfidence >= 80) {
-          result.locationConfidence = Math.max(0, baseConfidence - 20);
-          result.flag = "outside_aoi";
-        }
-
-        if (CONFIG.debug.rssGeo) {
-          console.log(`[Location] Geocoded "${enrichedPhrase}" -> ${result.lat}, ${result.lon}`);
-        }
-        return result;
-      } else {
-        if (CONFIG.debug.rssGeo) {
-          console.log(`[Location] Geocoding failed for "${enrichedPhrase}"`);
-        }
-      }
-    }
-
-    // Step 5: Fallback - no valid location found
-    if (CONFIG.debug.rssGeo) {
-      const reason = candidates.length === 0 ? 'no candidates found' : 'geocoding failed';
-      console.log(`[Location] Fallback: ${reason} for "${item.title?.slice(0, 50)}..."`);
-    }
-
-    // Fallback using resolver center first, then intelligent category/content default
-    const precisionFallback = await resolveWithPrecisionGeocoder({
-      text: textToSearch,
-      cityHint: jurisdictionHint,
-      defaultCenter: { lat: source.defaultLoc?.lat || CONFIG.center.lat, lng: source.defaultLoc?.lon || CONFIG.center.lon }
+    const resolved = await resolveBestLatLon(item, {
+      isRss: true,
+      source,
+      jurisdiction: source?.jurisdiction || 'Regional',
+      category: source?.category
     });
-    if (precisionFallback) {
-      result.lat = precisionFallback.lat;
-      result.lon = precisionFallback.lon;
-      result.locationText = precisionFallback.locationText;
-      result.locationMethod = precisionFallback.locationMethod;
-      result.locationConfidence = precisionFallback.locationConfidence;
-      result._geocode = precisionFallback.geocodeMeta;
-      return result;
-    }
-
-    const fallbackSeed = `${source.id}|${item.guid || item.url || item.title || ""}|${item.published || ""}`;
-    const fallbackLoc = getFallbackLocationForItem({ source, category: source.category, seed: fallbackSeed });
-    result.lat = fallbackLoc.lat;
-    result.lon = fallbackLoc.lon;
-    result.locationText = null;
-    result.locationMethod = 'fallback';
-    result.locationConfidence = LOCATION_CONFIDENCE.fallback;
-    result._geocode = { confidence: result.locationConfidence, method: 'fallback_center', label: jurisdictionHint || 'Regional center' };
-
-    return result;
+    return {
+      lat: resolved.lat,
+      lon: resolved.lon,
+      locationText: resolved.locationText || null,
+      locationMethod: resolved.method || null,
+      locationConfidence: resolved.confidence || null,
+      chosenCandidate: resolved.chosenCandidate || null,
+      flag: resolved.flag || null,
+      _geocode: resolved._geocode || (Number.isFinite(resolved.confidence) || resolved.method ? {
+        confidence: Number.isFinite(resolved.confidence) ? resolved.confidence : null,
+        method: resolved.method || "unknown",
+        label: resolved.locationText || "Unknown location"
+      } : null)
+    };
   }
 
 
@@ -4447,10 +4841,14 @@
   // -----------------------------
   const map = L.map("map", {
     zoomControl: false,
-    preferCanvas: false,
+    preferCanvas: IS_MOBILE_UI,
     maxZoom: 20,
     minZoom: 7
   }).setView([CONFIG.center.lat, CONFIG.center.lon], CONFIG.zoom);
+
+  const gisBasePane = map.createPane("gisBase");
+  gisBasePane.style.zIndex = 250;
+  gisBasePane.style.pointerEvents = "none";
 
   // CARTO Dark Matter tiles (primary) - modern CDN endpoint with retina support
   const cartoLayer = L.tileLayer(
@@ -4514,6 +4912,7 @@
 
   // Helper to determine control position based on viewport
   function getControlPosition() {
+    if (IS_MOBILE_UI) return "bottomright";
     return window.matchMedia("(max-width: 768px)").matches ? "bottomright" : "topright";
   }
 
@@ -4782,7 +5181,7 @@
         const current = urls[index];
         index += 1;
         try {
-          await fetch(current, { mode: 'no-cors', cache: 'no-store' });
+          await fetchWithTimeout(current, { mode: 'no-cors', cache: 'no-store', timeoutMs: 8000 });
         } catch {}
         done += 1;
         progressEl.textContent = `Downloading ${done}/${urls.length} tiles…`;
@@ -4845,6 +5244,7 @@
   const LOCATION_STORAGE_KEY = "fxbg.lastLocation";
   const LOCATION_STALE_MS = 6 * 60 * 60 * 1000;
   const LOCATION_ENABLED_KEY = "fxbg.locationEnabled";
+  const LOCATION_PROMPT_SEEN_KEY = STORAGE_KEYS.LOCATION_PROMPT_SEEN;
   let userLocationMarker = null;
   let userLocationCircle = null;
   let locationWatchId = null;
@@ -4863,6 +5263,20 @@
   function persistLocationEnabled(enabled) {
     try {
       localStorage.setItem(LOCATION_ENABLED_KEY, String(enabled));
+    } catch {}
+  }
+
+  function readLocationPromptSeen() {
+    try {
+      return localStorage.getItem(LOCATION_PROMPT_SEEN_KEY) === "1";
+    } catch {
+      return false;
+    }
+  }
+
+  function markLocationPromptSeen() {
+    try {
+      localStorage.setItem(LOCATION_PROMPT_SEEN_KEY, "1");
     } catch {}
   }
 
@@ -4927,10 +5341,12 @@
     }
     updateUserLocationMarker(lat, lng, accuracy);
     currentUserLocation = { lat, lng, accuracy, ts: Date.now() };
+    updateGpsAoiFromFix(lat, lng);
     if (persist) {
       saveStoredLocation({ lat, lng, accuracy, zoom: nextZoom });
     }
     if (storeReady) {
+      scheduleRender();
       updateNearestPanel();
       evaluateAlertRules();
     }
@@ -5007,6 +5423,7 @@
     locationEnabled = Boolean(enabled);
     persistLocationEnabled(locationEnabled);
     if (locationEnabled) {
+      markLocationPromptSeen();
       const storedLocation = readStoredLocation();
       if (storedLocation) {
         applyUserLocation({ ...storedLocation, persist: false, animate: false, center: false, zoom: storedLocation.zoom });
@@ -5018,6 +5435,13 @@
       clearUserLocation();
     }
     updateLocationToggleUI();
+  }
+
+  function shouldShowLocationPrompt() {
+    if (!IS_MOBILE_UI || currentUiMode !== UI_MODES.FIELD) return false;
+    if (locationEnabled || currentUserLocation) return false;
+    if (store?.aoi?.lastGpsFixTs) return false;
+    return !readLocationPromptSeen();
   }
 
   const storedLocation = readStoredLocation();
@@ -5084,6 +5508,422 @@
       }
     }, 160); // Slightly different delay to avoid race conditions
   });
+
+  // -----------------------------
+  // GIS Catalog Layer Manager (Module 7)
+  // -----------------------------
+  async function getGisCatalog() {
+    const res = await fetch("/api/gis/catalog");
+    if (!res.ok) {
+      throw new Error(`Failed to load GIS catalog: ${res.status}`);
+    }
+    return res.json();
+  }
+
+  async function ensureGisCached(key, signal) {
+    const res = await fetch(`/api/gis/fetch?key=${encodeURIComponent(key)}`, { signal });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`Failed to cache GIS layer: ${res.status} ${text}`);
+    }
+    return res.json();
+  }
+
+  async function resolveGisEntry(key, signal) {
+    const res = await fetch(`/api/gis/resolve?key=${encodeURIComponent(key)}`, { signal });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`Failed to resolve GIS layer: ${res.status} ${text}`);
+    }
+    return res.json();
+  }
+
+  async function loadGisGeojson(key, signal) {
+    const res = await fetch(`/api/gis/data?key=${encodeURIComponent(key)}`, { signal });
+    const contentType = res.headers.get("content-type") || "";
+    if (!res.ok) {
+      let errorPayload = null;
+      if (contentType.includes("json")) {
+        try {
+          errorPayload = await res.json();
+        } catch (err) {
+          errorPayload = null;
+        }
+      } else {
+        try {
+          await res.text();
+        } catch (err) {}
+      }
+      return { ok: false, error: errorPayload?.error || `status_${res.status}` };
+    }
+    if (!contentType.includes("json")) {
+      throw new Error(`Unexpected GIS payload: ${contentType}`);
+    }
+    const payload = await res.json();
+    if (payload?.ok === true && payload?.data) {
+      return { ok: true, data: payload.data };
+    }
+    if (payload?.ok === false) {
+      return { ok: false, error: payload.error || "not_cached_yet" };
+    }
+    return { ok: true, data: payload };
+  }
+
+  function getGisCatalogEntries() {
+    const entries = [];
+    GIS_PANEL_GROUPS.forEach((group) => {
+      const groupEntries = Array.isArray(gisCatalogCache?.[group.key]) ? gisCatalogCache[group.key] : [];
+      groupEntries.forEach((entry) => {
+        if (entry?.key) {
+          entries.push(entry);
+        }
+      });
+    });
+    return entries;
+  }
+
+  function updateGisCatalogEntryName(key, name) {
+    if (!key || !name || !gisCatalogCache) return;
+    GIS_PANEL_GROUPS.forEach((group) => {
+      const entries = Array.isArray(gisCatalogCache?.[group.key]) ? gisCatalogCache[group.key] : [];
+      const target = entries.find((entry) => entry.key === key);
+      if (target && !target.name) {
+        target.name = name;
+      }
+    });
+    const layerEntry = GIS_LAYERS.get(key);
+    if (layerEntry?.meta && !layerEntry.meta.name) {
+      layerEntry.meta.name = name;
+    }
+  }
+
+  function registerGisCatalogLayers(catalog) {
+    GIS_PANEL_GROUPS.forEach((group) => {
+      const entries = Array.isArray(catalog?.[group.key]) ? catalog[group.key] : [];
+      entries.forEach((entry) => {
+        const existing = GIS_LAYERS.get(entry.key);
+        GIS_LAYERS.set(entry.key, {
+          leafletLayer: existing?.leafletLayer || null,
+          enabled: existing?.enabled || false,
+          loaded: existing?.loaded || false,
+          loading: existing?.loading || false,
+          loadingPromise: existing?.loadingPromise || null,
+          controller: existing?.controller || null,
+          error: existing?.error || null,
+          meta: { ...entry, groupKey: group.key, groupLabel: group.label }
+        });
+      });
+    });
+  }
+
+  function refreshLayersPanelUI() {
+    if (dockState?.isOpen && dockState.tab === "layers") {
+      renderDock();
+    }
+  }
+
+  async function hydrateGisLayerTitles() {
+    if (!gisCatalogCache || gisTitleHydrationPromise) return gisTitleHydrationPromise;
+    const entries = getGisCatalogEntries();
+    const pending = entries.filter((entry) => !entry?.name && entry?.itemId);
+    if (!pending.length) return null;
+
+    gisTitleHydrationPromise = (async () => {
+      for (const entry of pending) {
+        try {
+          const resolution = await resolveGisEntry(entry.key);
+          if (resolution?.ok && resolution.title) {
+            updateGisCatalogEntryName(entry.key, resolution.title);
+            refreshLayersPanelUI();
+          }
+        } catch (err) {
+          console.warn(`[GIS] Title resolve failed for ${entry.key}:`, err);
+        }
+      }
+    })();
+
+    return gisTitleHydrationPromise;
+  }
+
+  async function ensureGisCatalogReady() {
+    if (gisCatalogCache) return gisCatalogCache;
+    if (gisCatalogPromise) return gisCatalogPromise;
+    gisCatalogStatus = "loading";
+    gisCatalogError = null;
+    gisCatalogPromise = (async () => {
+      try {
+        const catalog = await getGisCatalog();
+        gisCatalogCache = catalog;
+        gisCatalogStatus = "ready";
+        registerGisCatalogLayers(catalog);
+        hydrateGisLayerTitles();
+        return catalog;
+      } catch (err) {
+        gisCatalogStatus = "error";
+        gisCatalogError = err;
+        console.warn("[GIS] Catalog load failed:", err);
+        return null;
+      } finally {
+        gisCatalogPromise = null;
+        refreshLayersPanelUI();
+      }
+    })();
+    return gisCatalogPromise;
+  }
+
+  function getGisHint(meta, feature) {
+    if (meta?.styleHint) return meta.styleHint;
+    const geomType = feature?.geometry?.type || "";
+    if (geomType.includes("Line")) return "line";
+    if (geomType.includes("Polygon")) return "poly";
+    if (geomType.includes("Point")) return "point";
+    return "poly";
+  }
+
+  function getGisLayerColor(meta) {
+    if (meta?.color) return meta.color;
+    if (meta?.groupKey === "basemapEnhancers") return "#7dd3fc";
+    return "#60a5fa";
+  }
+
+  function buildGisStyle(meta, feature, isBasemap) {
+    const hint = getGisHint(meta, feature);
+    const color = getGisLayerColor(meta);
+    if (hint === "line") {
+      return {
+        color,
+        weight: isBasemap ? 1.5 : 2,
+        opacity: isBasemap ? 0.55 : 0.85
+      };
+    }
+    return {
+      color,
+      weight: isBasemap ? 1 : 1.5,
+      opacity: isBasemap ? 0.45 : 0.7,
+      fillColor: color,
+      fillOpacity: isBasemap ? 0.06 : 0.12
+    };
+  }
+
+  function buildGisPointStyle(meta, isBasemap, pane) {
+    const color = getGisLayerColor(meta);
+    return {
+      radius: isBasemap ? 3 : 4,
+      color,
+      weight: 1,
+      opacity: isBasemap ? 0.6 : 0.85,
+      fillColor: color,
+      fillOpacity: isBasemap ? 0.25 : 0.5,
+      pane
+    };
+  }
+
+  async function addGeojsonChunked(leafletLayer, geojson, options = {}) {
+    const features = Array.isArray(geojson?.features) ? geojson.features : [];
+    if (!features.length) {
+      if (geojson && !Array.isArray(geojson.features)) {
+        leafletLayer.addData(geojson);
+      }
+      return;
+    }
+
+    const batchSize = IS_MOBILE_UI ? 200 : 500;
+    let index = 0;
+    const { signal } = options;
+
+    return new Promise((resolve, reject) => {
+      const addBatch = () => {
+        if (signal?.aborted) {
+          reject(new DOMException("Aborted", "AbortError"));
+          return;
+        }
+
+        const batch = features.slice(index, index + batchSize);
+        leafletLayer.addData({
+          type: "FeatureCollection",
+          features: batch
+        });
+        index += batchSize;
+
+        if (index < features.length) {
+          requestAnimationFrame(addBatch);
+        } else {
+          resolve();
+        }
+      };
+
+      requestAnimationFrame(addBatch);
+    });
+  }
+
+  async function enableGisLayer(key) {
+    const entry = GIS_LAYERS.get(key);
+    if (!entry) return;
+    if (entry.enabled) return;
+    if (entry.loaded && entry.leafletLayer) {
+      entry.leafletLayer.addTo(map);
+      entry.enabled = true;
+      updateOverlayLegendUI();
+      refreshLayersPanelUI();
+      return;
+    }
+    if (entry.loadingPromise) return entry.loadingPromise;
+
+    entry.loading = true;
+    entry.error = null;
+    refreshLayersPanelUI();
+
+    const controller = new AbortController();
+    entry.controller = controller;
+    const loadingPromise = (async () => {
+      let leafletLayer = entry.leafletLayer;
+      const isBasemap = entry.meta?.groupKey === "basemapEnhancers";
+      const pane = isBasemap ? "gisBase" : undefined;
+      const ensureLeafletLayer = () => {
+        if (leafletLayer) return leafletLayer;
+        leafletLayer = L.geoJSON(null, {
+          style: (feature) => buildGisStyle(entry.meta, feature, isBasemap),
+          pointToLayer: (feature, latlng) => {
+            const hint = getGisHint(entry.meta, feature);
+            if (hint === "point") {
+              return L.circleMarker(latlng, buildGisPointStyle(entry.meta, isBasemap, pane));
+            }
+            return L.circleMarker(latlng, buildGisPointStyle(entry.meta, isBasemap, pane));
+          },
+          pane,
+          renderer: L.canvas()
+        });
+        entry.leafletLayer = leafletLayer;
+        return leafletLayer;
+      };
+      try {
+        let layerUrl = entry.meta?.layerUrl || null;
+        let resolution = null;
+        const layer = ensureLeafletLayer();
+        layer.addTo(map);
+        const cachedResult = await loadGisGeojson(key, controller.signal);
+
+        if (cachedResult?.ok && cachedResult?.data) {
+          await addGeojsonChunked(layer, cachedResult.data, { signal: controller.signal });
+        } else {
+          const isOnline = typeof navigator === "undefined" ? true : navigator.onLine;
+          if (!isOnline) {
+            throw new Error("Not available offline yet. Download Offline Pack.");
+          }
+
+          if (!layerUrl) {
+            try {
+              resolution = await resolveGisEntry(key, controller.signal);
+              if (resolution?.ok && resolution.layerUrl) {
+                layerUrl = resolution.layerUrl;
+                entry.meta.layerUrl = layerUrl;
+                entry.meta.resolution = resolution;
+                if (!entry.meta.name && resolution.title) {
+                  updateGisCatalogEntryName(entry.meta.key || key, resolution.title);
+                  refreshLayersPanelUI();
+                }
+              }
+            } catch (resolveErr) {
+              console.warn(`[GIS] Resolution failed for ${key}:`, resolveErr);
+            }
+          }
+
+          if (layerUrl) {
+            const bbox = getMapBbox();
+            const count = await fetchArcgisCount(layerUrl, bbox, controller.signal);
+            const perf = CONFIG.gisOverlays.perf;
+            if (count > perf.maxFeaturesHard) {
+              throw new Error(`Layer exceeds hard limit (${count} > ${perf.maxFeaturesHard}). Zoom in further.`);
+            }
+            let loadLimit = count;
+            if (count > perf.maxFeaturesSoft) {
+              loadLimit = perf.maxFeaturesSoft;
+            }
+            const geojson = await fetchArcgisViewportGeojson(
+              layerUrl,
+              bbox,
+              '*',
+              loadLimit,
+              controller.signal
+            );
+            await addGeojsonChunked(layer, geojson, { signal: controller.signal });
+          } else {
+            await ensureGisCached(key, controller.signal);
+            const refreshed = await loadGisGeojson(key, controller.signal);
+            if (!refreshed?.ok || !refreshed?.data) {
+              throw new Error("Failed to load GIS data after caching.");
+            }
+            await addGeojsonChunked(layer, refreshed.data, { signal: controller.signal });
+          }
+        }
+
+        entry.loaded = true;
+        entry.enabled = true;
+        updateOverlayLegendUI();
+      } catch (err) {
+        if (err?.name === "AbortError") {
+          console.log(`[GIS] Layer ${key} load aborted`);
+        } else {
+          entry.error = err;
+          console.warn(`[GIS] Layer ${key} load failed:`, err);
+        }
+        if (leafletLayer) {
+          leafletLayer.clearLayers();
+          map.removeLayer(leafletLayer);
+        }
+        entry.enabled = false;
+        entry.loaded = false;
+      } finally {
+        entry.loading = false;
+        entry.controller = null;
+        entry.loadingPromise = null;
+        refreshLayersPanelUI();
+      }
+    })();
+
+    entry.loadingPromise = loadingPromise;
+    return loadingPromise;
+  }
+
+  function disableGisLayer(key) {
+    const entry = GIS_LAYERS.get(key);
+    if (!entry) return;
+
+    if (entry.controller) {
+      entry.controller.abort("Layer disabled");
+      entry.controller = null;
+    }
+
+    if (entry.leafletLayer && map.hasLayer(entry.leafletLayer)) {
+      map.removeLayer(entry.leafletLayer);
+    }
+
+    if (entry.loading) {
+      entry.loaded = false;
+      entry.leafletLayer?.clearLayers();
+    }
+
+    entry.enabled = false;
+    entry.loading = false;
+    entry.loadingPromise = null;
+    refreshLayersPanelUI();
+    updateOverlayLegendUI();
+  }
+
+  async function autoLoadBasemapEnhancers() {
+    if (store.loadShedding) return;
+    const catalog = await ensureGisCatalogReady();
+    if (!catalog) return;
+    const defaults = Array.isArray(catalog.basemapEnhancers)
+      ? catalog.basemapEnhancers.filter((entry) => entry.defaultEnabled)
+      : [];
+    defaults.forEach((entry) => {
+      const layerEntry = GIS_LAYERS.get(entry.key);
+      if (!layerEntry?.enabled) {
+        enableGisLayer(entry.key);
+      }
+    });
+  }
 
   // -----------------------------
   // GIS Overlays (ArcGIS layers) - QQMS GIS Safeguards
@@ -5611,23 +6451,21 @@
       const el = overlayLegendControl.getContainer();
       if (!el) return;
 
-      const enabledIds = Array.from(store.gis?.enabled || []);
-      if (!enabledIds.length) {
+      const enabledLayers = Array.from(GIS_LAYERS.values())
+        .filter((entry) => entry.enabled && entry.meta);
+      if (!enabledLayers.length) {
         el.style.display = "none";
         el.innerHTML = "";
         return;
       }
 
       el.style.display = "block";
-      const overlays = (CONFIG.gisOverlays?.overlays || [])
-        .filter(o => enabledIds.includes(o.id));
-
-      const rows = overlays.map(o => {
-        const c = o?.style?.color || "#22c55e";
+      const rows = enabledLayers.map((entry) => {
+        const c = getGisLayerColor(entry.meta);
         return `
           <div class="legend-row">
             <span class="swatch" style="background:${c}; border-color:${c};"></span>
-            <span class="legend-label">${escapeHtml(o.name)}</span>
+            <span class="legend-label">${escapeHtml(entry.meta.name || entry.meta.key)}</span>
           </div>
         `;
       }).join("");
@@ -5701,6 +6539,16 @@
     // Debounce the refresh
     if (gisRefreshTimeout) {
       clearTimeout(gisRefreshTimeout);
+    }
+
+    for (const entry of GIS_LAYERS.values()) {
+      if (entry?.controller) {
+        entry.controller.abort("Viewport changed");
+      }
+    }
+    for (const [overlayId, request] of store.gis.requests.entries()) {
+      request?.controller?.abort("Viewport changed");
+      store.gis.requests.delete(overlayId);
     }
 
     gisRefreshTimeout = setTimeout(() => {
@@ -5780,6 +6628,23 @@
     el.classList.toggle("mobileHeader--collapsed", !!collapsed);
     updateChromeHeights();
     updateBarActualHeights();
+  }
+
+  function applyMobileHudCompactState() {
+    if (!IS_MOBILE_UI) return;
+    const mobileHeader = document.getElementById("mobileHeader");
+    if (!mobileHeader) return;
+    mobileHeader.classList.toggle("mobileHeader--compact", !!store.mobileHudCompact);
+    updateChromeHeights();
+    updateBarActualHeights();
+  }
+
+  function setMobileHudCompact(isCompact, { persist = true } = {}) {
+    store.mobileHudCompact = !!isCompact;
+    if (persist) {
+      try { localStorage.setItem(STORAGE_KEYS.MOBILE_HUD_COMPACT, String(store.mobileHudCompact)); } catch {}
+    }
+    applyMobileHudCompactState();
   }
 
   // Helper to restore header if no blocking panels are open
@@ -6019,6 +6884,7 @@
             <div class="panelList__meta">
               <span>${escapeHtml(it.sourceName || it.source || "")}</span>
               <span>${escapeHtml(fmtTime(it.timestamp))}</span>
+              ${it._missingLatLon ? '<span class="locationBadge locationBadge--missing">No location</span>' : ''}
             </div>
           </button>
         `).join("")}
@@ -6050,7 +6916,8 @@
     currentUiMode = (mode === UI_MODES.FIELD || mode === UI_MODES.DISPATCH) ? mode : getDefaultUiMode();
     document.body.classList.toggle('field-mode', currentUiMode === UI_MODES.FIELD);
     document.body.classList.toggle('dispatch-mode', currentUiMode === UI_MODES.DISPATCH);
-    try { localStorage.setItem(STORAGE_KEYS.UI_MODE, currentUiMode); } catch {}
+    document.body.classList.toggle('fieldDefault', IS_MOBILE_UI && currentUiMode === UI_MODES.FIELD);
+    try { localStorage.setItem(getUiModeStorageKey(), currentUiMode); } catch {}
 
     const panel = document.getElementById('timelinePanel');
     if (panel) {
@@ -6063,6 +6930,10 @@
       btn.classList.toggle('is-active', selected);
       btn.setAttribute('aria-pressed', selected ? 'true' : 'false');
     });
+
+    if (IS_MOBILE_UI && currentUiMode === UI_MODES.FIELD && locationEnabled) {
+      startLocationWatch();
+    }
   }
 
   function wireUiModeToggle(scope = document) {
@@ -6158,6 +7029,8 @@
     openuv: () => fetchOpenUV(),
     waqi: () => fetchAirQuality()
   };
+  const LOAD_SHEDDING_REDRAW_MS = 600;
+  const LOAD_SHEDDING_LIST_THRESHOLD = 300;
 
   const store = {
     itemsById: new Map(),
@@ -6187,6 +7060,7 @@
     weather: { baseText: "Weather: Loading…" },
     crime: null,  // Will be initialized with loadCrimeUI()
     _crimeBootInitialized: false,  // Tracks if initial 30-day crime filter has been applied
+    mobileHudCompact: initialMobileHudCompact,
     reports: {
       items: [],
       layer: null,
@@ -6206,13 +7080,28 @@
       attemptedMarkers: 0,
       placedMarkers: 0,
       skippedNoCoords: 0,
+      visibleMarkers: 0,
+      suppressedByCategory: 0,
+      suppressedByAoi: 0,
+      suppressedByViewport: 0,
+      suppressedByCap: 0,
+      missingLatLon: 0,
+      totalItems: 0,
       warningShown: false
+    },
+    refreshTimestamps: {
+      rss: 0,
+      schools: 0,
+      traffic: 0,
+      crime: 0
     },
     diagnostics: {
       rss: {}  // Keyed by source.id: { ok, httpStatus, itemsParsed, itemsIngested, error, timestamp }
     },
     places: [],
     placesIndex: new Map(),
+    spotsyStreetList: [],
+    spotsyStreetIndex: [],
     schoolAddressOverrides: { version: 1, items: [] },
     schoolOverridesIndex: new Map(),
     dorms: [],
@@ -6230,8 +7119,52 @@
       lastSyncAt: null,
       clients: []
     },
-    freshnessTransitions: new Map()
+    aoi: {
+      mode: readAoiModePref(), // "off" | "primary-only" | "mobile-smart"
+      gpsBbox: null,
+      lastGpsFixTs: 0
+    },
+    loadShedding: readLoadSheddingPref(),
+    mobilePerf: readMobilePerfPref(),
+    freshnessTransitions: new Map(),
+    loadSheddingPoll: {}
   };
+
+  function applyMobilePerfMode(enabled) {
+    document.documentElement.classList.toggle("mobile-perf", Boolean(enabled));
+  }
+
+  function setLoadShedding(enabled) {
+    store.loadShedding = Boolean(enabled);
+    try {
+      localStorage.setItem(LOAD_SHEDDING_STORAGE_KEY, store.loadShedding ? "1" : "0");
+    } catch {}
+    if (!store.loadShedding) {
+      autoLoadBasemapEnhancers();
+      redrawThrottled();
+    }
+    refreshLayersPanelUI();
+  }
+
+  function setMobilePerf(enabled) {
+    store.mobilePerf = Boolean(enabled);
+    try {
+      localStorage.setItem(MOBILE_PERF_STORAGE_KEY, store.mobilePerf ? "1" : "0");
+    } catch {}
+    applyMobilePerfMode(store.mobilePerf);
+    scheduleRender();
+  }
+
+  function setAoiMode(mode) {
+    if (!mode || !store?.aoi) return;
+    store.aoi.mode = mode;
+    try {
+      localStorage.setItem(AOI_MODE_STORAGE_KEY, mode);
+    } catch {}
+    scheduleRender();
+  }
+
+  applyMobilePerfMode(store.mobilePerf);
 
   // -----------------------------
   // IndexedDB wrapper for offline persistence
@@ -6764,10 +7697,11 @@
     // Try POST if online
     if (!store.timeline.isOffline) {
       try {
-        const res = await fetch('/api/reports', {
+        const res = await fetchJsonWithTimeout('/api/reports', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(report)
+          body: JSON.stringify(report),
+          timeoutMs: 15000
         });
         if (res.ok) {
           report.pendingSync = false;
@@ -6807,9 +7741,9 @@
 
   async function refreshHubClients() {
     try {
-      const res = await fetch('/api/hub/clients');
+      const res = await fetchJsonWithTimeout('/api/hub/clients', { timeoutMs: 12000 });
       if (!res.ok) throw new Error(`hub_clients_${res.status}`);
-      const payload = await res.json();
+      const payload = res.data;
       const clients = Array.isArray(payload?.clients) ? payload.clients : [];
       store.hub.clients = clients;
       store.hub.reachable = true;
@@ -6830,10 +7764,11 @@
     if (!deviceId) return false;
     try {
       const ua = `${navigator.platform || 'unknown'}|${navigator.userAgentData?.platform || 'na'}`;
-      const res = await fetch('/api/hub/ping', {
+      const res = await fetchJsonWithTimeout('/api/hub/ping', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ deviceId, userAgent: ua })
+        body: JSON.stringify({ deviceId, userAgent: ua }),
+        timeoutMs: 12000
       });
       store.hub.reachable = res.ok;
       updateGlobalStatusRibbon();
@@ -6899,10 +7834,11 @@
 
     for (const report of pending) {
       try {
-        const res = await fetch('/api/reports', {
+        const res = await fetchJsonWithTimeout('/api/reports', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(report)
+          body: JSON.stringify(report),
+          timeoutMs: 15000
         });
         if (res.ok) {
           report.pendingSync = false;
@@ -7144,11 +8080,13 @@
     const fallbackSeed = `${source.id}|${raw.guid || raw.url || raw.title || ""}|${publishedDate ? publishedDate.toISOString() : ""}`;
     const fallbackLoc = getFallbackLocationForItem({ source, category: picked.category, seed: fallbackSeed });
 
+    const hasRawLoc = Number.isFinite(raw?.loc?.lat) && Number.isFinite(raw?.loc?.lon);
+
     // CRITICAL: Never drop items due to missing geodata - always use deterministic fallback
     let loc = raw.loc || fallbackLoc;
-    let locationMethod = raw.locationMethod || (raw.loc ? "override" : "fallback");
+    let locationMethod = raw.locationMethod || (raw.loc ? "override" : "fallback_center");
     let locationConfidence = Number.isFinite(raw.locationConfidence) ? raw.locationConfidence : null;
-    if (locationMethod === "fallback") {
+    if (locationMethod === "fallback_center") {
       loc = fallbackLoc;
       locationConfidence = LOCATION_CONFIDENCE.fallback;
     } else if (!Number.isFinite(locationConfidence) && locationMethod in LOCATION_CONFIDENCE) {
@@ -7207,7 +8145,8 @@
       summary: raw.summary || "",
       message: raw.message || raw.summary || "",
       panelHtml: raw.panelHtml || "",
-      media: raw.media || null
+      media: raw.media || null,
+      _missingLatLon: !hasRawLoc
     };
   }
 
@@ -7355,6 +8294,19 @@
          </div>`
       : "";
 
+    const debugMethod = item._geocode?.method || item.locationMethod || item.meta?.locationMethod || "unknown";
+    const debugConfidence = Number.isFinite(item._geocode?.confidence)
+      ? item._geocode.confidence
+      : (Number.isFinite(item.locationConfidence) ? item.locationConfidence : item.meta?.locationConfidence);
+    const debugLocation = (item._geocode?.label || item.locationText || item.address || item.meta?.address || "").toString().trim();
+    const debugLocationTrim = debugLocation.length > 80 ? `${debugLocation.slice(0, 77)}…` : debugLocation || "n/a";
+    const poiCoordsDebug = CONFIG.debug.poiCoords
+      ? `<div style="font-size:10px; color:rgba(126,240,255,0.6); margin-top:6px; padding-top:6px; border-top:1px solid rgba(255,255,255,0.08);">
+           <div><strong>Why here?</strong> ${escapeHtml(debugMethod)} • Confidence: ${Number.isFinite(debugConfidence) ? Math.round(debugConfidence) : "—"}</div>
+           <div>Original: ${escapeHtml(debugLocationTrim)}</div>
+         </div>`
+      : "";
+
     return `
       <div style="min-width:220px; max-width:280px">
         <div style="font-weight:900; font-size:13px; margin-bottom:6px">${item.emoji} ${safeTitle}</div>
@@ -7364,6 +8316,7 @@
         ${locationInfo}
         <a href="${item.url}" target="_blank" rel="noreferrer noopener" style="color:#7ef0ff; font-weight:800; text-decoration:none">Open source ↗</a>
         ${locationDebug}
+        ${poiCoordsDebug}
       </div>
     `;
   }
@@ -7409,6 +8362,64 @@
       bins.get(key).push(item);
     }
     return Array.from(bins.values());
+  }
+
+  function coerceRenderableLocation(item) {
+    if (!item) return null;
+    const rawLat = Number(item.lat);
+    const rawLon = Number(item.lon ?? item.lng);
+    if (item._missingLatLon === undefined) {
+      item._missingLatLon = !(Number.isFinite(rawLat) && Number.isFinite(rawLon));
+    }
+    let lat = rawLat;
+    let lon = rawLon;
+    const hasCoords = isReasonableLatLon(lat, lon, { bbox: getBboxForItem(item) });
+    const source = item.source || { jurisdiction: item.jurisdiction || "Regional", defaultLoc: CONFIG.center };
+
+    if (!hasCoords) {
+      const fallbackLoc = getFallbackLocationForItem({ source, seed: item.id || item.title || "" });
+      lat = fallbackLoc.lat;
+      lon = fallbackLoc.lon;
+      item.lat = lat;
+      item.lon = lon;
+      item.lng = lon;
+      item.locationMethod = item.locationMethod || "fallback_center";
+      item.locationConfidence = Number.isFinite(item.locationConfidence) ? item.locationConfidence : LOCATION_CONFIDENCE.fallback;
+      item._geocode = item._geocode || {
+        confidence: item.locationConfidence,
+        method: item.locationMethod,
+        label: item.locationText || (item.jurisdiction ? `${item.jurisdiction} center` : "Fallback center"),
+        notes: ["missing_coords_fallback"]
+      };
+    }
+
+    const bbox = getBboxForItem(item);
+    const outsideAoi = !inBbox(lat, lon, bbox);
+    if (outsideAoi) {
+      item.flag = item.flag || "outside_aoi";
+      if (item._geocode) {
+        item._geocode.notes = Array.isArray(item._geocode.notes) ? Array.from(new Set([...item._geocode.notes, "outside_aoi"])) : ["outside_aoi"];
+      }
+    }
+
+    const distance = haversineDistance(CONFIG.center.lat, CONFIG.center.lon, lat, lon);
+    if (distance > FAR_AWAY_DISTANCE_METERS) {
+      const fallbackLoc = getFallbackLocationForItem({ source, seed: item.id || item.title || "" });
+      item.lat = fallbackLoc.lat;
+      item.lon = fallbackLoc.lon;
+      item.lng = fallbackLoc.lon;
+      item.flag = "far_clamped";
+      item.locationMethod = item.locationMethod || "fallback_center";
+      item.locationConfidence = LOCATION_CONFIDENCE.fallback;
+      item._geocode = item._geocode || {};
+      item._geocode.method = item._geocode.method || "fallback_center";
+      item._geocode.confidence = Number.isFinite(item._geocode.confidence) ? item._geocode.confidence : LOCATION_CONFIDENCE.fallback;
+      item._geocode.notes = Array.isArray(item._geocode.notes)
+        ? Array.from(new Set([...item._geocode.notes, "far_clamped"]))
+        : ["far_clamped"];
+    }
+
+    return item;
   }
 
   function formatProxyError(response) {
@@ -7481,7 +8492,7 @@
 
       for (const url of candidates) {
         try {
-          response = await fetch(url, { cache: "no-store" });
+          response = await fetchWithTimeout(url, { cache: "no-store", timeoutMs: 12000 });
           if (!response.ok) {
             throw new Error(formatProxyError(response));
           }
@@ -7740,10 +8751,52 @@
    * Throttled redraw to prevent render storms on mobile
    * Coalesces rapid redraw calls into a single RAF update
    */
+  let scheduledRenderHandle = null;
+  let scheduledRenderType = null;
   let redrawScheduled = false;
+  let redrawTimeout = null;
+
+  function cancelScheduledRender() {
+    if (scheduledRenderHandle !== null) {
+      if (scheduledRenderType === "idle" && typeof cancelIdleCallback !== "undefined") {
+        cancelIdleCallback(scheduledRenderHandle);
+      } else {
+        clearTimeout(scheduledRenderHandle);
+      }
+      scheduledRenderHandle = null;
+      scheduledRenderType = null;
+    }
+  }
+
+  function scheduleRender() {
+    cancelScheduledRender();
+    if (typeof requestIdleCallback !== "undefined") {
+      scheduledRenderType = "idle";
+      scheduledRenderHandle = requestIdleCallback(() => {
+        scheduledRenderHandle = null;
+        scheduledRenderType = null;
+        redrawThrottled();
+      }, { timeout: 1000 });
+    } else {
+      scheduledRenderType = "timeout";
+      scheduledRenderHandle = setTimeout(() => {
+        scheduledRenderHandle = null;
+        scheduledRenderType = null;
+        redrawThrottled();
+      }, 0);
+    }
+  }
+
   function redrawThrottled() {
     if (redrawScheduled) return;
     redrawScheduled = true;
+    if (store.loadShedding) {
+      redrawTimeout = setTimeout(() => {
+        redrawScheduled = false;
+        redrawImmediate();
+      }, LOAD_SHEDDING_REDRAW_MS);
+      return;
+    }
     requestAnimationFrame(() => {
       redrawScheduled = false;
       redrawImmediate();
@@ -7752,18 +8805,29 @@
 
   function redrawImmediate() {
     enforceCaps();
-    clusters.clearLayers();
-    markerLayer.clearLayers();
-    if (map.hasLayer(clusters)) map.removeLayer(clusters);
-    if (map.hasLayer(markerLayer)) map.removeLayer(markerLayer);
-    store.markersById.clear();
+    if (store.loadShedding) {
+      console.log("[LoadShedding] Skipping cluster rebuild (load shedding enabled)");
+      updateCategoryCounts();
+      return;
+    }
+    if (!store.loadShedding) {
+      clusters.clearLayers();
+      markerLayer.clearLayers();
+      if (map.hasLayer(clusters)) map.removeLayer(clusters);
+      if (map.hasLayer(markerLayer)) map.removeLayer(markerLayer);
+      store.markersById.clear();
+    }
 
     let markerCount = 0;
-    let filtered = { category: 0, bbox: 0, crime: 0 };
+    let filtered = { category: 0, bbox: 0, aoi: 0, crime: 0 };
+    let suppressedByCap = 0;
+    let missingLatLonCount = 0;
     const visibleItems = [];
     const rssMarkerStats = { attemptedMarkers: 0, placedMarkers: 0, skippedNoCoords: 0 };
 
     for (const item of store.itemsById.values()) {
+      coerceRenderableLocation(item);
+      if (item._missingLatLon) missingLatLonCount++;
       const isRssLike = item.sourceType === 'rss' || item.category === 'alerts' || item.category === 'incident' || item.category === 'incidents';
       if (isRssLike) {
         rssMarkerStats.attemptedMarkers++;
@@ -7775,8 +8839,16 @@
         filtered.category++;
         continue;
       }
-      if (!inBbox(item.lat, item.lon, getBboxForItem(item))) {
+      // Hard AOI gates (fixes "bbox counted but not applied" bug)
+      const bboxCheck = inBbox(item.lat, item.lon, getBboxForItem(item));
+      if (!bboxCheck) {
         filtered.bbox++;
+        continue;
+      }
+
+      // Mobile AOI policy: only FXBG/Stafford/Spotsy unless near-user GPS AOI
+      if (!isAllowedByMobileAOI(item)) {
+        filtered.aoi++;
         continue;
       }
       if (item.sourceId === "fxbg-crime-reports" && !isCrimeItemVisible(item)) {
@@ -7786,8 +8858,21 @@
       visibleItems.push(item);
     }
 
+    if (IS_MOBILE_UI || store.mobilePerf) {
+      const getItemTs = (item) => {
+        if (Number.isFinite(item?.ts)) return item.ts;
+        const parsed = item?.timestamp ? new Date(item.timestamp).getTime() : 0;
+        return Number.isFinite(parsed) ? parsed : 0;
+      };
+      visibleItems.sort((a, b) => (b.priority || 0) - (a.priority || 0) || getItemTs(b) - getItemTs(a));
+      if (store.mobilePerf && visibleItems.length > MOBILE_MARKER_CAP) {
+        suppressedByCap = visibleItems.length - MOBILE_MARKER_CAP;
+        visibleItems.length = MOBILE_MARKER_CAP;
+      }
+    }
+
     const downtownMode = isDowntownModeEnabled();
-    const useStacks = shouldUseDeclutterStacking();
+    const useStacks = store.mobilePerf ? true : shouldUseDeclutterStacking();
 
     if (useStacks) {
       for (const stack of buildDeclutterStacks(visibleItems)) {
@@ -7838,6 +8923,13 @@
     store.markerDiagnostics.attemptedMarkers = rssMarkerStats.attemptedMarkers;
     store.markerDiagnostics.placedMarkers = rssMarkerStats.placedMarkers;
     store.markerDiagnostics.skippedNoCoords = rssMarkerStats.skippedNoCoords;
+    store.markerDiagnostics.visibleMarkers = markerCount;
+    store.markerDiagnostics.suppressedByCategory = filtered.category;
+    store.markerDiagnostics.suppressedByAoi = filtered.aoi;
+    store.markerDiagnostics.suppressedByViewport = filtered.bbox;
+    store.markerDiagnostics.suppressedByCap = suppressedByCap;
+    store.markerDiagnostics.missingLatLon = missingLatLonCount;
+    store.markerDiagnostics.totalItems = store.itemsById.size;
 
     if (rssMarkerStats.attemptedMarkers > 0 && rssMarkerStats.placedMarkers === 0) {
       if (!store.markerDiagnostics.warningShown) {
@@ -7848,7 +8940,7 @@
       store.markerDiagnostics.warningShown = false;
     }
 
-    console.log(`Redraw complete: ${markerCount} markers visible (${store.itemsById.size} total items, ${filtered.category} filtered by category, ${filtered.bbox} outside bbox, ${filtered.crime} crime hidden, downtownMode=${downtownMode}, stacks=${useStacks})`);
+    console.log(`Redraw complete: ${markerCount} markers visible (${store.itemsById.size} total items, ${filtered.category} filtered by category, ${filtered.aoi} suppressed by AOI, ${filtered.bbox} outside bbox, ${filtered.crime} crime hidden, downtownMode=${downtownMode}, stacks=${useStacks})`);
 
     // Update News Flash panel if it's open
     const newsPanel = document.getElementById("newsFlashPanel");
@@ -7872,7 +8964,18 @@
    * On mobile, this coalesces rapid calls into a single RAF update
    */
   function redraw() {
-    redrawThrottled();
+    scheduleRender();
+  }
+
+  let mapRedrawTimeout = null;
+  function scheduleMapRedraw() {
+    if (mapRedrawTimeout) {
+      clearTimeout(mapRedrawTimeout);
+    }
+    mapRedrawTimeout = setTimeout(() => {
+      mapRedrawTimeout = null;
+      scheduleRender();
+    }, MAP_REDRAW_DEBOUNCE_MS);
   }
 
   // -----------------------------
@@ -7960,6 +9063,27 @@
     }
   }
 
+  function escapeStrayAmpersands(xmlText) {
+    const entityPattern = /&(?!amp;|lt;|gt;|quot;|apos;|#\d+;|#x[0-9a-fA-F]+;)/g;
+    const cdataPattern = /<!\[CDATA\[[\s\S]*?\]\]>/g;
+    let result = '';
+    let lastIndex = 0;
+    let match;
+
+    while ((match = cdataPattern.exec(xmlText)) !== null) {
+      const chunk = xmlText.slice(lastIndex, match.index);
+      result += chunk.replace(entityPattern, '&amp;');
+      result += match[0];
+      lastIndex = match.index + match[0].length;
+    }
+
+    if (lastIndex < xmlText.length) {
+      result += xmlText.slice(lastIndex).replace(entityPattern, '&amp;');
+    }
+
+    return result;
+  }
+
   async function fetchRSS(source) {
     // Handle html_discover type - discover feed URL from HTML page first
     let feedUrl = source.url;
@@ -7990,7 +9114,7 @@
       expect: "text",
       headers: {
         "Accept": "application/rss+xml, application/atom+xml, application/xml, text/xml, */*",
-        "X-Cache": `max-age=${cacheSeconds}`
+        "X-Cache-TTL-MS": String(cacheSeconds * 1000)
       }
     });
 
@@ -8018,15 +9142,12 @@
 
         // For malformed XML, try to clean it and parse again
         console.warn(`RSS parse error for ${source.id}, attempting to clean XML...`);
-        const cleanedXml = xmlText
-          .trim()
-          .replace(/^[^<]*/, '') // Remove any non-XML content before first tag
-          .replace(/<!\[CDATA\[.*?\]\]>/gs, '') // Remove CDATA sections that might be malformed
-          .replace(/&(?!amp;|lt;|gt;|quot;|apos;|#)/g, '&amp;'); // Escape unescaped ampersands
+        const cleanedXml = escapeStrayAmpersands(xmlText.trim().replace(/^[^<]*/, '')); // Remove any non-XML content before first tag
 
         doc = new DOMParser().parseFromString(cleanedXml, "text/xml");
         const parseError2 = doc.querySelector("parsererror");
         if (parseError2) {
+          console.warn(`[RSS Parse] ${source.id}: parsererror after cleanup (bytes=${xmlText.length})`);
           throw new Error(`RSS parse error for ${source.id}: ${errorText.slice(0, 100)}`);
         }
       }
@@ -8131,6 +9252,13 @@
         if (CONFIG.debug.rss && resolved.locationMethod !== 'fallback') {
           console.log(`[Location] Resolved "${item.title?.slice(0, 50)}..." via ${resolved.locationMethod}: ${resolved.lat.toFixed(4)}, ${resolved.lon.toFixed(4)}${resolved.locationText ? ` ("${resolved.locationText}")` : ''}`);
         }
+
+        if (!store._rssDebugLocationLogged) {
+          const debugText = resolved.locationText || 'Unknown location';
+          const methodText = resolved.locationMethod || 'unknown';
+          console.log(`[RSS Debug] ${source.id}: "${item.title?.slice(0, 60) || 'untitled'}" -> ${debugText} (${methodText}) @ ${resolved.lat.toFixed(4)}, ${resolved.lon.toFixed(4)}`);
+          store._rssDebugLocationLogged = true;
+        }
       }
     }
 
@@ -8139,6 +9267,10 @@
 
   async function pollRSS(forceRefresh = false) {
     if (store.locks.rss) return { skipped:true };
+    // Load shedding: keep core RSS alive, but throttle to a slower cadence.
+    if (!forceRefresh && !shouldRunLoadSheddingCorePoll("rss", CONFIG.polling.rss)) {
+      return { skipped:true, loadShedding:true };
+    }
     store.locks.rss = true;
     const results = [];
     let anySucceeded = false;
@@ -8292,6 +9424,7 @@
       console.log(`[RSS Poll] Complete: ${totalAdded} new items from ${results.filter(r => r.ok).length}/${CONFIG.rss.length} feeds`);
     }
 
+    recordRefreshTimestamp("rss");
     setLastUpdate();
     renderDiagnosticsRSSGeoSummary();
     redraw();
@@ -8453,6 +9586,10 @@
   // 511Virginia GeoJSON (current-only incidents)
   // -----------------------------
   async function pollVa511() {
+    // Load shedding: keep traffic core feed alive, but throttle cadence.
+    if (!shouldRunLoadSheddingCorePoll("traffic", CONFIG.polling.va511)) {
+      return;
+    }
     if (store.locks.va511) return;
     store.locks.va511 = true;
     updateFreshnessStatus('va511', () => freshnessTracker.markAttempt('va511'));
@@ -8590,10 +9727,10 @@
       return match ? safeJsonParse(match[1], null, "va511 incidents jsonp") : safeJsonParse(text, null, "va511 incidents json");
     };
 
-    // Try primary endpoint first, then fallback if it fails
+    // Try server-side events endpoint first (most stable), then 511virginia.org GeoJSON as fallback
     const incidentsEndpoints = [
-      { url: CONFIG.va511.incidentsGeojson, format: 'json', name: 'primary' },
-      { url: '/api/va511/icons-metadata', format: 'json', name: 'icons-metadata', direct: true }
+      { url: '/api/va511/events', format: 'json', name: 'server-events', direct: true },
+      { url: CONFIG.va511.incidentsGeojson, format: 'json', name: 'primary' }
     ];
 
     for (const endpoint of incidentsEndpoints) {
@@ -8617,9 +9754,9 @@
           }
 
           const response = endpoint.direct
-            ? await fetch(urlVariant, { headers, cache: 'no-store' }).then((res) => {
+            ? await fetchJsonWithTimeout(urlVariant, { headers, timeoutMs: 20000 }).then((res) => {
                 if (!res.ok) throw new Error(`http ${res.status}`);
-                return endpoint.format === 'jsonp' ? res.text() : res.json();
+                return res.data;
               })
             : await fetchWithProxies(urlVariant, {
                 expect: endpoint.format === 'jsonp' ? 'text' : 'json',
@@ -8629,11 +9766,21 @@
 
         // Parse response based on format
         let inc = endpoint.format === 'jsonp' ? parseJsonp(response) : response;
-        if (endpoint.name === 'icons-metadata') {
-          if (inc?.ok === false && inc?.degraded) {
+
+        // Handle server-events endpoint: unwrap { ok, data, degraded } wrapper
+        if (endpoint.name === 'server-events') {
+          if (inc?.ok === false && !inc?.data) {
+            setI95Indicator(null, { degraded: true, cached: Boolean(inc.cached) });
+            throw new Error(inc.error || "server-events returned ok:false with no data");
+          }
+          if (inc?.degraded) {
             setI95Indicator(null, { degraded: true, cached: Boolean(inc.cached) });
           }
           inc = inc?.data || null;
+          // VA511 events API may return an array or FeatureCollection — normalize to FeatureCollection
+          if (inc && Array.isArray(inc) && !inc.type) {
+            inc = { type: "FeatureCollection", features: inc };
+          }
         }
 
         // Validate that we got actual GeoJSON
@@ -8652,8 +9799,8 @@
         } catch (e) {
           // Try next URL variant or next endpoint if available
           console.warn(`[VA511 Incidents] ${endpoint.name} (${urlVariant}) failed: ${e.message}, trying next variant/endpoint...`);
-          if (endpoint.name === 'icons-metadata' && urlVariant === fallbackVariants[fallbackVariants.length - 1]) {
-            // Last variant of fallback endpoint failed - record failure
+          if (endpoint === incidentsEndpoints[incidentsEndpoints.length - 1] && urlVariant === fallbackVariants[fallbackVariants.length - 1]) {
+            // Last variant of last endpoint failed - record failure
             recordSourceFailure('va511-incidents', 'fetch_error');
             recordFeedError('va511-incidents');
 
@@ -8693,7 +9840,44 @@
       }
     }
 
-    setI95Indicator(i95Incidents);
+    // Lightweight status poll from server-side computed summary
+    try {
+      const statusResp = await fetchJsonWithTimeout('/api/va511/status', { timeoutMs: 12000 });
+      if (statusResp.ok) {
+        const statusData = statusResp.data;
+        if (statusData.ok) {
+          // Use server-computed i95 count if we didn't get incidents from the pipeline
+          const i95FromStatus = statusData.i95ApproxCount || 0;
+          const effectiveI95 = incidentsLoaded ? i95Incidents : i95FromStatus;
+          setI95Indicator(effectiveI95, {
+            degraded: statusData.degraded,
+            cached: statusData.cached,
+            fetchedAt: statusData.fetchedAt,
+            totalEvents: statusData.totalEvents
+          });
+        } else {
+          setI95Indicator(incidentsLoaded ? i95Incidents : null, { degraded: true, cached: statusData.cached });
+        }
+      } else {
+        setI95Indicator(i95Incidents);
+      }
+    } catch (_statusErr) {
+      // Status endpoint unavailable — fall back to pipeline count
+      setI95Indicator(i95Incidents);
+    }
+
+    // Fetch icons metadata separately (do NOT treat as incidents GeoJSON)
+    try {
+      const iconResp = await fetchJsonWithTimeout('/api/va511/icons-metadata', { timeoutMs: 12000 });
+      if (iconResp.ok) {
+        const iconPayload = iconResp.data;
+        store.va511IconMeta = iconPayload?.data || null;
+      }
+    } catch (_iconErr) {
+      // Non-critical — icons metadata is supplementary
+    }
+
+    recordRefreshTimestamp("traffic");
     setLastUpdate();
     redraw();
     if (incidentsLoaded) {
@@ -9151,6 +10335,10 @@
   // Poll external cameras (lightweight - only injects markers, doesn't fetch remote content)
   async function pollExternalCameras() {
     if (!CONFIG.externalCameras.enabled) return;
+    if (store.loadShedding) {
+      console.log("[LoadShedding] Skipping external camera refresh");
+      return;
+    }
 
     const now = Date.now();
     const ttl = CONFIG.externalCameras.cacheTtlMs || 60_000;
@@ -9345,6 +10533,7 @@
           isPoi: true,
           poiType: "school",
           nces: true,
+          address: enrichedSchool.address,
           addressSource: enrichedSchool.addressSource,
           resolvedByAddressFirst: true,
           ncesLat: Number(school.lat ?? school.latitude ?? school.LAT ?? school.y),
@@ -9382,6 +10571,10 @@
    */
   async function pollSchoolsNces() {
     if (!CONFIG.schoolsNces?.enabled) return;
+    if (store.loadShedding) {
+      console.log("[LoadShedding] Skipping schools refresh");
+      return;
+    }
 
     const now = Date.now();
     const ttl = CONFIG.schoolsNces.cacheTtlMs || (6 * 60 * 60 * 1000);
@@ -9395,14 +10588,15 @@
       const url = CONFIG.schoolsNces.url;
       console.log(`[SchoolsNCES] Fetching ${url}...`);
 
-      const response = await fetch(url);
+      const response = await fetchJsonWithTimeout(url, { timeoutMs: 20000 });
       if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        throw new Error(`HTTP ${response.status}`);
       }
 
-      const data = await response.json();
+      const data = response.data;
       const result = await ingestSchoolsNces(data);
       store.lastFetch.schoolsNces = now;
+      recordRefreshTimestamp("schools");
       console.log(`[SchoolsNCES] Loaded ${result.added} schools from NCES dataset (${result.total} total in file)`);
 
       // Visual debug: draw bbox rectangle around schools region
@@ -9507,7 +10701,7 @@
         message: summary,
         panelHtml: collegeDetails,
         source: { id: "colleges", name: "Colleges/Universities", category: "college" },
-        meta: { isPoi: true, poiType: "college", locationMethod: resolved?.method || override?.method || (approximate ? 'city_fallback' : 'dataset'), locationConfidence: resolved?.confidence ?? override?.confidence ?? (approximate ? 10 : 90), approximate }
+        meta: { isPoi: true, poiType: "college", address: college.address, locationMethod: resolved?.method || override?.method || (approximate ? 'city_fallback' : 'dataset'), locationConfidence: resolved?.confidence ?? override?.confidence ?? (approximate ? 10 : 90), approximate }
       };
 
       registerEvent(item);
@@ -9519,6 +10713,10 @@
 
   async function pollColleges() {
     if (!CONFIG.colleges?.enabled) return;
+    if (store.loadShedding) {
+      console.log("[LoadShedding] Skipping colleges refresh");
+      return;
+    }
 
     const now = Date.now();
     const ttl = CONFIG.colleges.cacheTtlMs || (6 * 60 * 60 * 1000);
@@ -9531,14 +10729,15 @@
       const url = CONFIG.colleges.url;
       console.log(`[Colleges] Fetching ${url}...`);
 
-      const response = await fetch(url);
+      const response = await fetchJsonWithTimeout(url, { timeoutMs: 20000 });
       if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        throw new Error(`HTTP ${response.status}`);
       }
 
-      const data = await response.json();
+      const data = response.data;
       const result = await ingestColleges(data);
       store.lastFetch.colleges = now;
+      recordRefreshTimestamp("schools");
       console.log(`[Colleges] Loaded ${result.added} colleges/universities (${result.total} total in file)`);
     } catch (e) {
       console.warn("[Colleges] Failed to load:", e.message);
@@ -9547,9 +10746,9 @@
 
   async function loadPlacesDataset() {
     try {
-      const response = await fetch('/api/places');
+      const response = await fetchJsonWithTimeout('/api/places', { timeoutMs: 15000 });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const payload = await response.json();
+      const payload = response.data;
       const items = Array.isArray(payload?.items) ? payload.items : [];
       store.places = items;
       store.placesIndex = buildPlacesIndex(items);
@@ -9565,11 +10764,35 @@
     }
   }
 
+  async function loadSpotsyStreetList() {
+    try {
+      const response = await fetchJsonWithTimeout('/api/spotsy/streets', { timeoutMs: 15000 });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const payload = response.data || response;
+      const streets = Array.isArray(payload?.streets) ? payload.streets : [];
+      store.spotsyStreetList = streets;
+      store.spotsyStreetIndex = streets.map(normalizeStreetMatchKey).filter(Boolean);
+      await idbSaveMeta('spotsyStreetList', payload);
+      if (streets.length > 0) {
+        console.log(`[Spotsylvania Streets] Loaded ${streets.length} entries`);
+      }
+      return;
+    } catch (err) {
+      const cached = await idbGetMeta('spotsyStreetList');
+      const streets = Array.isArray(cached?.streets) ? cached.streets : [];
+      store.spotsyStreetList = streets;
+      store.spotsyStreetIndex = streets.map(normalizeStreetMatchKey).filter(Boolean);
+      if (streets.length > 0) {
+        console.warn(`[Spotsylvania Streets] Using cached list (${streets.length} entries): ${err.message}`);
+      }
+    }
+  }
+
   async function loadSchoolsAddressOverrides() {
     try {
-      const response = await fetch('/api/geo/schools-overrides');
+      const response = await fetchJsonWithTimeout('/api/geo/schools-overrides', { timeoutMs: 15000 });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const payload = await response.json();
+      const payload = response.data;
       const items = Array.isArray(payload?.items) ? payload.items : [];
       store.schoolAddressOverrides = { version: Number(payload?.version) || 1, items };
       store.schoolOverridesIndex = buildNameAddressIndex(items);
@@ -9588,9 +10811,9 @@
   async function loadDormsDataset() {
     if (!CONFIG.dorms?.enabled) return;
     try {
-      const response = await fetch(CONFIG.dorms.url);
+      const response = await fetchJsonWithTimeout(CONFIG.dorms.url, { timeoutMs: 20000 });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const payload = await response.json();
+      const payload = response.data;
       const items = Array.isArray(payload) ? payload : (Array.isArray(payload?.items) ? payload.items : []);
       store.dorms = items;
       store.dormsIndex = buildNameAddressIndex(items);
@@ -9607,6 +10830,10 @@
   }
 
   async function ingestDorms() {
+    if (store.loadShedding) {
+      console.log("[LoadShedding] Skipping dorms ingest");
+      return { added: 0, total: 0 };
+    }
     let added = 0;
     for (const dorm of (store.dorms || [])) {
       const resolved = await resolveLatLngForPlace(dorm, 'dorm');
@@ -9633,11 +10860,12 @@
         message: dorm.address || 'Dormitory',
         panelHtml: `<div style="padding:12px;background:rgba(20,20,20,0.95);border-radius:8px;"><h3 style="margin:0 0 10px 0;color:#FFD700;">🛏️ ${escapeHtml(dorm.name || 'Dorm')}</h3><p style="margin:0 0 8px 0;color:#fff;"><strong style="color:#00E5FF;">📍 Address:</strong> ${escapeHtml(dorm.address || 'N/A')}</p><p style="margin:0;color:#fff;"><strong style="color:#00E5FF;">🎯 Method:</strong> ${escapeHtml(resolved?.method || 'fallback')} | <strong style="color:#00E5FF;">Confidence:</strong> ${Number.isFinite(resolved?.confidence) ? Math.round(resolved.confidence) : 0}</p></div>`,
         source: { id: 'dorms', name: 'Dorms', category: 'school' },
-        meta: { isPoi: true, poiType: 'dorm', locationMethod: resolved?.method || 'fallback', locationConfidence: resolved?.confidence ?? 10, approximate: Boolean(resolved?.approximate) }
+        meta: { isPoi: true, poiType: 'dorm', address: dorm.address, locationMethod: resolved?.method || 'fallback', locationConfidence: resolved?.confidence ?? 10, approximate: Boolean(resolved?.approximate) }
       };
       registerEvent(item);
       added++;
     }
+    recordRefreshTimestamp("schools");
     return { added, total: (store.dorms || []).length };
   }
 
@@ -9854,6 +11082,10 @@
     try {
 
     if (!CONFIG.arcgisCrash.enabled) return 0;
+    if (store.loadShedding) {
+      console.log("[LoadShedding] Skipping ArcGIS crash refresh");
+      return 0;
+    }
 
     // Round 3: Check source backoff before polling
     const backoffCheck = checkSourceBackoff('arcgis-crashes');
@@ -10009,6 +11241,10 @@
     store.locks.virginiaCrashData = true;
     try {
       if (!CONFIG.virginiaCrashData.enabled) return { added: 0 };
+      if (store.loadShedding) {
+        console.log("[LoadShedding] Skipping Virginia crash data refresh");
+        return { added: 0 };
+      }
 
       // Round 3: Check source backoff before polling
       const backoffCheck = checkSourceBackoff('virginia-crash-data');
@@ -10148,14 +11384,34 @@
   // -----------------------------
   // OpenUV API - UV Index data
   // -----------------------------
-  async function fetchJsonWithStatus(url, opts = {}) {
+  async function fetchJsonWithTimeout(url, opts = {}) {
+    const timeoutMs = Number.isFinite(opts.timeoutMs) ? opts.timeoutMs : 15000;
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort("Timeout"), opts.timeoutMs || 15000);
+    const timeout = setTimeout(() => controller.abort("Timeout"), timeoutMs);
+
+    if (opts.signal) {
+      const externalSignal = opts.signal;
+      if (externalSignal.aborted) {
+        controller.abort(externalSignal.reason || "External abort");
+      } else {
+        externalSignal.addEventListener("abort", () => {
+          controller.abort(externalSignal.reason || "External abort");
+        }, { once: true });
+      }
+    }
+
     try {
       const response = await fetch(url, {
+        method: opts.method || "GET",
         signal: controller.signal,
-        headers: opts.headers
+        headers: opts.headers,
+        body: opts.body
       });
+      const maxBytes = Number.isFinite(opts.maxBytes) ? opts.maxBytes : 10 * 1024 * 1024;
+      const contentLength = Number(response.headers.get("content-length"));
+      if (Number.isFinite(contentLength) && contentLength > maxBytes) {
+        return { ok: false, status: 413, error: "payload_too_large", data: null };
+      }
       const text = await response.text();
       const data = safeJsonParse(text, null, `json ${url}`);
       return { ok: response.ok, status: response.status, data };
@@ -10164,6 +11420,44 @@
     } finally {
       clearTimeout(timeout);
     }
+  }
+
+  async function fetchWithTimeout(url, opts = {}) {
+    const timeoutMs = Number.isFinite(opts.timeoutMs) ? opts.timeoutMs : 15000;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort("Timeout"), timeoutMs);
+
+    if (opts.signal) {
+      const externalSignal = opts.signal;
+      if (externalSignal.aborted) {
+        controller.abort(externalSignal.reason || "External abort");
+      } else {
+        externalSignal.addEventListener("abort", () => {
+          controller.abort(externalSignal.reason || "External abort");
+        }, { once: true });
+      }
+    }
+
+    try {
+      return await fetch(url, {
+        method: opts.method || "GET",
+        signal: controller.signal,
+        headers: opts.headers,
+        body: opts.body,
+        cache: opts.cache,
+        mode: opts.mode
+      });
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  async function fetchJsonWithStatus(url, opts = {}) {
+    return fetchJsonWithTimeout(url, {
+      timeoutMs: opts.timeoutMs || 15000,
+      headers: opts.headers,
+      signal: opts.signal
+    });
   }
 
   async function fetchOpenUV() {
@@ -10483,9 +11777,18 @@
       else if (i95Incidents <= 2) status = `SLOWING (${i95Incidents})`;
       else status = `HEAVY (${i95Incidents})`;
     }
+    // Append "updated X min ago" if fetchedAt is available
+    let timeLabel = "";
+    if (options.fetchedAt) {
+      const agoMs = Date.now() - new Date(options.fetchedAt).getTime();
+      const agoMin = Math.round(agoMs / 60000);
+      if (agoMin <= 0) timeLabel = " · just now";
+      else if (agoMin === 1) timeLabel = " · 1 min ago";
+      else timeLabel = ` · ${agoMin} min ago`;
+    }
     if (el) {
-      el.textContent = `I‑95: ${status}`;
-      if (CONFIG.debug.chips) console.log(`[Chip Update] I-95: ${status} (${i95Incidents} incidents)`);
+      el.textContent = `I‑95: ${status}${timeLabel}`;
+      if (CONFIG.debug.chips) console.log(`[Chip Update] I-95: ${status}${timeLabel} (${i95Incidents} incidents)`);
     }
   }
 
@@ -10631,6 +11934,10 @@
    * Poll FXBG PD Crime Reports API
    */
   async function pollFxbgCrimeReports() {
+    // Load shedding: keep crime core feed alive, but throttle cadence.
+    if (!shouldRunLoadSheddingCorePoll("crime", CONFIG.fxbgCrimeReports.polling)) {
+      return;
+    }
     if (!CONFIG.fxbgCrimeReports.enabled) return;
     if (store.locks.crime) return;
 
@@ -10641,14 +11948,14 @@
       const months = CONFIG.fxbgCrimeReports.months;
       const url = `/api/fxbg/crime-reports/incidents?months=${months}`;
 
-      const res = await fetch(url);
+      const res = await fetchJsonWithTimeout(url, { timeoutMs: 15000 });
       if (!res.ok) {
         updateFreshnessStatus('crime', () => freshnessTracker.markFailure('crime', `http_${res.status}`), `http_${res.status}`);
         console.warn(`[Crime Reports] API returned ${res.status}`);
         return;
       }
 
-      const json = await res.json();
+      const json = res.data;
       if (!json.ok || !json.incidents) {
         updateFreshnessStatus('crime', () => freshnessTracker.markFailure('crime', 'invalid_crime_payload'), 'invalid crime payload');
         console.warn("[Crime Reports] Invalid API response");
@@ -10657,6 +11964,7 @@
 
       const incidents = json.incidents;
       console.log(`[Crime Reports] Loaded ${incidents.length} incidents`);
+      recordRefreshTimestamp("crime");
 
       // Process incidents and create markers
       for (const incident of incidents) {
@@ -11095,13 +12403,13 @@
     try {
       const params = new URLSearchParams();
       if (sinceDays) params.set("sinceDays", String(sinceDays));
-      const res = await fetch(`/api/reports?${params.toString()}`);
+      const res = await fetchJsonWithTimeout(`/api/reports?${params.toString()}`, { timeoutMs: 15000 });
       if (!res.ok) {
         updateFreshnessStatus('reports', () => freshnessTracker.markFailure('reports', `http_${res.status}`), `http_${res.status}`);
         setReportStatus("Reports feed unavailable.", "warn");
         return;
       }
-      const data = await res.json();
+      const data = res.data;
       if (!data.ok || !Array.isArray(data.items)) {
         updateFreshnessStatus('reports', () => freshnessTracker.markFailure('reports', 'invalid_reports_payload'), 'invalid reports payload');
         setReportStatus("Reports feed unavailable.", "warn");
@@ -11179,9 +12487,13 @@
         form.append("lng", String(loc.lng));
         if (loc.accuracy) form.append("accuracy", String(loc.accuracy));
         form.append("photo", photoFile);
-        res = await fetch("/api/reports", { method: "POST", body: form });
+        res = await fetchJsonWithTimeout("/api/reports", {
+          method: "POST",
+          body: form,
+          timeoutMs: 20000
+        });
       } else {
-        res = await fetch("/api/reports", {
+        res = await fetchJsonWithTimeout("/api/reports", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -11191,11 +12503,12 @@
             lat: loc.lat,
             lng: loc.lng,
             accuracy: loc.accuracy
-          })
+          }),
+          timeoutMs: 20000
         });
       }
 
-      const data = await res.json();
+      const data = res.data;
       if (!res.ok || !data.ok) {
         throw new Error(data.error || "submit_failed");
       }
@@ -11218,6 +12531,22 @@
   function setLastUpdate() {
     const el = getChipElement("lastUpdate");
     if (el) el.textContent = fmtTime(new Date());
+  }
+
+  function recordRefreshTimestamp(group) {
+    if (!group) return;
+    if (!store.refreshTimestamps) store.refreshTimestamps = {};
+    store.refreshTimestamps[group] = Date.now();
+  }
+
+  // Load shedding policy: keep core feeds alive on a slower cadence while skipping heavy sources.
+  function shouldRunLoadSheddingCorePoll(key, baseIntervalMs) {
+    if (!store.loadShedding) return true;
+    const minInterval = Math.max(LOAD_SHEDDING_CORE_POLL_MS, baseIntervalMs || 0);
+    const lastRun = store.loadSheddingPoll?.[key] || 0;
+    if (Date.now() - lastRun < minInterval) return false;
+    store.loadSheddingPoll[key] = Date.now();
+    return true;
   }
 
   // Ensure chips have valid states (not stuck at "Loading...")
@@ -11269,6 +12598,7 @@
 
     await Promise.all([
       loadPlacesDataset().catch(() => {}),
+      loadSpotsyStreetList().catch(() => {}),
       loadSchoolsAddressOverrides().catch(() => {}),
       loadDormsDataset().catch(() => {})
     ]);
@@ -11359,8 +12689,25 @@
     const allItems = Array.from(store.itemsById.values());
 
     // Base set: all RSS-sourced items (not hardcoded category allowlist)
-    const rssItems = allItems.filter(item => item.sourceType === "rss");
+    const now = Date.now();
+    const maxAgeMs = Math.max(2, CONFIG.freshness?.uiListMaxAgeHours || 24) * 3600 * 1000;
+    const rssItems = allItems
+      .filter(item => item.sourceType === "rss")
+      .filter(item => {
+        const ts = new Date(item.timestamp || item.published || 0).getTime();
+        return Number.isFinite(ts) && (now - ts) <= maxAgeMs;
+      });
     const totalRssCount = rssItems.length;
+
+    if (store.loadShedding && totalRssCount > LOAD_SHEDDING_LIST_THRESHOLD) {
+      body.innerHTML = `
+        <div class="dockMetaText" style="color:var(--warn);font-weight:600;">
+          Load shedding enabled — list rendering paused for ${totalRssCount} items.
+        </div>
+        <div class="dockMetaText">Disable Load Shedding to refresh the full list.</div>
+      `;
+      return;
+    }
 
     // Apply category filter if not "all"
     let filtered = rssItems.filter(item => {
@@ -11404,6 +12751,7 @@
       const jurisdiction = escapeHtml(item.jurisdiction || "Unknown");
       const category = escapeHtml(CATEGORIES[item.category]?.label || item.category || "News");
       const time = fmtTime(item.published);
+      const noLocationBadge = item._missingLatLon ? `<span class="locationBadge locationBadge--missing">No location</span>` : "";
 
       return `
         <div class="newsItem" data-item-id="${escapeAttr(item.id)}">
@@ -11415,6 +12763,7 @@
             <span class="newsItem__jurisdiction">${jurisdiction}</span>
             <span class="newsItem__category">${category}</span>
             <span class="newsItem__time">${time}</span>
+            ${noLocationBadge}
           </div>
           <div class="newsItem__summary">${summary}</div>
         </div>
@@ -11479,6 +12828,7 @@
   const diagnosticsUpstreams = $("diagnosticsUpstreams");
   const diagnosticsUpstreamTests = $("diagnosticsUpstreamTests");
   const diagnosticsCache = $("diagnosticsCache");
+  const diagnosticsOfflineReadiness = $("diagnosticsOfflineReadiness");
   const diagnosticsRequiredBanner = $("diagnosticsRequiredBanner");
   const diagnosticsBannerTitle = $("diagnosticsBannerTitle");
   const diagnosticsRequiredText = $("diagnosticsRequiredText");
@@ -11519,19 +12869,21 @@
     return `${seconds}s`;
   }
 
-  async function fetchDiagnosticsJson(url) {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort("Diagnostics timeout"), 15000);
-    try {
-      const response = await fetch(url, { signal: controller.signal });
-      const text = await response.text();
-      const data = safeJsonParse(text, null, `diagnostics ${url}`);
-      return { ok: response.ok, status: response.status, data };
-    } catch (err) {
-      return { ok: false, status: 0, error: err.message || String(err), data: null };
-    } finally {
-      clearTimeout(timeout);
+  function formatBytesShort(bytes) {
+    if (!Number.isFinite(bytes)) return "—";
+    if (bytes < 1024) return `${bytes} B`;
+    const units = ["KB", "MB", "GB", "TB"];
+    let value = bytes / 1024;
+    let unitIndex = 0;
+    while (value >= 1024 && unitIndex < units.length - 1) {
+      value /= 1024;
+      unitIndex += 1;
     }
+    return `${value.toFixed(value >= 10 ? 0 : 1)} ${units[unitIndex]}`;
+  }
+
+  async function fetchDiagnosticsJson(url) {
+    return fetchJsonWithTimeout(url, { timeoutMs: 15000 });
   }
 
   function renderDiagnosticsSummary(healthData, crimeStatus) {
@@ -11633,6 +12985,71 @@
         <div class="diagnosticsBadge ${optKeysWarning.length > 0 ? "diagnosticsBadge--warn" : "diagnosticsBadge--ok"}">
           ${optKeysWarning.length > 0 ? "WARN" : "OK"}
         </div>
+      </div>
+    `;
+  }
+
+  function renderDiagnosticsOfflineReadiness(readiness) {
+    if (!diagnosticsOfflineReadiness) return;
+
+    if (!readiness) {
+      diagnosticsOfflineReadiness.textContent = "Offline readiness snapshot unavailable.";
+      return;
+    }
+
+    const logsBadge = readiness.hasLogsDir ? "diagnosticsBadge--ok" : "diagnosticsBadge--warn";
+    const cacheBadge = readiness.diskCacheBytes > 0 ? "diagnosticsBadge--ok" : "diagnosticsBadge--warn";
+    const schoolsBadge = readiness.hasSchoolsDataset ? "diagnosticsBadge--ok" : "diagnosticsBadge--warn";
+    const spotsyBadge = readiness.hasStreetlists?.spotsy ? "diagnosticsBadge--ok" : "diagnosticsBadge--warn";
+    const staticBadge = readiness.canServeStatic ? "diagnosticsBadge--ok" : "diagnosticsBadge--warn";
+    const degradedUpstreams = Array.isArray(readiness.degradedUpstreams) ? readiness.degradedUpstreams : [];
+    const degradedBadge = degradedUpstreams.length ? "diagnosticsBadge--warn" : "diagnosticsBadge--ok";
+
+    const lastSuccessLines = readiness.lastUpstreamSuccessAt
+      ? Object.entries(readiness.lastUpstreamSuccessAt).map(([name, ts]) => {
+        const label = ts ? formatRelativeTime(ts) : "Never";
+        return `<div class="dockRowMeta">${escapeHtml(name)} • ${escapeHtml(label)}</div>`;
+      }).join("")
+      : '<div class="dockRowMeta">No upstream data yet.</div>';
+
+    diagnosticsOfflineReadiness.innerHTML = `
+      <div class="diagnosticsRow">
+        <div><div class="diagnosticsRow__title">Snapshot time</div></div>
+        <div class="diagnosticsBadge">${escapeHtml(readiness.serverTime || "—")}</div>
+      </div>
+      <div class="diagnosticsRow">
+        <div><div class="diagnosticsRow__title">Logs directory</div></div>
+        <div class="diagnosticsBadge ${logsBadge}">${readiness.hasLogsDir ? "OK" : "MISSING"}</div>
+      </div>
+      <div class="diagnosticsRow">
+        <div><div class="diagnosticsRow__title">Cache directory</div></div>
+        <div class="diagnosticsBadge">${escapeHtml(readiness.cacheDir || "—")}</div>
+      </div>
+      <div class="diagnosticsRow">
+        <div><div class="diagnosticsRow__title">Disk cache size</div></div>
+        <div class="diagnosticsBadge ${cacheBadge}">${formatBytesShort(readiness.diskCacheBytes || 0)}</div>
+      </div>
+      <div class="diagnosticsRow">
+        <div><div class="diagnosticsRow__title">Schools dataset</div></div>
+        <div class="diagnosticsBadge ${schoolsBadge}">${readiness.hasSchoolsDataset ? "READY" : "MISSING"}</div>
+      </div>
+      <div class="diagnosticsRow">
+        <div><div class="diagnosticsRow__title">Streetlist (Spotsy)</div></div>
+        <div class="diagnosticsBadge ${spotsyBadge}">${readiness.hasStreetlists?.spotsy ? "READY" : "MISSING"}</div>
+      </div>
+      <div class="diagnosticsRow">
+        <div><div class="diagnosticsRow__title">Static assets</div></div>
+        <div class="diagnosticsBadge ${staticBadge}">${readiness.canServeStatic ? "READY" : "MISSING"}</div>
+      </div>
+      <div class="diagnosticsRow">
+        <div><div class="diagnosticsRow__title">Degraded upstreams</div></div>
+        <div class="diagnosticsBadge ${degradedBadge}">${degradedUpstreams.length}</div>
+      </div>
+      <div class="diagnosticsSection__content--subtle" style="margin-top:6px;">
+        ${degradedUpstreams.length ? `Degraded: ${escapeHtml(degradedUpstreams.join(", "))}` : "All required upstreams recently OK."}
+      </div>
+      <div class="diagnosticsSection__content--subtle" style="margin-top:6px;">
+        ${lastSuccessLines || ""}
       </div>
     `;
   }
@@ -11950,15 +13367,17 @@
     if (diagnosticsUpstreams) diagnosticsUpstreams.textContent = "Loading…";
     if (diagnosticsUpstreamTests) diagnosticsUpstreamTests.textContent = "Run “Test Upstreams” to see results.";
     if (diagnosticsCache) diagnosticsCache.textContent = "Loading…";
+    if (diagnosticsOfflineReadiness) diagnosticsOfflineReadiness.textContent = "Loading…";
     if (diagnosticsRSSGeoSummary) diagnosticsRSSGeoSummary.textContent = "Loading…";
     if (diagnosticsRSSGeoList) diagnosticsRSSGeoList.textContent = "Loading…";
 
     // Fetch from new endpoints (with fallback to legacy)
-    const [healthRes, upstreamRes, cacheRes, crimeStatusRes] = await Promise.all([
+    const [healthRes, upstreamRes, cacheRes, crimeStatusRes, offlineRes] = await Promise.all([
       fetchDiagnosticsJson("/api/health").then(r => r.ok ? r : fetchDiagnosticsJson("/health")),
       fetchDiagnosticsJson("/api/diag/upstreams"),
       fetchDiagnosticsJson("/cache/stats"),
-      fetchDiagnosticsJson("/api/fxbg/crime-reports/status")
+      fetchDiagnosticsJson("/api/fxbg/crime-reports/status"),
+      fetchDiagnosticsJson("/api/health/offline-readiness")
     ]);
 
     // Graceful degradation: if all fetches failed, show last known data
@@ -11977,6 +13396,7 @@
       }
       renderDiagnosticsUpstreams(lastKnownDiagnostics.upstreams?.upstreams || null);
       renderDiagnosticsCache(lastKnownDiagnostics.cache || null);
+      renderDiagnosticsOfflineReadiness(lastKnownDiagnostics.offlineReadiness || null);
       renderDiagnosticsRSS();
       renderDiagnosticsRSSGeoSummary();
       return;
@@ -11986,6 +13406,7 @@
     const upstreamList = healthRes.data?.upstreams || upstreamRes.data?.upstreams || null;
     renderDiagnosticsUpstreams(upstreamList);
     renderDiagnosticsCache(cacheRes.data || null);
+    renderDiagnosticsOfflineReadiness(offlineRes.data || null);
     renderDiagnosticsRSS();
     renderDiagnosticsRSSGeoSummary();
 
@@ -11994,7 +13415,8 @@
       health: healthRes.data || null,
       upstreams: upstreamRes.data || null,
       cache: cacheRes.data || null,
-      crimeStatus: crimeStatusRes.data || null
+      crimeStatus: crimeStatusRes.data || null,
+      offlineReadiness: offlineRes.data || null
     };
 
     // Store for offline fallback
@@ -12140,8 +13562,8 @@
   }
   if (diagnosticsCopy) {
     diagnosticsCopy.addEventListener("click", async () => {
-      if (!lastHealthPayload) return;
-      const text = JSON.stringify(lastHealthPayload, null, 2);
+      if (!lastDiagnosticsPayload) return;
+      const text = JSON.stringify(lastDiagnosticsPayload, null, 2);
       try {
         await navigator.clipboard.writeText(text);
         diagnosticsCopy.textContent = "Copied!";
@@ -12426,11 +13848,11 @@
     console.log("[DEBUG Crime Refresh] Click detected at", new Date().toISOString());
     try {
       const months = CONFIG.fxbgCrimeReports.months;
-      const res = await fetch(`/api/fxbg/crime-reports/refresh?months=${months}`);
+      const res = await fetchJsonWithTimeout(`/api/fxbg/crime-reports/refresh?months=${months}`, { timeoutMs: 20000 });
       // DEBUG: Log response status
-      console.log("[DEBUG Crime Refresh] Response status:", res.status, res.statusText);
+      console.log("[DEBUG Crime Refresh] Response status:", res.status);
       // DEBUG: Log response body
-      const json = await res.json();
+      const json = res.data;
       console.log("[DEBUG Crime Refresh] Response body:", JSON.stringify(json, null, 2));
       if (res.ok && json.ok) {
         console.log("[Crime Reports] Refresh initiated");
@@ -12661,8 +14083,9 @@
 
   map.on("zoomend", () => {
     syncPrecisionControlLabels();
-    redraw();
+    scheduleMapRedraw();
   });
+  map.on("moveend", scheduleMapRedraw);
   syncPrecisionControlLabels();
 
   map.on("click", (event) => {
@@ -13818,8 +15241,21 @@
     return lines;
   }
 
-  // Render System tab
-  function renderSystemHTML() {
+  function formatMb(bytes) {
+    if (!Number.isFinite(bytes)) return "0.0";
+    return (bytes / (1024 * 1024)).toFixed(1);
+  }
+
+  function renderSystemSubnav() {
+    return `
+      <div class="dockSubnav">
+        <button class="dockSubnavBtn ${systemSubtab === SYSTEM_SUBTABS.STATUS ? 'isActive' : ''}" data-system-subtab="status" type="button">System Status</button>
+        <button class="dockSubnavBtn ${systemSubtab === SYSTEM_SUBTABS.OFFLINE ? 'isActive' : ''}" data-system-subtab="offline" type="button">Offline Packs</button>
+      </div>
+    `;
+  }
+
+  function renderSystemStatusHTML() {
     const health = healthTracker.computeHealth();
     const staleCount = healthTracker.staleDataCount;
     const uniqueMissing = Array.from(new Set(qa.missing));
@@ -13827,8 +15263,40 @@
     const lastAuditLabel = qa.lastRunTs ? formatRelativeTime(qa.lastRunTs) : 'Never';
     const attemptedEmojiMarkers = store.markerDiagnostics?.attemptedMarkers ?? 0;
     const placedEmojiMarkers = store.markerDiagnostics?.placedMarkers ?? 0;
+    const visibleMarkers = store.markerDiagnostics?.visibleMarkers ?? 0;
+    const suppressedByCategory = store.markerDiagnostics?.suppressedByCategory ?? 0;
+    const suppressedByAoi = store.markerDiagnostics?.suppressedByAoi ?? 0;
+    const suppressedByViewport = store.markerDiagnostics?.suppressedByViewport ?? 0;
+    const suppressedByCap = store.markerDiagnostics?.suppressedByCap ?? 0;
+    const missingLatLon = store.markerDiagnostics?.missingLatLon ?? 0;
+    const totalItems = store.markerDiagnostics?.totalItems ?? store.itemsById.size;
+    const categorySummary = summarizeByCategory(Array.from(store.itemsById.values()));
+    const topCategories = Object.entries(categorySummary)
+      .sort((a, b) => b[1].count - a[1].count)
+      .slice(0, 10);
+    const refreshTimes = store.refreshTimestamps || {};
+    const rssRefreshLabel = refreshTimes.rss ? formatRelativeTime(refreshTimes.rss) : "Never";
+    const schoolsRefreshLabel = refreshTimes.schools ? formatRelativeTime(refreshTimes.schools) : "Never";
+    const trafficRefreshLabel = refreshTimes.traffic ? formatRelativeTime(refreshTimes.traffic) : "Never";
+    const crimeRefreshLabel = refreshTimes.crime ? formatRelativeTime(refreshTimes.crime) : "Never";
 
-    let html = `<div class="dockCard">`;
+    let html = "";
+
+    if (shouldShowLocationPrompt()) {
+      html += `<div class="dockCard">`;
+      html += `<div class="dockRow">`;
+      html += `<div class="dockRowLeft"><div class="dockRowTitle">Enable Location for Nearby Markers</div></div>`;
+      html += `<div class="dockBadge status-backoff">GPS</div>`;
+      html += `</div>`;
+      html += `<div class="dockMetaText">Turn on location to load nearby markers outside the primary AOI.</div>`;
+      html += `<div class="dockActionRow">`;
+      html += `<button class="dockBtnSmall" id="locationPromptEnable">Enable Location</button>`;
+      html += `<button class="dockBtnSmall" id="locationPromptDismiss">Not now</button>`;
+      html += `</div>`;
+      html += `</div>`;
+    }
+
+    html += `<div class="dockCard">`;
     html += `<div class="dockRow">`;
     html += `<div class="dockRowLeft"><div class="dockRowTitle">System Status</div></div>`;
     const statusClass = health.status.toLowerCase() === "live" ? "status-ok" : health.status.toLowerCase() === "partial" ? "status-backoff" : "status-error";
@@ -13841,6 +15309,18 @@
     html += `<div class="dockRow">`;
     html += `<div class="dockRowLeft"><div class="dockRowTitle">Emoji markers placed</div></div>`;
     html += `<div class="dockBadge">${placedEmojiMarkers} / ${attemptedEmojiMarkers}</div>`;
+    html += `</div>`;
+    html += `<div class="dockRow">`;
+    html += `<div class="dockRowLeft"><div class="dockRowTitle">Visible markers</div></div>`;
+    html += `<div class="dockBadge">${visibleMarkers}</div>`;
+    html += `</div>`;
+    html += `<div class="dockRow">`;
+    html += `<div class="dockRowLeft"><div class="dockRowTitle">Suppressed by AOI</div></div>`;
+    html += `<div class="dockBadge">${suppressedByAoi}</div>`;
+    html += `</div>`;
+    html += `<div class="dockRow">`;
+    html += `<div class="dockRowLeft"><div class="dockRowTitle">Suppressed by category</div></div>`;
+    html += `<div class="dockBadge">${suppressedByCategory}</div>`;
     html += `</div>`;
     if (attemptedEmojiMarkers > 0 && placedEmojiMarkers === 0) {
       html += `<div class="dockRowMeta" style="margin-top:8px;color:var(--warn);">Markers suppressed: check coordinate resolver</div>`;
@@ -13859,6 +15339,90 @@
       html += `</div>`;
     }
 
+    html += `</div>`;
+
+    html += `<div class="dockSectionTitle">Marker Pipeline</div>`;
+    html += `<div class="dockCard">`;
+    html += `<div class="dockRow">`;
+    html += `<div class="dockRowLeft"><div class="dockRowTitle">Total items in memory</div></div>`;
+    html += `<div class="dockBadge">${totalItems}</div>`;
+    html += `</div>`;
+    html += `<div class="dockRow">`;
+    html += `<div class="dockRowLeft"><div class="dockRowTitle">Rendered markers</div></div>`;
+    html += `<div class="dockBadge">${visibleMarkers}</div>`;
+    html += `</div>`;
+    html += `<div class="dockRow">`;
+    html += `<div class="dockRowLeft"><div class="dockRowTitle">Suppressed by AOI</div></div>`;
+    html += `<div class="dockBadge">${suppressedByAoi}</div>`;
+    html += `</div>`;
+    html += `<div class="dockRow">`;
+    html += `<div class="dockRowLeft"><div class="dockRowTitle">Suppressed by viewport</div></div>`;
+    html += `<div class="dockBadge">${suppressedByViewport}</div>`;
+    html += `</div>`;
+    html += `<div class="dockRow">`;
+    html += `<div class="dockRowLeft"><div class="dockRowTitle">Suppressed by cap</div></div>`;
+    html += `<div class="dockBadge">${suppressedByCap}</div>`;
+    html += `</div>`;
+    html += `<div class="dockRow">`;
+    html += `<div class="dockRowLeft"><div class="dockRowTitle">Missing lat/lon</div></div>`;
+    html += `<div class="dockBadge">${missingLatLon}</div>`;
+    html += `</div>`;
+    html += `<div class="dockPipelineGroup">`;
+    html += `<div class="dockRowTitle">Top categories</div>`;
+    if (topCategories.length) {
+      html += `<div class="dockPipelineList">`;
+      topCategories.forEach(([key, data]) => {
+        const label = CATEGORIES[key]?.label || key;
+        html += `<div class="dockPipelineList__row"><span>${escapeHtml(label)}</span><span class="dockBadge">${data.count}</span></div>`;
+      });
+      html += `</div>`;
+    } else {
+      html += `<div class="dockRowMeta">No category data available.</div>`;
+    }
+    html += `</div>`;
+    html += `<div class="dockPipelineGroup">`;
+    html += `<div class="dockRowTitle">Last refresh</div>`;
+    html += `<div class="dockPipelineList">`;
+    html += `<div class="dockPipelineList__row"><span>News / RSS</span><span class="dockBadge">${escapeHtml(rssRefreshLabel)}</span></div>`;
+    html += `<div class="dockPipelineList__row"><span>Schools</span><span class="dockBadge">${escapeHtml(schoolsRefreshLabel)}</span></div>`;
+    html += `<div class="dockPipelineList__row"><span>Traffic</span><span class="dockBadge">${escapeHtml(trafficRefreshLabel)}</span></div>`;
+    html += `<div class="dockPipelineList__row"><span>Crime</span><span class="dockBadge">${escapeHtml(crimeRefreshLabel)}</span></div>`;
+    html += `</div>`;
+    html += `</div>`;
+    html += `</div>`;
+
+    html += `<div class="dockCard">`;
+    html += `<div class="dockSectionTitle">Load Shedding</div>`;
+    html += `<div class="dockToggleRow">`;
+    html += `<div class="dockToggleLabel">Degraded UI mode</div>`;
+    html += `<div class="toggleSwitch ${store.loadShedding ? 'isOn' : ''}" id="loadSheddingToggle" role="switch" aria-checked="${store.loadShedding ? 'true' : 'false'}"></div>`;
+    html += `</div>`;
+    html += `<div class="dockMetaText">When enabled, pause heavy GIS + bulk lists while core feeds continue on a slower cadence to prevent lockups.</div>`;
+    html += `</div>`;
+
+    html += `<div class="dockCard">`;
+    html += `<div class="dockSectionTitle">Mobile Perf Mode</div>`;
+    html += `<div class="dockToggleRow">`;
+    html += `<div class="dockToggleLabel">Cap markers + declutter stacking</div>`;
+    html += `<div class="toggleSwitch ${store.mobilePerf ? 'isOn' : ''}" id="mobilePerfToggle" role="switch" aria-checked="${store.mobilePerf ? 'true' : 'false'}"></div>`;
+    html += `</div>`;
+    html += `<div class="dockMetaText">Limits marker count and prefers declutter stacking to keep mobile responsive.</div>`;
+    html += `</div>`;
+
+    html += `<div class="dockCard">`;
+    html += `<div class="dockSectionTitle">AOI Mode (Mobile)</div>`;
+    html += `<div class="dockMetaText">Smart = primary AOI + nearby GPS AOI. Primary = primary AOI only. Off = no AOI gating.</div>`;
+    html += `<div class="dockActionRow dockActionRow--three">`;
+    html += `<button class="dockBtnSmall" data-aoi-mode="mobile-smart" aria-pressed="${store.aoi.mode === 'mobile-smart'}">AOI: Smart</button>`;
+    html += `<button class="dockBtnSmall" data-aoi-mode="primary-only" aria-pressed="${store.aoi.mode === 'primary-only'}">AOI: Primary</button>`;
+    html += `<button class="dockBtnSmall" data-aoi-mode="off" aria-pressed="${store.aoi.mode === 'off'}">AOI: Off</button>`;
+    html += `</div>`;
+    html += `</div>`;
+
+    html += `<div class="dockCard">`;
+    html += `<div class="dockSectionTitle">Mobile Filters</div>`;
+    html += `<div class="dockMetaText">Clear saved AOI, load shedding, perf mode, and category filters.</div>`;
+    html += `<button class="dockBtnSmall" id="resetMobileFilters" type="button">Reset Mobile Filters</button>`;
     html += `</div>`;
 
     // Recent errors
@@ -13894,71 +15458,6 @@
       });
     }
 
-    // GIS Overlays (grouped by municipality)
-    if (CONFIG.gisOverlays.enabled) {
-      html += `<div class="dockSectionTitle">Map Overlays</div>`;
-
-      // Show catalog fetch error if any
-      if (store.gis.catalogError) {
-        html += `<div class="dockCard" style="border:1px solid var(--warn,#f59e0b);background:rgba(245,158,11,0.08);padding:8px 10px;margin-bottom:8px;">`;
-        html += `<div class="dockRowTitle" style="color:var(--warn,#f59e0b);">GIS Catalog Error</div>`;
-        html += `<div class="dockRowMeta" style="color:var(--warn,#f59e0b);word-break:break-word;">${escapeHtml(store.gis.catalogError)}</div>`;
-        html += `</div>`;
-      }
-
-      // Group overlays by municipality — always render ALL entries even with missing names
-      const groups = {};
-      CONFIG.gisOverlays.overlays.forEach(overlay => {
-        const group = overlay.group || "OTHER";
-        if (!groups[group]) groups[group] = [];
-        groups[group].push(overlay);
-      });
-
-      // Get collapsed state from localStorage
-      let collapsedGroups = {};
-      try {
-        const stored = localStorage.getItem("fxbg_overlay_groups_collapsed");
-        if (stored) {
-          collapsedGroups = safeJsonParse(stored, {}, "overlay group state");
-        }
-      } catch(e) {}
-
-      // Render each group as an accordion
-      Object.keys(groups).forEach(groupName => {
-        const overlays = groups[groupName];
-        const isCollapsed = collapsedGroups[groupName] === true;
-
-        html += `<div class="overlayGroup ${isCollapsed ? 'collapsed' : ''}" data-group="${escapeAttr(groupName)}">`;
-        html += `<div class="overlayGroup__toggle" data-group="${escapeAttr(groupName)}">`;
-        html += `<span class="overlayGroup__toggleTitle">${escapeHtml(groupName)} (${overlays.length})</span>`;
-        html += `<span class="overlayGroup__toggleIcon">▼</span>`;
-        html += `</div>`;
-        html += `<div class="overlayGroup__body">`;
-
-        overlays.forEach(overlay => {
-          const isEnabled = store.gis.enabled.has(overlay.id);
-          const displayName = (overlay.name && String(overlay.name).trim())
-            ? overlay.name
-            : gisOverlayFallbackName(overlay);
-          html += `<div class="dockRow">`;
-          html += `<label>`;
-          html += `<input type="checkbox" data-overlay-id="${escapeAttr(overlay.id)}" ${isEnabled ? 'checked' : ''}>`;
-          html += `<span>${escapeHtml(displayName)}</span>`;
-          html += `</label>`;
-          html += `</div>`;
-        });
-
-        html += `</div>`; // overlayGroup__body
-        html += `</div>`; // overlayGroup
-      });
-
-      // Hydrate GIS names hint
-      html += `<div class="dockCard" style="margin-top:10px;padding:8px 10px;opacity:0.7;">`;
-      html += `<div class="dockRowMeta">To resolve missing layer names from ArcGIS metadata:</div>`;
-      html += `<code style="font-size:11px;background:rgba(255,255,255,0.06);padding:2px 6px;border-radius:3px;display:inline-block;margin-top:4px;">npm run gis:names</code>`;
-      html += `</div>`;
-    }
-
     if (uniqueMissing.length > 0) {
       const warningMsg = `Critical UI bindings missing: ${uniqueMissing.join(', ')}`;
       if (!qa.warnings.includes(warningMsg)) qa.warnings.push(warningMsg);
@@ -13977,6 +15476,364 @@
     html += `<button class="dockBtnSmall" id="dockRunQuickSmoke">Run Quick Smoke</button>`;
     html += `<div id="dockQuickSmokeReport" style="margin-top:8px;">${formatQaSmokeLines(qa.quickSmokeReport)}</div>`;
     html += `</div>`;
+
+    return html;
+  }
+
+  function renderOfflinePacksHTML() {
+    const status = offlinePackState.status;
+    const progress = offlinePackState.progress;
+    const updated = readOfflinePackUpdated();
+    const installed = readOfflinePackInstalled();
+    const coreStats = status?.byTier?.core || { count: 0, bytes: 0 };
+    const fieldStats = status?.byTier?.field || { count: 0, bytes: 0 };
+    const optionalStats = status?.byTier?.optional || { count: 0, bytes: 0 };
+    const coreBudget = Number.isFinite(status?.budgets?.core) ? status.budgets.core : null;
+    const fieldBudget = Number.isFinite(status?.budgets?.field) ? status.budgets.field : null;
+    const coreBudgetBytes = coreBudget !== null ? coreBudget * 1024 * 1024 : null;
+    const fieldBudgetBytes = fieldBudget !== null ? fieldBudget * 1024 * 1024 : null;
+    const coreUsageBytes = coreStats.bytes || 0;
+    const fieldUsageBytes = (coreStats.bytes || 0) + (fieldStats.bytes || 0) + (optionalStats.bytes || 0);
+    const coreOverBudget = coreBudgetBytes !== null && coreUsageBytes > coreBudgetBytes;
+    const fieldOverBudget = fieldBudgetBytes !== null && fieldUsageBytes > fieldBudgetBytes;
+    const lastCoreUpdate = updated.core ? formatRelativeTime(updated.core) : "Never";
+    const lastFieldUpdate = updated.field ? formatRelativeTime(updated.field) : "Never";
+    const currentKey = progress?.currentKey || "—";
+    const done = Number.isFinite(progress?.done) ? progress.done : 0;
+    const total = Number.isFinite(progress?.total) ? progress.total : 0;
+    const errors = Array.isArray(progress?.errors) ? progress.errors.slice(-3) : [];
+
+    const renderStorageMeter = (label, usageBytes, budgetMB, overBudget) => {
+      if (!Number.isFinite(budgetMB)) {
+        return `
+          <div class="offlineMeter">
+            <div class="offlineMeter__label">${escapeHtml(label)} Storage</div>
+            <div class="offlineMeter__meta">
+              <span>${formatMb(usageBytes)} MB used</span>
+              <span>No budget set</span>
+            </div>
+          </div>
+        `;
+      }
+      const budgetBytes = budgetMB * 1024 * 1024;
+      const percent = budgetBytes > 0 ? Math.min(100, Math.round((usageBytes / budgetBytes) * 100)) : 0;
+      return `
+        <div class="offlineMeter ${overBudget ? 'offlineMeter--over' : ''}">
+          <div class="offlineMeter__label">${escapeHtml(label)} Storage</div>
+          <div class="offlineMeter__bar"><div class="offlineMeter__fill" style="width:${percent}%"></div></div>
+          <div class="offlineMeter__meta">
+            <span>${formatMb(usageBytes)} MB used</span>
+            <span>${budgetMB} MB budget</span>
+          </div>
+          ${overBudget ? '<div class="offlineMeter__warning">Over budget — evict cached items or increase budget.</div>' : ''}
+        </div>
+      `;
+    };
+
+    let html = "";
+    html += `<div class="dockCard">`;
+    html += `<div class="dockRow">`;
+    html += `<div class="dockRowLeft">`;
+    html += `<div class="dockRowTitle">Core Pack</div>`;
+    html += `<div class="dockRowMeta">Cached ${coreStats.count} • ${formatMb(coreStats.bytes)} MB</div>`;
+    html += `<div class="dockRowMeta">Last updated ${escapeHtml(lastCoreUpdate)}${coreBudget !== null ? ` • Budget ${coreBudget} MB` : ''}</div>`;
+    html += `</div>`;
+    html += `<div class="dockBadge">${installed === "core" ? "PRIMARY" : "CORE"}</div>`;
+    html += `</div>`;
+    html += `<div class="dockRow">`;
+    html += `<div class="dockRowLeft">`;
+    html += `<div class="dockRowTitle">Field Pack</div>`;
+    html += `<div class="dockRowMeta">Cached ${fieldStats.count} • ${formatMb(fieldStats.bytes)} MB</div>`;
+    html += `<div class="dockRowMeta">Last updated ${escapeHtml(lastFieldUpdate)}${fieldBudget !== null ? ` • Budget ${fieldBudget} MB` : ''}</div>`;
+    html += `</div>`;
+    html += `<div class="dockBadge">${installed === "field" ? "PRIMARY" : "FIELD"}</div>`;
+    html += `</div>`;
+    if (status) {
+      html += renderStorageMeter("Core Pack", coreUsageBytes, coreBudget, coreOverBudget);
+      html += renderStorageMeter("Field Pack", fieldUsageBytes, fieldBudget, fieldOverBudget);
+    }
+    if (!status) {
+      html += `<div class="dockRowMeta">Loading offline pack status…</div>`;
+    }
+    html += `</div>`;
+
+    html += `<div class="dockSectionTitle">Actions</div>`;
+    html += `<div class="dockCard">`;
+    html += `<div class="dockActionRow dockActionRow--two">`;
+    html += `<button class="dockBtnSmall" id="offlineDownloadCore" type="button">Download Core Kit</button>`;
+    html += `<button class="dockBtnSmall" id="offlineDownloadField" type="button">Download Field Pack</button>`;
+    html += `</div>`;
+    html += `<div class="dockActionRow dockActionRow--three">`;
+    html += `<button class="dockBtnSmall" id="offlineEvictBudget" type="button">Evict to Budget</button>`;
+    html += `<button class="dockBtnSmall" id="offlineRefreshCore" type="button">Refresh Core</button>`;
+    html += `<button class="dockBtnSmall" id="offlineRefreshField" type="button">Refresh Field</button>`;
+    html += `</div>`;
+    html += `</div>`;
+
+    html += `<div class="dockSectionTitle">Progress</div>`;
+    html += `<div class="dockCard">`;
+    html += `<div class="dockRow">`;
+    html += `<div class="dockRowLeft"><div class="dockRowTitle">Current key</div><div class="dockRowMeta">${escapeHtml(currentKey)}</div></div>`;
+    html += `<div class="dockBadge">${progress?.running ? 'RUNNING' : 'IDLE'}</div>`;
+    html += `</div>`;
+    html += `<div class="dockRow">`;
+    html += `<div class="dockRowLeft"><div class="dockRowTitle">Queue</div><div class="dockRowMeta">${done} / ${total}</div></div>`;
+    html += `</div>`;
+    html += `<div class="dockRow">`;
+    html += `<div class="dockRowLeft"><div class="dockRowTitle">Recent errors</div>`;
+    if (!errors.length) {
+      html += `<div class="dockRowMeta">None</div>`;
+    } else {
+      errors.forEach((entry) => {
+        html += `<div class="dockRowMeta" style="color:var(--warn);">${escapeHtml(entry.key || 'unknown')}: ${escapeHtml(entry.error || 'error')}</div>`;
+      });
+    }
+    html += `</div>`;
+    html += `</div>`;
+    if (offlinePackState.error) {
+      html += `<div class="dockRowMeta" style="color:var(--warn);margin-top:6px;">${escapeHtml(offlinePackState.error)}</div>`;
+    }
+    html += `</div>`;
+
+    return html;
+  }
+
+  async function fetchOfflinePackStatus() {
+    try {
+      const res = await fetch("/api/gis/offline/status");
+      const data = await res.json();
+      if (!res.ok || !data.ok) {
+        throw new Error(data.error || "status_failed");
+      }
+      offlinePackState.status = data;
+      offlinePackState.error = null;
+    } catch (err) {
+      offlinePackState.error = err?.message || String(err);
+    }
+  }
+
+  async function fetchOfflinePackProgress() {
+    try {
+      const res = await fetch("/api/gis/offline/progress");
+      const data = await res.json();
+      if (!res.ok || !data.ok) {
+        throw new Error(data.error || "progress_failed");
+      }
+      offlinePackState.progress = data;
+      if (!data.running && offlinePackState.activePrefetchPack && data.total > 0 && data.done >= data.total) {
+        writeOfflinePackUpdated(offlinePackState.activePrefetchPack, Date.now());
+        offlinePackState.activePrefetchPack = null;
+      }
+      offlinePackState.error = null;
+    } catch (err) {
+      offlinePackState.error = err?.message || String(err);
+    }
+  }
+
+  async function refreshOfflinePackPanel() {
+    await Promise.all([fetchOfflinePackStatus(), fetchOfflinePackProgress()]);
+    if (dockState?.isOpen && dockState.tab === "system" && systemSubtab === SYSTEM_SUBTABS.OFFLINE) {
+      renderDock();
+    }
+  }
+
+  function startOfflinePackPolling() {
+    if (offlinePackState.pollTimer) return;
+    refreshOfflinePackPanel();
+    offlinePackState.pollTimer = setInterval(() => {
+      refreshOfflinePackPanel();
+    }, 3000);
+  }
+
+  function stopOfflinePackPolling() {
+    if (offlinePackState.pollTimer) {
+      clearInterval(offlinePackState.pollTimer);
+      offlinePackState.pollTimer = null;
+    }
+  }
+
+  async function startOfflinePackPrefetch(pack) {
+    if (!pack) return;
+    offlinePackState.activePrefetchPack = pack;
+    writeOfflinePackInstalled(pack);
+    try {
+      const res = await fetch("/api/gis/offline/prefetch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pack })
+      });
+      const data = await res.json();
+      if (!res.ok || !data.ok) {
+        throw new Error(data.error || "prefetch_failed");
+      }
+      await refreshOfflinePackPanel();
+    } catch (err) {
+      offlinePackState.error = err?.message || String(err);
+      if (dockState?.isOpen && dockState.tab === "system" && systemSubtab === SYSTEM_SUBTABS.OFFLINE) {
+        renderDock();
+      }
+    }
+  }
+
+  async function evictOfflinePacksToBudget() {
+    try {
+      await fetch("/api/gis/offline/evict", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pack: "core" })
+      });
+      await fetch("/api/gis/offline/evict", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pack: "field" })
+      });
+      await refreshOfflinePackPanel();
+    } catch (err) {
+      offlinePackState.error = err?.message || String(err);
+      if (dockState?.isOpen && dockState.tab === "system" && systemSubtab === SYSTEM_SUBTABS.OFFLINE) {
+        renderDock();
+      }
+    }
+  }
+
+  function getOfflineEntriesForPack(pack) {
+    const entries = getGisCatalogEntries();
+    return entries.filter((entry) => entry?.offline?.tier === pack);
+  }
+
+  async function refreshOfflinePack(pack) {
+    if (!pack) return;
+    await ensureGisCatalogReady();
+    const entries = getOfflineEntriesForPack(pack);
+    if (!entries.length) {
+      offlinePackState.error = `No offline entries found for ${pack} pack.`;
+      if (dockState?.isOpen && dockState.tab === "system" && systemSubtab === SYSTEM_SUBTABS.OFFLINE) {
+        renderDock();
+      }
+      return;
+    }
+    let hasError = false;
+    for (const entry of entries) {
+      try {
+        const res = await fetch("/api/gis/offline/refresh", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ key: entry.key, force: true })
+        });
+        const data = await res.json();
+        if (!res.ok || !data.ok) {
+          hasError = true;
+          console.warn("[Offline Packs] Refresh failed", entry.key, data);
+        }
+      } catch (err) {
+        hasError = true;
+        console.warn("[Offline Packs] Refresh failed", entry.key, err);
+      }
+    }
+    if (!hasError) {
+      writeOfflinePackUpdated(pack, Date.now());
+    }
+    await refreshOfflinePackPanel();
+  }
+
+  // Render System tab
+  function renderSystemHTML() {
+    let html = renderSystemSubnav();
+    if (systemSubtab === SYSTEM_SUBTABS.OFFLINE) {
+      html += renderOfflinePacksHTML();
+    } else {
+      html += renderSystemStatusHTML();
+    }
+    return html;
+  }
+
+  function renderLayersHTML() {
+    let html = "";
+
+    if (store.loadShedding) {
+      html += `<div class="dockCard">`;
+      html += `<div class="dockRow">`;
+      html += `<div class="dockRowLeft">`;
+      html += `<div class="dockRowTitle">Load Shedding</div>`;
+      html += `<div class="dockRowMeta">Auto-load is disabled. Enable layers manually.</div>`;
+      html += `</div>`;
+      html += `<div class="dockBadge status-backoff">ON</div>`;
+      html += `</div>`;
+      html += `</div>`;
+    }
+
+    if (gisCatalogStatus === "idle") {
+      ensureGisCatalogReady();
+    }
+
+    if (gisCatalogStatus === "loading") {
+      html += `<div class="dockCard"><div class="dockMetaText">Loading GIS catalog…</div></div>`;
+      return html;
+    }
+
+    if (gisCatalogStatus === "error") {
+      html += `<div class="dockCard"><div class="dockMetaText" style="color:var(--warn);">Failed to load GIS catalog.</div></div>`;
+    }
+
+    let collapsedGroups = {};
+    try {
+      const stored = localStorage.getItem("fxbg_layers_groups_collapsed");
+      if (stored) {
+        collapsedGroups = safeJsonParse(stored, {}, "layers group state");
+      }
+    } catch (e) {}
+
+    GIS_PANEL_GROUPS.forEach((group) => {
+      const entries = Array.isArray(gisCatalogCache?.[group.key]) ? gisCatalogCache[group.key] : [];
+      const isCollapsed = collapsedGroups[group.key] === true;
+
+      html += `<div class="overlayGroup ${isCollapsed ? 'collapsed' : ''}" data-group="${escapeAttr(group.key)}">`;
+      html += `<div class="overlayGroup__toggle" data-group="${escapeAttr(group.key)}">`;
+      html += `<span class="overlayGroup__toggleTitle">${escapeHtml(group.label)} (${entries.length})</span>`;
+      html += `<span class="overlayGroup__toggleIcon">▼</span>`;
+      html += `</div>`;
+      html += `<div class="overlayGroup__body">`;
+
+      if (!entries.length) {
+        html += `<div class="dockRow"><div class="dockRowLeft"><div class="dockRowMeta">No layers available.</div></div></div>`;
+      }
+
+      entries.forEach((entry) => {
+        const layerEntry = GIS_LAYERS.get(entry.key);
+        const isChecked = layerEntry?.enabled || layerEntry?.loading;
+        const statusText = layerEntry?.loading
+          ? "Loading…"
+          : layerEntry?.error
+            ? "Load failed"
+            : "";
+        const errorMessageRaw = layerEntry?.error
+          ? (layerEntry.error.message || String(layerEntry.error))
+          : "";
+        const errorSnippet = errorMessageRaw ? errorMessageRaw.slice(0, 120) : "";
+        const statusClass = layerEntry?.error ? "style=\"color:var(--warn);\"" : "";
+
+        html += `<div class="dockRow">`;
+        html += `<div class="dockRowLeft">`;
+        html += `<label>`;
+        html += `<input type="checkbox" data-gis-layer-key="${escapeAttr(entry.key)}" ${isChecked ? 'checked' : ''}>`;
+        const resolvedTitle = layerEntry?.meta?.resolution?.title;
+        const displayName = layerEntry?.meta?.name || resolvedTitle || entry.name || entry.key;
+        html += `<span>${escapeHtml(displayName)}</span>`;
+        html += `</label>`;
+        if (statusText) {
+          html += `<div class="dockRowMeta" ${statusClass}>${escapeHtml(statusText)}</div>`;
+        }
+        if (errorSnippet) {
+          html += `<div class="dockRowMeta" ${statusClass}>${escapeHtml(errorSnippet)}</div>`;
+          html += `<button class="dockBtnSmall" data-gis-layer-prefetch="${escapeAttr(entry.key)}">Download missing layer</button>`;
+        }
+        html += `</div>`;
+        html += `</div>`;
+      });
+
+      html += `</div>`;
+      html += `</div>`;
+    });
 
     return html;
   }
@@ -14013,6 +15870,7 @@
       case "alerts": return renderAlertsHTML();
       case "tracks": return renderTracksHTML();
       case "sync": return renderSyncHTML();
+      case "layers": return renderLayersHTML();
       case "settings": return renderSettingsHTML();
       case "system": return renderSystemHTML();
       default: return "<p>Unknown tab</p>";
@@ -14029,6 +15887,7 @@
       watchboard: "Watchboard",
       alerts: "Hot Alerts",
       tracks: "Tracks",
+      layers: "Layers",
       sync: "Sync",
       settings: "Settings",
       system: "System"
@@ -14113,50 +15972,138 @@
     }
 
     if (dockState.tab === "system") {
-      bind("dockRunQuickSmoke", "click", () => runQuickSmoke());
-
-      // Ensure GIS catalog is fetched; re-render once ready if it wasn't already
-      if (!store.gis.catalogReady) {
-        ensureGisCatalogReady().then(() => {
-          if (dockState.isOpen && dockState.tab === 'system') renderDock();
+      dockPanelBody.querySelectorAll("[data-system-subtab]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const next = btn.dataset.systemSubtab;
+          if (!next || next === systemSubtab) return;
+          systemSubtab = next;
+          renderDock();
         });
-      }
+      });
 
-      // Bind GIS overlay toggles
-      dockPanelBody.querySelectorAll('input[data-overlay-id]').forEach(checkbox => {
-        checkbox.addEventListener("change", async (e) => {
-          const overlayId = e.target.dataset.overlayId;
-          await ensureGisCatalogReady();
-          if (e.target.checked) {
-            await enableOverlay(overlayId);
+      if (systemSubtab === SYSTEM_SUBTABS.STATUS) {
+        bind("dockRunQuickSmoke", "click", () => runQuickSmoke());
+        const locationPromptEnable = document.getElementById("locationPromptEnable");
+        if (locationPromptEnable) {
+          locationPromptEnable.addEventListener("click", () => {
+            setLocationEnabled(true);
+            renderDock();
+          });
+        }
+        const locationPromptDismiss = document.getElementById("locationPromptDismiss");
+        if (locationPromptDismiss) {
+          locationPromptDismiss.addEventListener("click", () => {
+            markLocationPromptSeen();
+            renderDock();
+          });
+        }
+        const loadSheddingToggle = document.getElementById("loadSheddingToggle");
+        if (loadSheddingToggle) {
+          loadSheddingToggle.addEventListener("click", () => {
+            setLoadShedding(!store.loadShedding);
+            renderDock();
+          });
+        }
+        const mobilePerfToggle = document.getElementById("mobilePerfToggle");
+        if (mobilePerfToggle) {
+          mobilePerfToggle.addEventListener("click", () => {
+            setMobilePerf(!store.mobilePerf);
+            renderDock();
+          });
+        }
+        dockPanelBody.querySelectorAll("[data-aoi-mode]").forEach((btn) => {
+          btn.addEventListener("click", () => {
+            const mode = btn.dataset.aoiMode;
+            if (!mode || mode === store.aoi.mode) return;
+            setAoiMode(mode);
+            renderDock();
+          });
+        });
+        const resetMobileFilters = document.getElementById("resetMobileFilters");
+        if (resetMobileFilters) {
+          resetMobileFilters.addEventListener("click", () => {
+            try {
+              localStorage.removeItem(AOI_MODE_STORAGE_KEY);
+              localStorage.removeItem(LOAD_SHEDDING_STORAGE_KEY);
+              localStorage.removeItem(MOBILE_PERF_STORAGE_KEY);
+              localStorage.removeItem(ACTIVE_CATEGORIES_STORAGE_KEY);
+            } catch {}
+            window.location.reload();
+          });
+        }
+        stopOfflinePackPolling();
+      } else if (systemSubtab === SYSTEM_SUBTABS.OFFLINE) {
+        bind("offlineDownloadCore", "click", () => startOfflinePackPrefetch("core"));
+        bind("offlineDownloadField", "click", () => startOfflinePackPrefetch("field"));
+        bind("offlineEvictBudget", "click", () => evictOfflinePacksToBudget());
+        bind("offlineRefreshCore", "click", () => refreshOfflinePack("core"));
+        bind("offlineRefreshField", "click", () => refreshOfflinePack("field"));
+        startOfflinePackPolling();
+      }
+    }
+
+    if (dockState.tab === "layers") {
+      dockPanelBody.querySelectorAll('input[data-gis-layer-key]').forEach((checkbox) => {
+        checkbox.addEventListener("change", async (event) => {
+          const key = event.target.dataset.gisLayerKey;
+          if (event.target.checked) {
+            await enableGisLayer(key);
           } else {
-            disableOverlay(overlayId);
+            disableGisLayer(key);
           }
         });
       });
 
-      // Bind accordion toggle handlers
-      dockPanelBody.querySelectorAll('.overlayGroup__toggle').forEach(toggle => {
-        toggle.addEventListener("click", async (e) => {
-          await ensureGisCatalogReady();
-          const groupName = toggle.dataset.group;
-          const groupEl = toggle.closest('.overlayGroup');
+      dockPanelBody.querySelectorAll('[data-gis-layer-prefetch]').forEach((button) => {
+        button.addEventListener("click", async (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          const key = button.dataset.gisLayerPrefetch;
+          if (!key) return;
+          button.disabled = true;
+          try {
+            const res = await fetch("/api/gis/offline/prefetch", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ keys: [key] })
+            });
+            const data = await res.json();
+            if (!res.ok || !data.ok) {
+              throw new Error(data?.error || "prefetch_failed");
+            }
+            const entry = GIS_LAYERS.get(key);
+            if (entry) {
+              entry.error = null;
+            }
+            refreshLayersPanelUI();
+          } catch (err) {
+            const entry = GIS_LAYERS.get(key);
+            if (entry) {
+              entry.error = err;
+            }
+            refreshLayersPanelUI();
+          } finally {
+            button.disabled = false;
+          }
+        });
+      });
 
-          // Toggle collapsed class
-          groupEl.classList.toggle('collapsed');
+      dockPanelBody.querySelectorAll(".overlayGroup__toggle").forEach((toggle) => {
+        toggle.addEventListener("click", () => {
+          const groupKey = toggle.dataset.group;
+          const groupEl = toggle.closest(".overlayGroup");
+          groupEl.classList.toggle("collapsed");
 
-          // Save collapsed state to localStorage
           try {
             let collapsedGroups = {};
-            const stored = localStorage.getItem("fxbg_overlay_groups_collapsed");
+            const stored = localStorage.getItem("fxbg_layers_groups_collapsed");
             if (stored) {
-              collapsedGroups = safeJsonParse(stored, {}, "overlay group state");
+              collapsedGroups = safeJsonParse(stored, {}, "layers group state");
             }
-
-            collapsedGroups[groupName] = groupEl.classList.contains('collapsed');
-            localStorage.setItem("fxbg_overlay_groups_collapsed", JSON.stringify(collapsedGroups));
-          } catch(e) {
-            console.warn("Failed to save accordion state:", e);
+            collapsedGroups[groupKey] = groupEl.classList.contains("collapsed");
+            localStorage.setItem("fxbg_layers_groups_collapsed", JSON.stringify(collapsedGroups));
+          } catch (e) {
+            console.warn("Failed to save layers accordion state:", e);
           }
         });
       });
@@ -14220,7 +16167,7 @@
     const criticalBindingsByTab = {
       overview: ['dockRefreshAll', 'dockResetFilters'],
       settings: ['themeApplyBtn', 'themeReset'],
-      system: ['dockRunQuickSmoke'],
+      system: systemSubtab === SYSTEM_SUBTABS.STATUS ? ['dockRunQuickSmoke'] : [],
       sync: ['hubPullNow', 'hubPushNow', 'hubStatusNow'],
       tracks: ['trackStartBtn', 'trackStopBtn']
     };
@@ -14270,6 +16217,7 @@
     dockOverlay.classList.remove("isOpen");
     dockPanel.setAttribute("aria-hidden", "true");
     dockOverlay.setAttribute("aria-hidden", "true");
+    stopOfflinePackPolling();
 
     // Update button active states
     dockButtons.forEach(btn => {
@@ -14296,6 +16244,10 @@
   // Set dock tab (when already open)
   function setDockTab(tab) {
     dockState.tab = tab;
+
+    if (tab !== "system") {
+      stopOfflinePackPolling();
+    }
 
     // Update button active states
     dockButtons.forEach(btn => {
@@ -14751,6 +16703,17 @@
     __headerListenersAttached = true;
     wireUiModeToggle();
 
+    if (IS_MOBILE_UI) {
+      const moreBtn = document.getElementById("mobileHudMoreBtn");
+      if (moreBtn) {
+        moreBtn.addEventListener("click", () => {
+          if (!store.mobileHudCompact) return;
+          setMobileHudCompact(false);
+        });
+      }
+      applyMobileHudCompactState();
+    }
+
     // Refresh button - use parent-aware selectors to avoid ID conflicts during mobile/desktop transitions
     const btnRefresh = IS_MOBILE_UI
       ? document.querySelector('.mobile-only #btnRefresh') || $("btnRefresh")
@@ -15049,18 +17012,31 @@
     const root = document.documentElement;
     root.classList.toggle("ui-mobile", IS_MOBILE_UI);
     root.classList.toggle("ui-desktop", !IS_MOBILE_UI);
+    const body = document.body;
+    if (body) {
+      body.classList.toggle("isMobile", IS_MOBILE_UI);
+      body.classList.toggle("fieldDefault", IS_MOBILE_UI && currentUiMode === UI_MODES.FIELD);
+    }
 
     const desktopHeader = document.getElementById("desktopHeader");
 
     if (IS_MOBILE_UI) {
       // IMPORTANT: prevent duplicate IDs from desktop header interfering with mobile getElementById lookups
       if (desktopHeader) desktopHeader.innerHTML = "";
+      if (dockState?.tab === "system") {
+        if (dockState.isOpen) {
+          setDockTab("overview");
+        } else {
+          dockState.tab = "overview";
+        }
+      }
       // Mobile mode: attach event listeners to mobile header elements (only once or when switching from desktop)
       if (!__mobileListenersAttached || changed) {
         __headerListenersAttached = false; // Reset guard to allow re-attachment
         attachHeaderEventListeners();
         __mobileListenersAttached = true;
       }
+      applyMobileHudCompactState();
       renderFreshnessBadges();
       updateChromeHeights();
       updateBarActualHeights();
@@ -15257,6 +17233,7 @@
   updateBarActualHeights();
   updateCrimeButtonActiveState();
   ensureOverlayLegendControl();
+  ensureGisCatalogReady().then(() => autoLoadBasemapEnhancers());
   runUiSanityCheck("boot");
   const activeMissionEndBtn = document.getElementById('activeMissionEnd');
   if (activeMissionEndBtn) {
@@ -15291,6 +17268,7 @@
       }
 
       await loadPlacesDataset();
+      await loadSpotsyStreetList();
 
       // Load cached reports and merge if needed
       const cachedReports = await idbGetReports();
