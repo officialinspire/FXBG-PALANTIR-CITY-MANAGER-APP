@@ -2086,6 +2086,48 @@ body.debug-ui button {
   margin-bottom: 10px;
 }
 
+.offlineMeter {
+  margin: 10px 6px 2px;
+}
+
+.offlineMeter__label {
+  font-size: 12px;
+  font-weight: 700;
+  margin-bottom: 6px;
+}
+
+.offlineMeter__bar {
+  height: 8px;
+  background: rgba(255,255,255,0.12);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.offlineMeter__fill {
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.2s ease;
+}
+
+.offlineMeter--over .offlineMeter__fill {
+  background: var(--warn);
+}
+
+.offlineMeter__meta {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  opacity: 0.8;
+  margin-top: 4px;
+}
+
+.offlineMeter__warning {
+  margin-top: 4px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--warn);
+}
+
 .dockRow {
   display: flex;
   align-items: center;
