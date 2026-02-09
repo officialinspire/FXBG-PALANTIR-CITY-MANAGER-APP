@@ -1317,6 +1317,14 @@ body.debug-ui button {
   background: rgba(255, 255, 255, .08);
 }
 
+.newsItem__badge {
+  padding: 2px 6px;
+  border-radius: 6px;
+  background: rgba(255, 107, 138, .2);
+  color: var(--bad);
+  font-weight: 700;
+}
+
 .newsItem__summary {
   font-size: 12px;
   color: var(--muted);
@@ -2200,6 +2208,30 @@ body.debug-ui button {
 .dockRowMeta {
   font-size: 12px;
   opacity: 0.8;
+}
+
+.markerDiagnostics__subTitle {
+  margin: 8px 6px 4px;
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted2);
+}
+
+.markerDiagnostics__list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 0 4px 4px;
+}
+
+.markerDiagnostics__item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
 }
 
 .dockBadge {
