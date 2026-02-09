@@ -3,40 +3,469 @@
   "basemapEnhancers": [
     {
       "key": "fxbg_a6b00e",
-      "name": "Fredericksburg Basemap Enhancer",
+      "name": "",
       "url": "https://www.arcgis.com/sharing/rest/content/items/a6b00ee8ba5f4f9c879ae35d8af33d51/data",
-      "formatHint": "geojson",
-      "defaultEnabled": true,
+      "defaultEnabled": false,
       "styleHint": "line",
       "itemId": "a6b00ee8ba5f4f9c879ae35d8af33d51",
+      "portalBase": "https://www.arcgis.com"
+    },
+    {
+      "key": "fxbg_206ebdea",
+      "name": "",
+      "url": "https://www.arcgis.com/sharing/rest/content/items/206ebdeade78439d8150f417048f9e0d/data",
+      "defaultEnabled": false,
+      "styleHint": "line",
+      "itemId": "206ebdeade78439d8150f417048f9e0d",
+      "portalBase": "https://www.arcgis.com"
+    },
+    {
+      "key": "fxbg_b2270d1d",
+      "name": "",
+      "url": "https://www.arcgis.com/sharing/rest/content/items/b2270d1de04a419fa31475466abea7a1/data",
+      "defaultEnabled": false,
+      "styleHint": "line",
+      "itemId": "b2270d1de04a419fa31475466abea7a1",
+      "portalBase": "https://www.arcgis.com"
+    },
+    {
+      "key": "fxbg_cf6a8bf6",
+      "name": "",
+      "url": "https://www.arcgis.com/sharing/rest/content/items/cf6a8bf67e624e2fa893ff843d5d6291/data",
+      "defaultEnabled": false,
+      "styleHint": "line",
+      "itemId": "cf6a8bf67e624e2fa893ff843d5d6291",
+      "portalBase": "https://www.arcgis.com"
+    },
+    {
+      "key": "fxbg_1c0bfe90",
+      "name": "",
+      "url": "https://data-fredericksburg.opendata.arcgis.com/datasets/1c0bfe9000954094b748f61b3e42e2cc",
+      "defaultEnabled": false,
+      "styleHint": "line",
+      "itemId": "1c0bfe9000954094b748f61b3e42e2cc",
+      "portalBase": "https://www.arcgis.com"
+    },
+    {
+      "key": "fxbg_bb3c8e85",
+      "name": "",
+      "url": "https://data-fredericksburg.opendata.arcgis.com/datasets/bb3c8e85cffd41b89fe3e82150261a54",
+      "defaultEnabled": false,
+      "styleHint": "line",
+      "itemId": "bb3c8e85cffd41b89fe3e82150261a54",
       "portalBase": "https://www.arcgis.com"
     }
   ],
   "toggleLayers": [
     {
-      "key": "fxbg_caac49",
-      "group": "Fredericksburg",
-      "name": "Fredericksburg City Boundary",
+      "key": "fxbg_caac4984",
+      "name": "",
       "url": "https://www.arcgis.com/sharing/rest/content/items/caac498476d1442aad3ce5107119507f/data",
-      "formatHint": "geojson",
       "defaultEnabled": false,
       "styleHint": "poly",
       "itemId": "caac498476d1442aad3ce5107119507f",
       "portalBase": "https://www.arcgis.com"
+    },
+    {
+      "key": "fxbg_c4be0329",
+      "name": "",
+      "url": "https://www.arcgis.com/sharing/rest/content/items/c4be0329b6e644c58237e4c8396d9aab/data",
+      "defaultEnabled": false,
+      "styleHint": "poly",
+      "itemId": "c4be0329b6e644c58237e4c8396d9aab",
+      "portalBase": "https://www.arcgis.com"
+    },
+    {
+      "key": "fxbg_9404f774",
+      "name": "",
+      "url": "https://data-fredericksburg.opendata.arcgis.com/datasets/9404f774b65349eeb02b7f0c401845a8",
+      "defaultEnabled": false,
+      "styleHint": "poly",
+      "itemId": "9404f774b65349eeb02b7f0c401845a8",
+      "portalBase": "https://www.arcgis.com"
     }
   ],
-  "cityLayers": [],
-  "fredBusMode": [],
-  "environmentalTopo": [],
+  "cityLayers": [
+    {
+      "key": "fxbg_68b6743c",
+      "name": "",
+      "url": "https://www.arcgis.com/sharing/rest/content/items/68b6743cd79d48dc8d642d5ba259618a/data",
+      "defaultEnabled": false,
+      "styleHint": "poly",
+      "itemId": "68b6743cd79d48dc8d642d5ba259618a",
+      "portalBase": "https://www.arcgis.com"
+    },
+    {
+      "key": "fxbg_2912e63d",
+      "name": "",
+      "url": "https://www.arcgis.com/sharing/rest/content/items/2912e63d2b45496cb54f7863be1efbd3/data",
+      "defaultEnabled": false,
+      "styleHint": "poly",
+      "itemId": "2912e63d2b45496cb54f7863be1efbd3",
+      "portalBase": "https://www.arcgis.com"
+    },
+    {
+      "key": "fxbg_42bd4911",
+      "name": "",
+      "url": "https://www.arcgis.com/sharing/rest/content/items/42bd49118f4344908f77f344cd6d3bc5/data",
+      "defaultEnabled": false,
+      "styleHint": "poly",
+      "itemId": "42bd49118f4344908f77f344cd6d3bc5",
+      "portalBase": "https://www.arcgis.com"
+    },
+    {
+      "key": "fxbg_28edd254",
+      "name": "",
+      "url": "https://www.arcgis.com/sharing/rest/content/items/28edd254b830418c81a867f02036170b/data",
+      "defaultEnabled": false,
+      "styleHint": "poly",
+      "itemId": "28edd254b830418c81a867f02036170b",
+      "portalBase": "https://www.arcgis.com"
+    },
+    {
+      "key": "fxbg_292eb042",
+      "name": "",
+      "url": "https://www.arcgis.com/sharing/rest/content/items/292eb042015945f8bd17ed340f5c23eb/data",
+      "defaultEnabled": false,
+      "styleHint": "poly",
+      "itemId": "292eb042015945f8bd17ed340f5c23eb",
+      "portalBase": "https://www.arcgis.com"
+    },
+    {
+      "key": "fxbg_1c0bfe90",
+      "name": "",
+      "url": "https://www.arcgis.com/sharing/rest/content/items/1c0bfe9000954094b748f61b3e42e2cc/data",
+      "defaultEnabled": false,
+      "styleHint": "poly",
+      "itemId": "1c0bfe9000954094b748f61b3e42e2cc",
+      "portalBase": "https://www.arcgis.com"
+    },
+    {
+      "key": "fxbg_4394fab3",
+      "name": "",
+      "url": "https://data-fredericksburg.opendata.arcgis.com/datasets/4394fab305924dedb3a3c9f33bd8aa7a",
+      "defaultEnabled": false,
+      "styleHint": "poly",
+      "itemId": "4394fab305924dedb3a3c9f33bd8aa7a",
+      "portalBase": "https://www.arcgis.com"
+    },
+    {
+      "key": "fxbg_fee17e10",
+      "name": "",
+      "url": "https://data-fredericksburg.opendata.arcgis.com/datasets/fee17e100c9a4ed99af0974df77b0e4a",
+      "defaultEnabled": false,
+      "styleHint": "poly",
+      "itemId": "fee17e100c9a4ed99af0974df77b0e4a",
+      "portalBase": "https://www.arcgis.com"
+    },
+    {
+      "key": "fxbg_0164c679",
+      "name": "",
+      "url": "https://data-fredericksburg.opendata.arcgis.com/datasets/0164c679f1fb440e9dd614775de7b9fb",
+      "defaultEnabled": false,
+      "styleHint": "poly",
+      "itemId": "0164c679f1fb440e9dd614775de7b9fb",
+      "portalBase": "https://www.arcgis.com"
+    },
+    {
+      "key": "fxbg_8121b58c",
+      "name": "",
+      "url": "https://data-fredericksburg.opendata.arcgis.com/datasets/8121b58ca8a542d6bafaa368f341ac97",
+      "defaultEnabled": false,
+      "styleHint": "poly",
+      "itemId": "8121b58ca8a542d6bafaa368f341ac97",
+      "portalBase": "https://www.arcgis.com"
+    },
+    {
+      "key": "fxbg_00212477",
+      "name": "",
+      "url": "https://data-fredericksburg.opendata.arcgis.com/documents/00212477b4da4c4982c58ccf7d1815e8",
+      "defaultEnabled": false,
+      "styleHint": "poly",
+      "itemId": "00212477b4da4c4982c58ccf7d1815e8",
+      "portalBase": "https://www.arcgis.com"
+    },
+    {
+      "key": "fxbg_b02f3e7a",
+      "name": "",
+      "url": "https://data-fredericksburg.opendata.arcgis.com/datasets/b02f3e7a634546e0bb80740a589460fd",
+      "defaultEnabled": false,
+      "styleHint": "poly",
+      "itemId": "b02f3e7a634546e0bb80740a589460fd",
+      "portalBase": "https://www.arcgis.com"
+    },
+    {
+      "key": "fxbg_582b66e7",
+      "name": "",
+      "url": "https://data-fredericksburg.opendata.arcgis.com/datasets/582b66e7d9c24fdc97340f104b63dc9c",
+      "defaultEnabled": false,
+      "styleHint": "poly",
+      "itemId": "582b66e7d9c24fdc97340f104b63dc9c",
+      "portalBase": "https://www.arcgis.com"
+    }
+  ],
+  "fredBusMode": [
+    {
+      "key": "fxbg_c5c88a3a",
+      "name": "",
+      "url": "https://www.arcgis.com/sharing/rest/content/items/c5c88a3a0ef244c69e78832f1e41b5a4/data",
+      "defaultEnabled": false,
+      "styleHint": "line",
+      "itemId": "c5c88a3a0ef244c69e78832f1e41b5a4",
+      "portalBase": "https://www.arcgis.com"
+    },
+    {
+      "key": "fxbg_0aaf2166",
+      "name": "",
+      "url": "https://www.arcgis.com/sharing/rest/content/items/0aaf2166dff844398938b2fe18220dd6/data",
+      "defaultEnabled": false,
+      "styleHint": "line",
+      "itemId": "0aaf2166dff844398938b2fe18220dd6",
+      "portalBase": "https://www.arcgis.com"
+    }
+  ],
+  "environmentalTopo": [
+    {
+      "key": "fxbg_5c01ac6d",
+      "name": "",
+      "url": "https://www.arcgis.com/sharing/rest/content/items/5c01ac6d566148a89e6cd693ad1406c0/data",
+      "defaultEnabled": false,
+      "styleHint": "line",
+      "itemId": "5c01ac6d566148a89e6cd693ad1406c0",
+      "portalBase": "https://www.arcgis.com"
+    },
+    {
+      "key": "fxbg_4d2b2d70",
+      "name": "",
+      "url": "https://www.arcgis.com/sharing/rest/content/items/4d2b2d7056d741f28a01472e9da5e15a/data",
+      "defaultEnabled": false,
+      "styleHint": "line",
+      "itemId": "4d2b2d7056d741f28a01472e9da5e15a",
+      "portalBase": "https://www.arcgis.com"
+    },
+    {
+      "key": "fxbg_2dca9349",
+      "name": "",
+      "url": "https://data-fredericksburg.opendata.arcgis.com/datasets/2dca9349bfcd4fabbeaa7bede854e1f7",
+      "defaultEnabled": false,
+      "styleHint": "poly",
+      "itemId": "2dca9349bfcd4fabbeaa7bede854e1f7",
+      "portalBase": "https://www.arcgis.com"
+    },
+    {
+      "key": "fxbg_95bdae3f",
+      "name": "",
+      "url": "https://data-fredericksburg.opendata.arcgis.com/datasets/95bdae3f3a084c1c811e5b8af073a3c1",
+      "defaultEnabled": false,
+      "styleHint": "poly",
+      "itemId": "95bdae3f3a084c1c811e5b8af073a3c1",
+      "portalBase": "https://www.arcgis.com"
+    }
+  ],
   "spotsy": [
     {
-      "key": "spotsy_airports",
-      "group": "Spotsylvania",
-      "name": "Airports",
-      "url": "https://gis.spotsylvania.va.us/portal/apps/sites/#/geohub/datasets/ef877ec407d04e54b0c62086c5d4ffb5",
-      "type": "geohub",
+      "key": "spotsy_street_list",
+      "name": "",
+      "url": "https://www.spotsylvania.va.us/DocumentCenter/View/7321/Street-List-February-2026",
       "defaultEnabled": false,
+      "styleHint": "line"
+    },
+    {
+      "key": "spotsy_airports",
+      "name": "",
+      "url": "https://gis.spotsylvania.va.us/portal/apps/sites/#/geohub/datasets/ef877ec407d04e54b0c62086c5d4ffb5",
+      "defaultEnabled": false,
+      "styleHint": "point",
       "itemId": "ef877ec407d04e54b0c62086c5d4ffb5",
+      "portalBase": "https://gis.spotsylvania.va.us/portal"
+    },
+    {
+      "key": "spotsy_cemetery",
+      "name": "",
+      "url": "https://gis.spotsylvania.va.us/portal/apps/sites/#/geohub/datasets/cf2c86ca101f4519a3db284bedd483a9",
+      "defaultEnabled": false,
+      "styleHint": "point",
+      "itemId": "cf2c86ca101f4519a3db284bedd483a9",
+      "portalBase": "https://gis.spotsylvania.va.us/portal"
+    },
+    {
+      "key": "spotsy_neighborhoods",
+      "name": "",
+      "url": "https://gis.spotsylvania.va.us/portal/apps/sites/#/geohub/datasets/d7247872b4be475f8817312efb33d435",
+      "defaultEnabled": false,
+      "styleHint": "poly",
+      "itemId": "d7247872b4be475f8817312efb33d435",
+      "portalBase": "https://gis.spotsylvania.va.us/portal"
+    },
+    {
+      "key": "spotsy_technology_zone",
+      "name": "",
+      "url": "https://gis.spotsylvania.va.us/portal/apps/sites/#/geohub/datasets/f1c687342ba84956b9e7f534ca5f57ed",
+      "defaultEnabled": false,
+      "styleHint": "poly",
+      "itemId": "f1c687342ba84956b9e7f534ca5f57ed",
+      "portalBase": "https://gis.spotsylvania.va.us/portal"
+    },
+    {
+      "key": "spotsy_address_points",
+      "name": "",
+      "url": "https://gis.spotsylvania.va.us/portal/apps/sites/#/geohub/datasets/6b2903c5a085452a9b47e377a0986142",
+      "defaultEnabled": false,
+      "styleHint": "point",
+      "itemId": "6b2903c5a085452a9b47e377a0986142",
+      "portalBase": "https://gis.spotsylvania.va.us/portal"
+    },
+    {
+      "key": "spotsy_buildings",
+      "name": "",
+      "url": "https://gis.spotsylvania.va.us/portal/apps/sites/#/geohub/datasets/b1cf7f27750b4e319bed8a1a715982cc",
+      "defaultEnabled": false,
+      "styleHint": "poly",
+      "itemId": "b1cf7f27750b4e319bed8a1a715982cc",
+      "portalBase": "https://gis.spotsylvania.va.us/portal"
+    },
+    {
+      "key": "spotsy_zip_codes",
+      "name": "",
+      "url": "https://gis.spotsylvania.va.us/portal/apps/sites/#/geohub/datasets/b47055a1b92545fd9fda85a25e92fed0",
+      "defaultEnabled": false,
+      "styleHint": "poly",
+      "itemId": "b47055a1b92545fd9fda85a25e92fed0",
+      "portalBase": "https://gis.spotsylvania.va.us/portal"
+    },
+    {
+      "key": "spotsy_athletic_fields",
+      "name": "",
+      "url": "https://gis.spotsylvania.va.us/portal/apps/sites/#/geohub/datasets/79f31db1ecae4f0d82e319094c33d934",
+      "defaultEnabled": false,
+      "styleHint": "poly",
+      "itemId": "79f31db1ecae4f0d82e319094c33d934",
+      "portalBase": "https://gis.spotsylvania.va.us/portal"
+    },
+    {
+      "key": "spotsy_ems",
+      "name": "",
+      "url": "https://gis.spotsylvania.va.us/portal/apps/sites/#/geohub/datasets/ddfd2ba60d944ae9abca7ec3070d1b62",
+      "defaultEnabled": false,
+      "styleHint": "point",
+      "itemId": "ddfd2ba60d944ae9abca7ec3070d1b62",
+      "portalBase": "https://gis.spotsylvania.va.us/portal"
+    },
+    {
+      "key": "spotsy_government_area",
+      "name": "",
+      "url": "https://gis.spotsylvania.va.us/portal/apps/sites/#/geohub/datasets/3f73bee3a11c4d658af382c87f73e6f3",
+      "defaultEnabled": false,
+      "styleHint": "poly",
+      "itemId": "3f73bee3a11c4d658af382c87f73e6f3",
+      "portalBase": "https://gis.spotsylvania.va.us/portal"
+    },
+    {
+      "key": "spotsy_parks",
+      "name": "",
+      "url": "https://gis.spotsylvania.va.us/portal/apps/sites/#/geohub/datasets/58aff5e78d9f453aa946bf6ce37f5c69",
+      "defaultEnabled": false,
+      "styleHint": "poly",
+      "itemId": "58aff5e78d9f453aa946bf6ce37f5c69",
+      "portalBase": "https://gis.spotsylvania.va.us/portal"
+    },
+    {
+      "key": "spotsy_communication_towers",
+      "name": "",
+      "url": "https://gis.spotsylvania.va.us/portal/apps/sites/#/geohub/datasets/8e99aeccd1dc45edbdba247355cb3e75",
+      "defaultEnabled": false,
+      "styleHint": "point",
+      "itemId": "8e99aeccd1dc45edbdba247355cb3e75",
+      "portalBase": "https://gis.spotsylvania.va.us/portal"
+    },
+    {
+      "key": "spotsy_interstate_exits",
+      "name": "",
+      "url": "https://gis.spotsylvania.va.us/portal/apps/sites/#/geohub/datasets/5d53b17d6597487ca27f0b06b248b876",
+      "defaultEnabled": false,
+      "styleHint": "point",
+      "itemId": "5d53b17d6597487ca27f0b06b248b876",
+      "portalBase": "https://gis.spotsylvania.va.us/portal"
+    },
+    {
+      "key": "spotsy_roads",
+      "name": "",
+      "url": "https://gis.spotsylvania.va.us/portal/apps/sites/#/geohub/datasets/13d12cf3df1842e09ad1494cff2166b7",
+      "defaultEnabled": false,
+      "styleHint": "line",
+      "itemId": "13d12cf3df1842e09ad1494cff2166b7",
+      "portalBase": "https://gis.spotsylvania.va.us/portal"
+    },
+    {
+      "key": "spotsy_road_centerlines",
+      "name": "",
+      "url": "https://gis.spotsylvania.va.us/portal/apps/sites/#/geohub/datasets/1ca53575bc3144748a70866a9b5fd879",
+      "defaultEnabled": false,
+      "styleHint": "line",
+      "itemId": "1ca53575bc3144748a70866a9b5fd879",
+      "portalBase": "https://gis.spotsylvania.va.us/portal"
+    },
+    {
+      "key": "spotsy_intersections",
+      "name": "",
+      "url": "https://gis.spotsylvania.va.us/portal/apps/sites/#/geohub/datasets/acd4623cfaa84c5d805a16f3aad3b57b",
+      "defaultEnabled": false,
+      "styleHint": "point",
+      "itemId": "acd4623cfaa84c5d805a16f3aad3b57b",
+      "portalBase": "https://gis.spotsylvania.va.us/portal"
+    },
+    {
+      "key": "spotsy_forests",
+      "name": "",
+      "url": "https://gis.spotsylvania.va.us/portal/apps/sites/#/geohub/datasets/5c81717392244d3d946135cb96b3eda4/data",
+      "defaultEnabled": false,
+      "styleHint": "poly",
+      "itemId": "5c81717392244d3d946135cb96b3eda4",
+      "portalBase": "https://gis.spotsylvania.va.us/portal"
+    },
+    {
+      "key": "spotsy_fema_flood_zone",
+      "name": "",
+      "url": "https://gis.spotsylvania.va.us/portal/apps/sites/#/geohub/datasets/a12668ee4e824be3a94c93deb7972eda",
+      "defaultEnabled": false,
+      "styleHint": "poly",
+      "itemId": "a12668ee4e824be3a94c93deb7972eda",
+      "portalBase": "https://gis.spotsylvania.va.us/portal"
+    },
+    {
+      "key": "spotsy_rivers",
+      "name": "",
+      "url": "https://gis.spotsylvania.va.us/portal/apps/sites/#/geohub/datasets/9c63fe53c47d47d5b6674e616a43ca16",
+      "defaultEnabled": false,
+      "styleHint": "line",
+      "itemId": "9c63fe53c47d47d5b6674e616a43ca16",
+      "portalBase": "https://gis.spotsylvania.va.us/portal"
+    },
+    {
+      "key": "spotsy_wetland",
+      "name": "",
+      "url": "https://gis.spotsylvania.va.us/portal/apps/sites/#/geohub/datasets/e1eb222b98194b3788d6fcf6cc6237a1",
+      "defaultEnabled": false,
+      "styleHint": "poly",
+      "itemId": "e1eb222b98194b3788d6fcf6cc6237a1",
+      "portalBase": "https://gis.spotsylvania.va.us/portal"
+    },
+    {
+      "key": "spotsy_contour_lines",
+      "name": "",
+      "url": "https://gis.spotsylvania.va.us/portal/apps/sites/#/geohub/datasets/30775afadcb4410a95b2f7b4a6892254",
+      "defaultEnabled": false,
+      "styleHint": "line",
+      "itemId": "30775afadcb4410a95b2f7b4a6892254",
+      "portalBase": "https://gis.spotsylvania.va.us/portal"
+    },
+    {
+      "key": "spotsy_streams",
+      "name": "",
+      "url": "https://gis.spotsylvania.va.us/portal/apps/sites/#/geohub/datasets/dd7c75c741e649e1958e10590a3de09a",
+      "defaultEnabled": false,
+      "styleHint": "line",
+      "itemId": "dd7c75c741e649e1958e10590a3de09a",
       "portalBase": "https://gis.spotsylvania.va.us/portal"
     }
   ]
