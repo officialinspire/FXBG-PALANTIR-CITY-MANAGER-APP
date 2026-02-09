@@ -49,7 +49,8 @@
     THEME_CURRENT: 'fxbg_theme_current',
     THEME_RECENT: 'fxbg_theme_recent',
     OFFLINE_PACK_INSTALLED: 'fxbg.offlinePackInstalled',
-    LOCATION_PROMPT_SEEN: 'fxbg.locationPromptSeen'
+    LOCATION_PROMPT_SEEN: 'fxbg.locationPromptSeen',
+    VA511_CAMS_ENABLED: 'fxbg.va511CamsEnabled'
   };
 
   const UI_MODES = {
@@ -98,6 +99,19 @@
       if (stored === 'false') return false;
     } catch {}
     return IS_MOBILE_UI;
+  }
+
+  function getDefaultVa511CamsEnabled() {
+    return !IS_MOBILE_UI || currentUiMode === UI_MODES.FIELD;
+  }
+
+  function readStoredVa511CamsEnabled() {
+    try {
+      const stored = localStorage.getItem(STORAGE_KEYS.VA511_CAMS_ENABLED);
+      if (stored === 'true') return true;
+      if (stored === 'false') return false;
+    } catch {}
+    return getDefaultVa511CamsEnabled();
   }
 
   let currentUiMode = getDefaultUiMode();
@@ -7109,6 +7123,8 @@
       traffic: 0,
       crime: 0
     },
+    va511CamsItems: [],
+    va511CamsEnabled: readStoredVa511CamsEnabled(),
     diagnostics: {
       rss: {}  // Keyed by source.id: { ok, httpStatus, itemsParsed, itemsIngested, error, timestamp }
     },
@@ -7167,6 +7183,15 @@
     } catch {}
     applyMobilePerfMode(store.mobilePerf);
     scheduleRender();
+  }
+
+  function setVa511CamsEnabled(enabled) {
+    store.va511CamsEnabled = Boolean(enabled);
+    try {
+      localStorage.setItem(STORAGE_KEYS.VA511_CAMS_ENABLED, store.va511CamsEnabled ? "true" : "false");
+    } catch {}
+    scheduleRender();
+    refreshLayersPanelUI();
   }
 
   function setAoiMode(mode) {
@@ -8345,7 +8370,12 @@
     });
 
     if (markerMeta) m.__downtownMeta = markerMeta;
-    m.on("click", () => selectItem(item.id));
+    m.on("click", () => {
+      if (item.sourceId === "va511-cams" && item.snapshotUrl) {
+        window.open(item.snapshotUrl, "_blank", "noopener,noreferrer");
+      }
+      selectItem(item.id);
+    });
     m.bindPopup(renderPopup({ ...item, _downtownMeta: markerMeta }), { closeButton: false });
     if (options.useClusters !== false) {
       clusters.addLayer(m);
@@ -8717,6 +8747,7 @@
     const items = Array.from(store.itemsById.values());
     const stableSources = new Set([
       "va511-cameras",
+      "va511-cams",
       "external-cameras",
       "wetmet",
       "webcamgalore",
@@ -8817,6 +8848,29 @@
     });
   }
 
+  function isTrafficCameraItem(item) {
+    return item?.sourceId === "va511-cams" || item?.sourceId === "va511-cameras";
+  }
+
+  function isTrafficIncidentItem(item) {
+    if (!item) return false;
+    if (item.sourceId === "va511-incidents" || item.sourceId === "va511-construction") return true;
+    if (String(item.sourceId || "").startsWith("va511") && !isTrafficCameraItem(item)) {
+      return ["traffic", "crash", "closure", "road_closure"].includes(item.category);
+    }
+    return false;
+  }
+
+  function getMarkerPriority(item) {
+    if (Number.isFinite(item?.priority)) return item.priority;
+    if (isTrafficCameraItem(item)) return 100;
+    if (isTrafficIncidentItem(item)) return 90;
+    if (item?.category === "alerts") return 80;
+    if (["school", "college", "hospital", "clinic", "shelter", "fire_ems", "police_crime"].includes(item?.category)) return 70;
+    if (item?.sourceType === "rss") return 50;
+    return 10;
+  }
+
   function redrawImmediate() {
     enforceCaps();
     if (store.loadShedding) {
@@ -8849,6 +8903,10 @@
           rssMarkerStats.skippedNoCoords++;
         }
       }
+      if (item.sourceId === "va511-cams" && !store.va511CamsEnabled) {
+        filtered.category++;
+        continue;
+      }
       if (!activeCategories.has(item.category)) {
         filtered.category++;
         continue;
@@ -8878,10 +8936,23 @@
         const parsed = item?.timestamp ? new Date(item.timestamp).getTime() : 0;
         return Number.isFinite(parsed) ? parsed : 0;
       };
-      visibleItems.sort((a, b) => (b.priority || 0) - (a.priority || 0) || getItemTs(b) - getItemTs(a));
+      visibleItems.sort((a, b) => getMarkerPriority(b) - getMarkerPriority(a) || getItemTs(b) - getItemTs(a));
       if (store.mobilePerf && visibleItems.length > MOBILE_MARKER_CAP) {
-        suppressedByCap = visibleItems.length - MOBILE_MARKER_CAP;
-        visibleItems.length = MOBILE_MARKER_CAP;
+        const protectedItems = [];
+        const suppressibleItems = [];
+        for (const item of visibleItems) {
+          if (isTrafficCameraItem(item) || isTrafficIncidentItem(item)) {
+            protectedItems.push(item);
+          } else {
+            suppressibleItems.push(item);
+          }
+        }
+        const capRemaining = MOBILE_MARKER_CAP - protectedItems.length;
+        const keptSuppressible = capRemaining > 0 ? suppressibleItems.slice(0, capRemaining) : [];
+        const nextVisible = capRemaining >= 0 ? [...protectedItems, ...keptSuppressible] : protectedItems;
+        suppressedByCap = visibleItems.length - nextVisible.length;
+        visibleItems.length = 0;
+        visibleItems.push(...nextVisible);
       }
     }
 
@@ -9599,6 +9670,69 @@
   // -----------------------------
   // 511Virginia GeoJSON (current-only incidents)
   // -----------------------------
+  function ingestVa511Cams(payload) {
+    const cams = Array.isArray(payload?.cams) ? payload.cams : [];
+    const items = [];
+    const now = new Date().toISOString();
+
+    for (const cam of cams) {
+      const lat = Number(cam?.lat);
+      const lon = Number(cam?.lon);
+      if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
+      const camId = (cam?.id ?? cam?.name ?? `${lat},${lon}`).toString();
+      const title = (cam?.name || "Traffic Camera").toString();
+      const desc = `${cam?.roadway || ""} ${cam?.direction || ""}`.trim();
+      const snapshotUrl = cam?.snapshotUrl || null;
+      const fallbackUrl = cam?.url || "https://www.511virginia.org/";
+      const url = snapshotUrl || fallbackUrl;
+
+      items.push({
+        id: `va511-cam:${camId}`,
+        lat,
+        lon,
+        title,
+        desc,
+        summary: desc,
+        message: desc,
+        url,
+        snapshotUrl,
+        category: "traffic",
+        emoji: "📷",
+        sourceId: "va511-cams",
+        sourceName: "VA511 — Cameras",
+        priority: 100,
+        tone: "good",
+        timestamp: now
+      });
+    }
+
+    return items;
+  }
+
+  async function loadVa511CamsFromServer() {
+    try {
+      const res = await fetchJsonWithTimeout("/api/va511/cams", { timeoutMs: 20000 });
+      if (!res.ok) {
+        throw new Error(`http ${res.status}`);
+      }
+      const payload = res.data || res;
+      if (!payload?.cams || !Array.isArray(payload.cams)) {
+        return { added: 0, total: 0 };
+      }
+      const items = ingestVa511Cams(payload);
+      store.va511CamsItems = items;
+      let added = 0;
+      for (const item of items) {
+        registerEvent(item);
+        added++;
+      }
+      return { added, total: payload.cams.length };
+    } catch (err) {
+      console.warn("[VA511 Cams] Server camera load failed:", err);
+      return { added: 0, total: 0, error: err?.message || String(err) };
+    }
+  }
+
   async function pollVa511() {
     // Load shedding: keep traffic core feed alive, but throttle cadence.
     if (!shouldRunLoadSheddingCorePoll("traffic", CONFIG.polling.va511)) {
@@ -9610,6 +9744,11 @@
     try {
 
     if (!CONFIG.va511.enabled) return { i95Incidents: 0 };
+
+    const serverCamsResult = await loadVa511CamsFromServer();
+    if (serverCamsResult.total > 0) {
+      console.log(`[VA511 Cams] Loaded ${serverCamsResult.added} cameras from server (${serverCamsResult.total} total)`);
+    }
 
     // Round 3: Check source backoff before polling cameras
     const camerasBackoffCheck = checkSourceBackoff('va511-cameras');
@@ -12625,6 +12764,7 @@
     store.itemsById.clear();
     store.markersById.clear();
     store.seenKeys.clear();
+    store.va511CamsItems = [];
     clusters.clearLayers();
     if (store.crime) {
       store.crime.ids.clear();
@@ -15320,6 +15460,9 @@
     const suppressedByCap = store.markerDiagnostics?.suppressedByCap ?? 0;
     const missingLatLon = store.markerDiagnostics?.missingLatLon ?? 0;
     const totalItems = store.markerDiagnostics?.totalItems ?? store.itemsById.size;
+    const showDebugCounters = CONFIG.debug?.uiSanity || CONFIG.debug?.performance;
+    const camsCount = Array.isArray(store.va511CamsItems) ? store.va511CamsItems.length : 0;
+    const trafficCount = Array.from(store.itemsById.values()).filter(item => isTrafficIncidentItem(item)).length;
     const categorySummary = summarizeByCategory(Array.from(store.itemsById.values()));
     const topCategories = Object.entries(categorySummary)
       .sort((a, b) => b[1].count - a[1].count)
@@ -15369,6 +15512,11 @@
     html += `<div class="dockRowLeft"><div class="dockRowTitle">Visible markers</div></div>`;
     html += `<div class="dockBadge">${visibleMarkers}</div>`;
     html += `</div>`;
+    if (showDebugCounters) {
+      html += `<div class="dockRow">`;
+      html += `<div class="dockRowLeft"><div class="dockRowTitle">Cams: ${camsCount} • Traffic: ${trafficCount}</div></div>`;
+      html += `</div>`;
+    }
     html += `<div class="dockRow">`;
     html += `<div class="dockRowLeft"><div class="dockRowTitle">Suppressed by AOI</div></div>`;
     html += `<div class="dockBadge">${suppressedByAoi}</div>`;
@@ -15840,6 +15988,15 @@
     }
 
     html += `<div class="dockCard">`;
+    html += `<div class="dockSectionTitle">Marker Layers</div>`;
+    html += `<div class="dockToggleRow">`;
+    html += `<div class="dockToggleLabel">Traffic Cameras (VA511)</div>`;
+    html += `<div class="toggleSwitch ${store.va511CamsEnabled ? 'isOn' : ''}" id="va511CamsToggle" role="switch" aria-checked="${store.va511CamsEnabled ? 'true' : 'false'}"></div>`;
+    html += `</div>`;
+    html += `<div class="dockMetaText">Show or hide VA511 traffic camera markers.</div>`;
+    html += `</div>`;
+
+    html += `<div class="dockCard">`;
     html += `<div class="dockRow">`;
     html += `<div class="dockRowLeft">`;
     html += `<div class="dockRowTitle">GIS Catalog</div>`;
@@ -16044,6 +16201,14 @@
       bind("gisCatalogRefresh", "click", () => {
         refreshGisCatalog();
       });
+      const camsToggle = document.getElementById("va511CamsToggle");
+      if (camsToggle) {
+        camsToggle.addEventListener("click", () => {
+          setVa511CamsEnabled(!store.va511CamsEnabled);
+          camsToggle.classList.toggle("isOn", store.va511CamsEnabled);
+          camsToggle.setAttribute("aria-checked", store.va511CamsEnabled ? "true" : "false");
+        });
+      }
     }
 
     if (dockState.tab === "settings") {
