@@ -55,7 +55,7 @@ Environment placement:
 
 Start the app:
 ```bash
-./scripts/up.sh
+bash scripts/mobile.sh
 ```
 
 Open `http://127.0.0.1:8000` on the phone. For LAN access from another device, use `http://<phone-ip>:8000`.
