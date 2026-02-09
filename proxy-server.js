@@ -18,25 +18,65 @@ const path = require("path");
 const os = require("os");
 const { Writable } = require("stream");
 const crypto = require("crypto");
-let dotenv = null;
-try {
-  dotenv = require("dotenv");
-  dotenv.config();
-} catch {}
+const dotenv = require("dotenv");
+const repoEnvPath = path.join(__dirname, ".env");
+const overrideEnvPath = process.env.ENV_PATH ? path.resolve(process.env.ENV_PATH) : null;
+let loadedEnvPath = null;
+
+function loadEnvFile(envPath) {
+  if (!envPath) return false;
+  if (!fs.existsSync(envPath)) return false;
+  dotenv.config({ path: envPath });
+  if (!loadedEnvPath) {
+    loadedEnvPath = envPath;
+  }
+  return true;
+}
+
+if (overrideEnvPath) {
+  loadEnvFile(overrideEnvPath);
+}
+loadEnvFile(repoEnvPath);
 const { upstreamFetch } = require("./server/upstreamFetch");
 const { createCache } = require("./server/cache");
 
 // -----------------------------
 // Environment & Logging Setup
 // -----------------------------
-const ENV_PATH = path.join(__dirname, ".env");
-if (dotenv?.config) {
-  dotenv.config({ path: ENV_PATH });
-}
-
 const REQUIRED_ENV = [];
 
 const DEFAULT_LOG_DIR = "logs";
+
+function buildEnvStatus() {
+  const keysPresent = {
+    OPENUV_API_KEY: Boolean(OPENUV_API_KEY && String(OPENUV_API_KEY).trim()),
+    WAQI_TOKEN: Boolean(WAQI_TOKEN && String(WAQI_TOKEN).trim())
+  };
+
+  const warnings = [];
+  const placeholderPattern = /(your-|changeme|replace|example|placeholder)/i;
+
+  [
+    { name: "OPENUV_API_KEY", value: OPENUV_API_KEY },
+    { name: "WAQI_TOKEN", value: WAQI_TOKEN }
+  ].forEach(({ name, value }) => {
+    const trimmed = String(value || "").trim();
+    if (!trimmed) {
+      warnings.push(`${name} is empty.`);
+      return;
+    }
+    if (placeholderPattern.test(trimmed)) {
+      warnings.push(`${name} looks like a placeholder value.`);
+    }
+  });
+
+  return {
+    ok: true,
+    loadedEnvPath: loadedEnvPath || null,
+    keysPresent,
+    warnings
+  };
+}
 
 function validateConfig() {
   const missing = REQUIRED_ENV.filter((key) => !process.env[key]);
@@ -1897,15 +1937,15 @@ const WAQI_TOKEN = process.env.WAQI_TOKEN || process.env.WAQI_API_KEY || process
 
 // Boot log: .env provenance (safe - no secrets)
 (function logEnvProvenance() {
-  if (fs.existsSync(ENV_PATH)) {
+  const envPathToLog = loadedEnvPath || repoEnvPath;
+  if (envPathToLog && fs.existsSync(envPathToLog)) {
     try {
-      const stats = fs.statSync(ENV_PATH);
-      const crypto = require("crypto");
-      const content = fs.readFileSync(ENV_PATH);
+      const stats = fs.statSync(envPathToLog);
+      const content = fs.readFileSync(envPathToLog);
       const sha256 = crypto.createHash("sha256").update(content).digest("hex").slice(0, 8);
-      console.log(`[env] .env=${ENV_PATH} mtime=${stats.mtime.toISOString()} size=${stats.size} sha256=${sha256}...`);
+      console.log(`[env] .env=${envPathToLog} mtime=${stats.mtime.toISOString()} size=${stats.size} sha256=${sha256}...`);
     } catch (e) {
-      console.log(`[env] .env=${ENV_PATH} (could not stat: ${e.message})`);
+      console.log(`[env] .env=${envPathToLog} (could not stat: ${e.message})`);
     }
   } else {
     console.log("[env] .env not found");
@@ -4426,6 +4466,11 @@ const server = http.createServer(async (req, res) => {
         hostBackoffs: hostBackoff.size
       };
       return send(res, 200, JSON.stringify(health, null, 2), { "Content-Type": "application/json" });
+    }
+
+    if (urlObj.pathname === "/api/env/status" && req.method === "GET") {
+      const payload = buildEnvStatus();
+      return send(res, 200, JSON.stringify(payload, null, 2), { "Content-Type": "application/json" });
     }
 
     // Enhanced health endpoint with full diagnostics
