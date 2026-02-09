@@ -48,7 +48,8 @@
     TRACK_HAPTICS: 'fxbg.trackHaptics',
     THEME_CURRENT: 'fxbg_theme_current',
     THEME_RECENT: 'fxbg_theme_recent',
-    OFFLINE_PACK_INSTALLED: 'fxbg.offlinePackInstalled'
+    OFFLINE_PACK_INSTALLED: 'fxbg.offlinePackInstalled',
+    LOCATION_PROMPT_SEEN: 'fxbg.locationPromptSeen'
   };
 
   const UI_MODES = {
@@ -430,7 +431,7 @@
     },
 
     location: {
-      enabledByDefault: false,
+      enabledByDefault: IS_MOBILE_UI,
       watchOptions: {
         enableHighAccuracy: true,
         timeout: 8000,
@@ -5206,6 +5207,7 @@
   const LOCATION_STORAGE_KEY = "fxbg.lastLocation";
   const LOCATION_STALE_MS = 6 * 60 * 60 * 1000;
   const LOCATION_ENABLED_KEY = "fxbg.locationEnabled";
+  const LOCATION_PROMPT_SEEN_KEY = STORAGE_KEYS.LOCATION_PROMPT_SEEN;
   let userLocationMarker = null;
   let userLocationCircle = null;
   let locationWatchId = null;
@@ -5224,6 +5226,20 @@
   function persistLocationEnabled(enabled) {
     try {
       localStorage.setItem(LOCATION_ENABLED_KEY, String(enabled));
+    } catch {}
+  }
+
+  function readLocationPromptSeen() {
+    try {
+      return localStorage.getItem(LOCATION_PROMPT_SEEN_KEY) === "1";
+    } catch {
+      return false;
+    }
+  }
+
+  function markLocationPromptSeen() {
+    try {
+      localStorage.setItem(LOCATION_PROMPT_SEEN_KEY, "1");
     } catch {}
   }
 
@@ -5370,6 +5386,7 @@
     locationEnabled = Boolean(enabled);
     persistLocationEnabled(locationEnabled);
     if (locationEnabled) {
+      markLocationPromptSeen();
       const storedLocation = readStoredLocation();
       if (storedLocation) {
         applyUserLocation({ ...storedLocation, persist: false, animate: false, center: false, zoom: storedLocation.zoom });
@@ -5381,6 +5398,13 @@
       clearUserLocation();
     }
     updateLocationToggleUI();
+  }
+
+  function shouldShowLocationPrompt() {
+    if (!IS_MOBILE_UI || currentUiMode !== UI_MODES.FIELD) return false;
+    if (locationEnabled || currentUserLocation) return false;
+    if (store?.aoi?.lastGpsFixTs) return false;
+    return !readLocationPromptSeen();
   }
 
   const storedLocation = readStoredLocation();
@@ -6769,6 +6793,10 @@
       btn.classList.toggle('is-active', selected);
       btn.setAttribute('aria-pressed', selected ? 'true' : 'false');
     });
+
+    if (IS_MOBILE_UI && currentUiMode === UI_MODES.FIELD && locationEnabled) {
+      startLocationWatch();
+    }
   }
 
   function wireUiModeToggle(scope = document) {
@@ -6913,6 +6941,9 @@
       attemptedMarkers: 0,
       placedMarkers: 0,
       skippedNoCoords: 0,
+      visibleMarkers: 0,
+      suppressedByCategory: 0,
+      suppressedByAoi: 0,
       warningShown: false
     },
     diagnostics: {
@@ -8630,7 +8661,7 @@
     }
 
     let markerCount = 0;
-    let filtered = { category: 0, bbox: 0, crime: 0 };
+    let filtered = { category: 0, bbox: 0, aoi: 0, crime: 0 };
     const visibleItems = [];
     const rssMarkerStats = { attemptedMarkers: 0, placedMarkers: 0, skippedNoCoords: 0 };
 
@@ -8656,7 +8687,7 @@
 
       // Mobile AOI policy: only FXBG/Stafford/Spotsy unless near-user GPS AOI
       if (!isAllowedByMobileAOI(item)) {
-        filtered.bbox++;
+        filtered.aoi++;
         continue;
       }
       if (item.sourceId === "fxbg-crime-reports" && !isCrimeItemVisible(item)) {
@@ -8666,14 +8697,14 @@
       visibleItems.push(item);
     }
 
-    if (IS_MOBILE_UI) {
+    if (IS_MOBILE_UI || store.mobilePerf) {
       const getItemTs = (item) => {
         if (Number.isFinite(item?.ts)) return item.ts;
         const parsed = item?.timestamp ? new Date(item.timestamp).getTime() : 0;
         return Number.isFinite(parsed) ? parsed : 0;
       };
       visibleItems.sort((a, b) => (b.priority || 0) - (a.priority || 0) || getItemTs(b) - getItemTs(a));
-      if (visibleItems.length > MOBILE_MARKER_CAP) visibleItems.length = MOBILE_MARKER_CAP;
+      if (store.mobilePerf && visibleItems.length > MOBILE_MARKER_CAP) visibleItems.length = MOBILE_MARKER_CAP;
     }
 
     const downtownMode = isDowntownModeEnabled();
@@ -8728,6 +8759,9 @@
     store.markerDiagnostics.attemptedMarkers = rssMarkerStats.attemptedMarkers;
     store.markerDiagnostics.placedMarkers = rssMarkerStats.placedMarkers;
     store.markerDiagnostics.skippedNoCoords = rssMarkerStats.skippedNoCoords;
+    store.markerDiagnostics.visibleMarkers = markerCount;
+    store.markerDiagnostics.suppressedByCategory = filtered.category;
+    store.markerDiagnostics.suppressedByAoi = filtered.aoi;
 
     if (rssMarkerStats.attemptedMarkers > 0 && rssMarkerStats.placedMarkers === 0) {
       if (!store.markerDiagnostics.warningShown) {
@@ -8738,7 +8772,7 @@
       store.markerDiagnostics.warningShown = false;
     }
 
-    console.log(`Redraw complete: ${markerCount} markers visible (${store.itemsById.size} total items, ${filtered.category} filtered by category, ${filtered.bbox} outside bbox, ${filtered.crime} crime hidden, downtownMode=${downtownMode}, stacks=${useStacks})`);
+    console.log(`Redraw complete: ${markerCount} markers visible (${store.itemsById.size} total items, ${filtered.category} filtered by category, ${filtered.aoi} suppressed by AOI, ${filtered.bbox} outside bbox, ${filtered.crime} crime hidden, downtownMode=${downtownMode}, stacks=${useStacks})`);
 
     // Update News Flash panel if it's open
     const newsPanel = document.getElementById("newsFlashPanel");
@@ -15001,8 +15035,27 @@
     const lastAuditLabel = qa.lastRunTs ? formatRelativeTime(qa.lastRunTs) : 'Never';
     const attemptedEmojiMarkers = store.markerDiagnostics?.attemptedMarkers ?? 0;
     const placedEmojiMarkers = store.markerDiagnostics?.placedMarkers ?? 0;
+    const visibleMarkers = store.markerDiagnostics?.visibleMarkers ?? 0;
+    const suppressedByCategory = store.markerDiagnostics?.suppressedByCategory ?? 0;
+    const suppressedByAoi = store.markerDiagnostics?.suppressedByAoi ?? 0;
 
-    let html = `<div class="dockCard">`;
+    let html = "";
+
+    if (shouldShowLocationPrompt()) {
+      html += `<div class="dockCard">`;
+      html += `<div class="dockRow">`;
+      html += `<div class="dockRowLeft"><div class="dockRowTitle">Enable Location for Nearby Markers</div></div>`;
+      html += `<div class="dockBadge status-backoff">GPS</div>`;
+      html += `</div>`;
+      html += `<div class="dockMetaText">Turn on location to load nearby markers outside the primary AOI.</div>`;
+      html += `<div class="dockActionRow">`;
+      html += `<button class="dockBtnSmall" id="locationPromptEnable">Enable Location</button>`;
+      html += `<button class="dockBtnSmall" id="locationPromptDismiss">Not now</button>`;
+      html += `</div>`;
+      html += `</div>`;
+    }
+
+    html += `<div class="dockCard">`;
     html += `<div class="dockRow">`;
     html += `<div class="dockRowLeft"><div class="dockRowTitle">System Status</div></div>`;
     const statusClass = health.status.toLowerCase() === "live" ? "status-ok" : health.status.toLowerCase() === "partial" ? "status-backoff" : "status-error";
@@ -15015,6 +15068,18 @@
     html += `<div class="dockRow">`;
     html += `<div class="dockRowLeft"><div class="dockRowTitle">Emoji markers placed</div></div>`;
     html += `<div class="dockBadge">${placedEmojiMarkers} / ${attemptedEmojiMarkers}</div>`;
+    html += `</div>`;
+    html += `<div class="dockRow">`;
+    html += `<div class="dockRowLeft"><div class="dockRowTitle">Visible markers</div></div>`;
+    html += `<div class="dockBadge">${visibleMarkers}</div>`;
+    html += `</div>`;
+    html += `<div class="dockRow">`;
+    html += `<div class="dockRowLeft"><div class="dockRowTitle">Suppressed by AOI</div></div>`;
+    html += `<div class="dockBadge">${suppressedByAoi}</div>`;
+    html += `</div>`;
+    html += `<div class="dockRow">`;
+    html += `<div class="dockRowLeft"><div class="dockRowTitle">Suppressed by category</div></div>`;
+    html += `<div class="dockBadge">${suppressedByCategory}</div>`;
     html += `</div>`;
     if (attemptedEmojiMarkers > 0 && placedEmojiMarkers === 0) {
       html += `<div class="dockRowMeta" style="margin-top:8px;color:var(--warn);">Markers suppressed: check coordinate resolver</div>`;
@@ -15621,6 +15686,20 @@
 
       if (systemSubtab === SYSTEM_SUBTABS.STATUS) {
         bind("dockRunQuickSmoke", "click", () => runQuickSmoke());
+        const locationPromptEnable = document.getElementById("locationPromptEnable");
+        if (locationPromptEnable) {
+          locationPromptEnable.addEventListener("click", () => {
+            setLocationEnabled(true);
+            renderDock();
+          });
+        }
+        const locationPromptDismiss = document.getElementById("locationPromptDismiss");
+        if (locationPromptDismiss) {
+          locationPromptDismiss.addEventListener("click", () => {
+            markLocationPromptSeen();
+            renderDock();
+          });
+        }
         const loadSheddingToggle = document.getElementById("loadSheddingToggle");
         if (loadSheddingToggle) {
           loadSheddingToggle.addEventListener("click", () => {
