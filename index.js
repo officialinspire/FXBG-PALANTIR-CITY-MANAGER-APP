@@ -12875,7 +12875,7 @@
     return fetchJsonWithTimeout(url, { timeoutMs: 15000 });
   }
 
-  function renderDiagnosticsSummary(healthData, crimeStatus) {
+  function renderDiagnosticsSummary(healthData, crimeStatus, envStatus) {
     if (!diagnosticsSummary) return;
 
     // Build source health summary
@@ -12920,11 +12920,14 @@
     const dataDetail = healthData?.degraded ? "Degraded mode" : dataBadgeText === "FRESH" ? "Live upstream data" : dataBadgeText === "CACHED" ? "Cached responses" : "Stale cache in use";
 
     // Optional keys
-    const optKeys = healthData?.optionalKeys || {};
+    const optKeys = envStatus?.keysPresent || healthData?.optionalKeys || {};
+    const openuvEnabled = Boolean(optKeys.OPENUV_API_KEY);
+    const waqiEnabled = Boolean(optKeys.WAQI_TOKEN);
     const optKeysWarning = [];
-    if (optKeys.OPENUV_API_KEY === false) optKeysWarning.push("UV");
-    if (optKeys.WAQI_TOKEN === false) optKeysWarning.push("AQI");
+    if (!openuvEnabled) optKeysWarning.push("OpenUV");
+    if (!waqiEnabled) optKeysWarning.push("WAQI");
     const optKeysStr = optKeysWarning.length > 0 ? `Missing: ${optKeysWarning.join(", ")}` : "All configured";
+    const optKeysHint = "Set OPENUV_API_KEY / WAQI_TOKEN in .env then restart server.";
 
     diagnosticsSummary.innerHTML = healthHtml + `
       <div class="diagnosticsRow">
@@ -12969,7 +12972,12 @@
       <div class="diagnosticsRow">
         <div>
           <div class="diagnosticsRow__title">Optional API Keys</div>
-          <div style="font-size:11px;color:${optKeysWarning.length > 0 ? 'var(--warn)' : 'var(--muted2)'};">${optKeysStr}</div>
+          <div style="font-size:11px;color:${optKeysWarning.length > 0 ? 'var(--warn)' : 'var(--muted2)'};">
+            OpenUV: ${openuvEnabled ? "enabled" : "disabled"}<br>
+            WAQI: ${waqiEnabled ? "enabled" : "disabled"}<br>
+            ${optKeysStr}<br>
+            ${optKeysHint}
+          </div>
         </div>
         <div class="diagnosticsBadge ${optKeysWarning.length > 0 ? "diagnosticsBadge--warn" : "diagnosticsBadge--ok"}">
           ${optKeysWarning.length > 0 ? "WARN" : "OK"}
@@ -13361,12 +13369,13 @@
     if (diagnosticsRSSGeoList) diagnosticsRSSGeoList.textContent = "Loading…";
 
     // Fetch from new endpoints (with fallback to legacy)
-    const [healthRes, upstreamRes, cacheRes, crimeStatusRes, offlineRes] = await Promise.all([
+    const [healthRes, upstreamRes, cacheRes, crimeStatusRes, offlineRes, envStatusRes] = await Promise.all([
       fetchDiagnosticsJson("/api/health").then(r => r.ok ? r : fetchDiagnosticsJson("/health")),
       fetchDiagnosticsJson("/api/diag/upstreams"),
       fetchDiagnosticsJson("/cache/stats"),
       fetchDiagnosticsJson("/api/fxbg/crime-reports/status"),
-      fetchDiagnosticsJson("/api/health/offline-readiness")
+      fetchDiagnosticsJson("/api/health/offline-readiness"),
+      fetchDiagnosticsJson("/api/env/status")
     ]);
 
     // Graceful degradation: if all fetches failed, show last known data
@@ -13391,7 +13400,7 @@
       return;
     }
 
-    renderDiagnosticsSummary(healthRes.data || null, crimeStatusRes.data || null);
+    renderDiagnosticsSummary(healthRes.data || null, crimeStatusRes.data || null, envStatusRes.data || null);
     const upstreamList = healthRes.data?.upstreams || upstreamRes.data?.upstreams || null;
     renderDiagnosticsUpstreams(upstreamList);
     renderDiagnosticsCache(cacheRes.data || null);
