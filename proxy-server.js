@@ -1254,6 +1254,102 @@ async function downloadGisArcgisSnapshot(key, entry) {
   return { ok: true, bytes: stats.size, features: totalFeatures };
 }
 
+async function fetchGisEntry(key, entry) {
+  const cachedMeta = await readGisCacheMeta(key);
+  if (cachedMeta) {
+    await syncGisCacheIndexFromMeta(key, entry, cachedMeta);
+    return {
+      ok: true,
+      key,
+      cached: true,
+      bytes: cachedMeta.bytes,
+      contentType: cachedMeta.contentType || null,
+      savedAs: cachedMeta.savedAs,
+      fetchedAt: cachedMeta.fetchedAt,
+      format: cachedMeta.format || "unknown",
+      normalized: false
+    };
+  }
+
+  const urlCheck = checkUrlAllowed(entry.url);
+  if (!urlCheck.allowed) {
+    await markGisCacheFailure(key, entry, "blocked_url");
+    return { ok: false, error: "blocked_url", reason: urlCheck.reason };
+  }
+
+  await markGisCacheAttempt(key, entry);
+  const upstream = await upstreamFetch(entry.url, {
+    includeBodyBuffer: true,
+    maxBytes: MAX_LAYER_BYTES,
+    timeoutMs: 20000,
+    upstreamName: `gis-${key}`,
+    route: "/api/gis/fetch"
+  });
+
+  if (!upstream.ok || !upstream.bodyBuffer) {
+    await markGisCacheFailure(key, entry, upstream.error || "upstream_failed");
+    return { ok: false, error: upstream.error || "upstream_failed", status: upstream.status || 0 };
+  }
+
+  const cached = await cacheGisDownloadResult(key, entry, upstream.bodyBuffer, upstream.contentType, upstream.fetchedAt);
+  const meta = cached.meta;
+
+  return {
+    ok: true,
+    key,
+    cached: false,
+    bytes: meta.bytes,
+    contentType: meta.contentType,
+    savedAs: meta.savedAs,
+    fetchedAt: meta.fetchedAt,
+    format: meta.format,
+    normalized: cached.normalized
+  };
+}
+
+async function loadGisCachedData(key) {
+  const geojsonPath = path.join(GIS_CACHE_DIR, `${key}.geojson`);
+  if (fs.existsSync(geojsonPath)) {
+    const payload = await fsp.readFile(geojsonPath);
+    const catalog = await readGisCatalog();
+    const entry = findGisCatalogEntry(catalog, key);
+    const cachedMeta = await readGisCacheMeta(key);
+    if (cachedMeta) {
+      await syncGisCacheIndexFromMeta(key, entry, cachedMeta);
+    } else {
+      const stats = await fsp.stat(geojsonPath);
+      const now = Date.now();
+      await updateGisCacheIndexItem(key, (current) => ({
+        ...current,
+        key,
+        name: entry?.name || current.name || null,
+        cached: true,
+        cachedAt: current.cachedAt || now,
+        bytes: stats.size,
+        format: current.format || "arcgis_snapshot",
+        source: current.source || buildGisCacheSource(entry, null),
+        etag: current.etag || null,
+        lastModified: current.lastModified || null,
+        lastUsedAt: now
+      }));
+    }
+    return { ok: true, payload, contentType: MIME[".geojson"] };
+  }
+
+  const cachedMeta = await readGisCacheMeta(key);
+  if (cachedMeta) {
+    const ext = path.extname(cachedMeta.rawPath).toLowerCase();
+    const type = MIME[ext] || "application/octet-stream";
+    const payload = await fsp.readFile(cachedMeta.rawPath);
+    const catalog = await readGisCatalog();
+    const entry = findGisCatalogEntry(catalog, key);
+    await touchGisCacheIndexItem(key, entry);
+    return { ok: true, payload, contentType: type };
+  }
+
+  return { ok: false, error: "not_cached_yet" };
+}
+
 function buildOfflineQueue(catalog, { pack, keys } = {}) {
   const entries = listGisCatalogEntries(catalog);
   let filtered = entries.filter((entry) => entry?.offline);
@@ -4861,59 +4957,18 @@ const server = http.createServer(async (req, res) => {
         return send(res, 404, JSON.stringify({ ok: false, error: "unknown_key" }), { "Content-Type": "application/json" });
       }
 
-      const cachedMeta = await readGisCacheMeta(key);
-      if (cachedMeta) {
-        await syncGisCacheIndexFromMeta(key, entry, cachedMeta);
-        return send(res, 200, JSON.stringify({
-          ok: true,
-          key,
-          cached: true,
-          bytes: cachedMeta.bytes,
-          contentType: cachedMeta.contentType || null,
-          savedAs: cachedMeta.savedAs,
-          fetchedAt: cachedMeta.fetchedAt,
-          format: cachedMeta.format || "unknown"
-        }, null, 2), { "Content-Type": "application/json" });
-      }
-
-      const urlCheck = checkUrlAllowed(entry.url);
-      if (!urlCheck.allowed) {
-        await markGisCacheFailure(key, entry, "blocked_url");
-        return send(res, 400, JSON.stringify({ ok: false, error: "blocked_url", reason: urlCheck.reason }, null, 2), { "Content-Type": "application/json" });
-      }
-
-      await markGisCacheAttempt(key, entry);
-      const upstream = await upstreamFetch(entry.url, {
-        includeBodyBuffer: true,
-        maxBytes: MAX_LAYER_BYTES,
-        timeoutMs: 20000,
-        upstreamName: `gis-${key}`,
-        route: "/api/gis/fetch"
-      });
-
-      if (!upstream.ok || !upstream.bodyBuffer) {
-        await markGisCacheFailure(key, entry, upstream.error || "upstream_failed");
-        return send(res, 502, JSON.stringify({
+      const result = await fetchGisEntry(key, entry);
+      if (!result.ok) {
+        const status = result.error === "blocked_url" ? 400 : 502;
+        return send(res, status, JSON.stringify({
           ok: false,
-          error: upstream.error || "upstream_failed",
-          status: upstream.status || 0
+          error: result.error || "upstream_failed",
+          reason: result.reason || null,
+          status: result.status || 0
         }, null, 2), { "Content-Type": "application/json" });
       }
 
-      const cached = await cacheGisDownloadResult(key, entry, upstream.bodyBuffer, upstream.contentType, upstream.fetchedAt);
-      const meta = cached.meta;
-
-      return send(res, 200, JSON.stringify({
-        ok: true,
-        key,
-        cached: false,
-        bytes: meta.bytes,
-        contentType: meta.contentType,
-        savedAs: meta.savedAs,
-        fetchedAt: meta.fetchedAt,
-        format: meta.format,
-        normalized: cached.normalized
-      }, null, 2), { "Content-Type": "application/json" });
+      return send(res, 200, JSON.stringify(result, null, 2), { "Content-Type": "application/json" });
     }
 
     if (urlObj.pathname === "/api/gis/data" && req.method === "GET") {
@@ -4922,47 +4977,12 @@ const server = http.createServer(async (req, res) => {
       if (!key) {
         return send(res, 400, JSON.stringify({ ok: false, error: "invalid_key" }), { "Content-Type": "application/json" });
       }
-
-      const geojsonPath = path.join(GIS_CACHE_DIR, `${key}.geojson`);
-      if (fs.existsSync(geojsonPath)) {
-        const payload = await fsp.readFile(geojsonPath);
-        const catalog = await readGisCatalog();
-        const entry = findGisCatalogEntry(catalog, key);
-        const cachedMeta = await readGisCacheMeta(key);
-        if (cachedMeta) {
-          await syncGisCacheIndexFromMeta(key, entry, cachedMeta);
-        } else {
-          const stats = await fsp.stat(geojsonPath);
-          const now = Date.now();
-          await updateGisCacheIndexItem(key, (current) => ({
-            ...current,
-            key,
-            name: entry?.name || current.name || null,
-            cached: true,
-            cachedAt: current.cachedAt || now,
-            bytes: stats.size,
-            format: current.format || "arcgis_snapshot",
-            source: current.source || buildGisCacheSource(entry, null),
-            etag: current.etag || null,
-            lastModified: current.lastModified || null,
-            lastUsedAt: now
-          }));
-        }
-        return send(res, 200, payload, { "Content-Type": MIME[".geojson"] });
+      const result = await loadGisCachedData(key);
+      if (!result.ok) {
+        return send(res, 404, JSON.stringify({ ok: false, error: result.error || "not_cached_yet" }), { "Content-Type": "application/json" });
       }
 
-      const cachedMeta = await readGisCacheMeta(key);
-      if (cachedMeta) {
-        const ext = path.extname(cachedMeta.rawPath).toLowerCase();
-        const type = MIME[ext] || "application/octet-stream";
-        const payload = await fsp.readFile(cachedMeta.rawPath);
-        const catalog = await readGisCatalog();
-        const entry = findGisCatalogEntry(catalog, key);
-        await touchGisCacheIndexItem(key, entry);
-        return send(res, 200, payload, { "Content-Type": type });
-      }
-
-      return send(res, 404, JSON.stringify({ ok: false, error: "not_cached_yet" }), { "Content-Type": "application/json" });
+      return send(res, 200, result.payload, { "Content-Type": result.contentType || "application/octet-stream" });
     }
 
     if (urlObj.pathname === "/api/gis/offline/status" && req.method === "GET") {
@@ -6282,21 +6302,36 @@ async function startServer() {
   });
 }
 
-startServer().catch((err) => {
-  console.error("[startup] Server failed to start:", err.message || err);
-  process.exit(1);
-});
+module.exports = {
+  GIS_CACHE_DIR,
+  buildGisCacheSource,
+  fetchGisEntry,
+  isGisCacheItemValid,
+  listGisCatalogEntries,
+  loadGisCachedData,
+  readGisCacheIndex,
+  readGisCatalog,
+  removeGisCacheFiles,
+  updateGisCacheIndexItem
+};
 
-process.on("exit", () => {
-  logApp({
-    level: "INFO",
-    kind: "shutdown",
-    msg: "Server shutting down."
+if (require.main === module) {
+  startServer().catch((err) => {
+    console.error("[startup] Server failed to start:", err.message || err);
+    process.exit(1);
   });
-  try {
-    appLogStream.end();
-    upstreamLogStream.end();
-  } catch (_) {
-    // Ignore shutdown errors
-  }
-});
+
+  process.on("exit", () => {
+    logApp({
+      level: "INFO",
+      kind: "shutdown",
+      msg: "Server shutting down."
+    });
+    try {
+      appLogStream.end();
+      upstreamLogStream.end();
+    } catch (_) {
+      // Ignore shutdown errors
+    }
+  });
+}

@@ -19,6 +19,8 @@
     "build:school-overrides": "node scripts/build-school-overrides.js",
     "audit:place-precision": "node scripts/audit-place-precision.js",
     "smoke:local": "node scripts/smoke-local.js",
+    "gis:prefetch:core": "node scripts/prefetch-gis-pack.js core",
+    "gis:prefetch:field": "node scripts/prefetch-gis-pack.js field",
     "termux:setup": "bash scripts/termux-setup.sh",
     "termux": "bash scripts/termux-run.sh"
   },
