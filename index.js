@@ -173,7 +173,8 @@
   const LOAD_SHEDDING_STORAGE_KEY = "fxbg.loadShedding";
   const AOI_MODE_STORAGE_KEY = "fxbg.aoiMode";
   const MOBILE_PERF_STORAGE_KEY = "fxbg.mobilePerf";
-  const MOBILE_MARKER_CAP = 250;
+  const MOBILE_MARKER_CAP = 200;
+  const MAP_REDRAW_DEBOUNCE_MS = 320;
   const GIS_LAYERS = new Map(); // key -> { leafletLayer, enabled, meta, loaded }
   const GIS_PANEL_GROUPS = [
     { key: "basemapEnhancers", label: "Basemap Enhancers" },
@@ -4803,7 +4804,7 @@
   // -----------------------------
   const map = L.map("map", {
     zoomControl: false,
-    preferCanvas: false,
+    preferCanvas: IS_MOBILE_UI,
     maxZoom: 20,
     minZoom: 7
   }).setView([CONFIG.center.lat, CONFIG.center.lon], CONFIG.zoom);
@@ -5292,7 +5293,7 @@
       saveStoredLocation({ lat, lng, accuracy, zoom: nextZoom });
     }
     if (storeReady) {
-      redrawThrottled();
+      scheduleRender();
       updateNearestPanel();
       evaluateAlertRules();
     }
@@ -6381,6 +6382,16 @@
       clearTimeout(gisRefreshTimeout);
     }
 
+    for (const entry of GIS_LAYERS.values()) {
+      if (entry?.controller) {
+        entry.controller.abort("Viewport changed");
+      }
+    }
+    for (const [overlayId, request] of store.gis.requests.entries()) {
+      request?.controller?.abort("Viewport changed");
+      store.gis.requests.delete(overlayId);
+    }
+
     gisRefreshTimeout = setTimeout(() => {
       lastGisRefreshZoom = map.getZoom();
       refreshEnabledOverlays();
@@ -6938,6 +6949,10 @@
     freshnessTransitions: new Map()
   };
 
+  function applyMobilePerfMode(enabled) {
+    document.documentElement.classList.toggle("mobile-perf", Boolean(enabled));
+  }
+
   function setLoadShedding(enabled) {
     store.loadShedding = Boolean(enabled);
     try {
@@ -6954,7 +6969,8 @@
     try {
       localStorage.setItem(MOBILE_PERF_STORAGE_KEY, store.mobilePerf ? "1" : "0");
     } catch {}
-    redrawThrottled();
+    applyMobilePerfMode(store.mobilePerf);
+    scheduleRender();
   }
 
   function setAoiMode(mode) {
@@ -6963,8 +6979,10 @@
     try {
       localStorage.setItem(AOI_MODE_STORAGE_KEY, mode);
     } catch {}
-    redrawThrottled();
+    scheduleRender();
   }
+
+  applyMobilePerfMode(store.mobilePerf);
 
   // -----------------------------
   // IndexedDB wrapper for offline persistence
@@ -8543,8 +8561,42 @@
    * Throttled redraw to prevent render storms on mobile
    * Coalesces rapid redraw calls into a single RAF update
    */
+  let scheduledRenderHandle = null;
+  let scheduledRenderType = null;
   let redrawScheduled = false;
   let redrawTimeout = null;
+
+  function cancelScheduledRender() {
+    if (scheduledRenderHandle !== null) {
+      if (scheduledRenderType === "idle" && typeof cancelIdleCallback !== "undefined") {
+        cancelIdleCallback(scheduledRenderHandle);
+      } else {
+        clearTimeout(scheduledRenderHandle);
+      }
+      scheduledRenderHandle = null;
+      scheduledRenderType = null;
+    }
+  }
+
+  function scheduleRender() {
+    cancelScheduledRender();
+    if (typeof requestIdleCallback !== "undefined") {
+      scheduledRenderType = "idle";
+      scheduledRenderHandle = requestIdleCallback(() => {
+        scheduledRenderHandle = null;
+        scheduledRenderType = null;
+        redrawThrottled();
+      }, { timeout: 1000 });
+    } else {
+      scheduledRenderType = "timeout";
+      scheduledRenderHandle = setTimeout(() => {
+        scheduledRenderHandle = null;
+        scheduledRenderType = null;
+        redrawThrottled();
+      }, 0);
+    }
+  }
+
   function redrawThrottled() {
     if (redrawScheduled) return;
     redrawScheduled = true;
@@ -8611,9 +8663,14 @@
       visibleItems.push(item);
     }
 
-    if (store.mobilePerf) {
-      visibleItems.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
-      if (visibleItems.length > MOBILE_MARKER_CAP) visibleItems.splice(MOBILE_MARKER_CAP);
+    if (IS_MOBILE_UI) {
+      const getItemTs = (item) => {
+        if (Number.isFinite(item?.ts)) return item.ts;
+        const parsed = item?.timestamp ? new Date(item.timestamp).getTime() : 0;
+        return Number.isFinite(parsed) ? parsed : 0;
+      };
+      visibleItems.sort((a, b) => (b.priority || 0) - (a.priority || 0) || getItemTs(b) - getItemTs(a));
+      if (visibleItems.length > MOBILE_MARKER_CAP) visibleItems.length = MOBILE_MARKER_CAP;
     }
 
     const downtownMode = isDowntownModeEnabled();
@@ -8702,7 +8759,18 @@
    * On mobile, this coalesces rapid calls into a single RAF update
    */
   function redraw() {
-    redrawThrottled();
+    scheduleRender();
+  }
+
+  let mapRedrawTimeout = null;
+  function scheduleMapRedraw() {
+    if (mapRedrawTimeout) {
+      clearTimeout(mapRedrawTimeout);
+    }
+    mapRedrawTimeout = setTimeout(() => {
+      mapRedrawTimeout = null;
+      scheduleRender();
+    }, MAP_REDRAW_DEBOUNCE_MS);
   }
 
   // -----------------------------
@@ -13750,8 +13818,9 @@
 
   map.on("zoomend", () => {
     syncPrecisionControlLabels();
-    redraw();
+    scheduleMapRedraw();
   });
+  map.on("moveend", scheduleMapRedraw);
   syncPrecisionControlLabels();
 
   map.on("click", (event) => {
