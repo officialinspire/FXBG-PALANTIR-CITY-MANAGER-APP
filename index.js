@@ -191,6 +191,12 @@
   let gisCatalogPromise = null;
   let gisCatalogStatus = "idle";
   let gisCatalogError = null;
+  let gisLastError = null;
+  const gisStatusState = {
+    status: null,
+    error: null,
+    lastUpdatedAt: null
+  };
   let gisTitleHydrationPromise = null;
 
   function readLoadSheddingPref() {
@@ -5567,8 +5573,9 @@
   // -----------------------------
   // GIS Catalog Layer Manager (Module 7)
   // -----------------------------
-  async function getGisCatalog() {
-    const res = await fetch("/api/gis/catalog");
+  async function getGisCatalog({ refresh = false } = {}) {
+    const url = refresh ? "/api/gis/catalog?refresh=1" : "/api/gis/catalog";
+    const res = await fetch(url);
     if (!res.ok) {
       throw new Error(`Failed to load GIS catalog: ${res.status}`);
     }
@@ -5609,17 +5616,23 @@
           await res.text();
         } catch (err) {}
       }
-      return { ok: false, error: errorPayload?.error || `status_${res.status}` };
+      const errorMessage = errorPayload?.error || `status_${res.status}`;
+      gisLastError = errorMessage;
+      return { ok: false, error: errorMessage };
     }
     if (!contentType.includes("json")) {
-      throw new Error(`Unexpected GIS payload: ${contentType}`);
+      const errorMessage = `Unexpected GIS payload: ${contentType}`;
+      gisLastError = errorMessage;
+      throw new Error(errorMessage);
     }
     const payload = await res.json();
     if (payload?.ok === true && payload?.data) {
       return { ok: true, data: payload.data };
     }
     if (payload?.ok === false) {
-      return { ok: false, error: payload.error || "not_cached_yet" };
+      const errorMessage = payload.error || "not_cached_yet";
+      gisLastError = errorMessage;
+      return { ok: false, error: errorMessage };
     }
     return { ok: true, data: payload };
   }
@@ -5677,6 +5690,43 @@
     }
   }
 
+  async function fetchGisStatus() {
+    try {
+      const res = await fetch("/api/gis/status");
+      const data = await res.json();
+      if (!res.ok || !data.ok) {
+        throw new Error(data.error || "status_failed");
+      }
+      gisStatusState.status = data;
+      gisStatusState.error = null;
+      gisStatusState.lastUpdatedAt = Date.now();
+    } catch (err) {
+      gisStatusState.error = err?.message || String(err);
+      gisLastError = gisStatusState.error;
+    }
+  }
+
+  async function refreshGisCatalog() {
+    gisCatalogStatus = "loading";
+    gisCatalogError = null;
+    gisLastError = null;
+    try {
+      const catalog = await getGisCatalog({ refresh: true });
+      gisCatalogCache = catalog;
+      gisCatalogStatus = "ready";
+      registerGisCatalogLayers(catalog);
+      hydrateGisLayerTitles();
+    } catch (err) {
+      gisCatalogStatus = "error";
+      gisCatalogError = err;
+      gisLastError = err?.message || String(err);
+      console.warn("[GIS] Catalog refresh failed:", err);
+    } finally {
+      refreshLayersPanelUI();
+      fetchGisStatus();
+    }
+  }
+
   async function hydrateGisLayerTitles() {
     if (!gisCatalogCache || gisTitleHydrationPromise) return gisTitleHydrationPromise;
     const entries = getGisCatalogEntries();
@@ -5716,11 +5766,13 @@
       } catch (err) {
         gisCatalogStatus = "error";
         gisCatalogError = err;
+        gisLastError = err?.message || String(err);
         console.warn("[GIS] Catalog load failed:", err);
         return null;
       } finally {
         gisCatalogPromise = null;
         refreshLayersPanelUI();
+        fetchGisStatus();
       }
     })();
     return gisCatalogPromise;
@@ -15768,6 +15820,12 @@
 
   function renderLayersHTML() {
     let html = "";
+    const catalogLoaded = gisCatalogStatus === "ready";
+    const entryCount = catalogLoaded ? getGisCatalogEntries().length : 0;
+    const cachedCount = Array.isArray(gisStatusState.status?.entries)
+      ? gisStatusState.status.entries.filter((entry) => entry.cached).length
+      : 0;
+    const lastGisError = gisLastError || gisStatusState.error || (gisCatalogError?.message || null);
 
     if (store.loadShedding) {
       html += `<div class="dockCard">`;
@@ -15780,6 +15838,19 @@
       html += `</div>`;
       html += `</div>`;
     }
+
+    html += `<div class="dockCard">`;
+    html += `<div class="dockRow">`;
+    html += `<div class="dockRowLeft">`;
+    html += `<div class="dockRowTitle">GIS Catalog</div>`;
+    html += `<div class="dockRowMeta">Catalog loaded: ${catalogLoaded ? "yes" : "no"}</div>`;
+    html += `<div class="dockRowMeta">Entries: ${entryCount}</div>`;
+    html += `<div class="dockRowMeta">Cached: ${cachedCount}</div>`;
+    html += `<div class="dockRowMeta">Last GIS error: ${escapeHtml(lastGisError || "none")}</div>`;
+    html += `</div>`;
+    html += `<button class="dockBtnSmall" id="gisCatalogRefresh">Refresh GIS Catalog</button>`;
+    html += `</div>`;
+    html += `</div>`;
 
     if (gisCatalogStatus === "idle") {
       ensureGisCatalogReady();
@@ -15966,6 +16037,12 @@
           soloCategory(cat);
           closeDock();
         });
+      });
+    }
+
+    if (dockState.tab === "layers") {
+      bind("gisCatalogRefresh", "click", () => {
+        refreshGisCatalog();
       });
     }
 
