@@ -72,6 +72,11 @@
     </div>
 
     <div class="topbar__center topbar__center--stacked">
+      <div class="topbarRow topbarRow--status" id="topbarStatusRow">
+        <button class="btn btn--compact btn--ghost mobileHudMoreBtn" id="mobileHudMoreBtn" type="button">More</button>
+        <div class="freshnessBadges" id="freshnessBadgesMobile" aria-label="Feed freshness status"></div>
+      </div>
+
       <div class="topbarRow topbarRow--chips" id="topbarChipsRow">
         <div class="chip chip--live" id="chipLive">
           <span class="dot"></span>
@@ -102,11 +107,6 @@
           <span class="chip__text" id="swStatusTextMobile">📦 Cached</span>
           <button class="btn btn--ghost swUpdateBtn swUpdateBtn--hidden" id="swUpdateBtnMobile" type="button">Update</button>
         </div>
-      </div>
-
-      <div class="topbarRow topbarRow--status" id="topbarStatusRow">
-        <button class="btn btn--compact btn--ghost mobileHudMoreBtn" id="mobileHudMoreBtn" type="button">More</button>
-        <div class="freshnessBadges" id="freshnessBadgesMobile" aria-label="Feed freshness status"></div>
       </div>
 
       <div class="topbarRow topbarRow--actions" id="topbarActionsRow">
@@ -627,16 +627,18 @@
 
   <footer class="bottombar">
     <div class="dock" id="dock">
-      <button class="dockBtn dockTab" data-dock="overview" data-panel="overview" aria-pressed="false">Overview</button>
-      <button class="dockBtn dockTab" data-dock="categories" data-panel="categories" aria-pressed="false">Categories</button>
-      <button class="dockBtn dockTab" data-dock="sources" data-panel="sources" aria-pressed="false">Sources</button>
-      <button class="dockBtn dockTab" data-dock="nearest" data-panel="nearest" aria-pressed="false">Nearest</button>
-      <button class="dockBtn dockTab" data-dock="watchboard" data-panel="watchboard" aria-pressed="false">Watchboard</button>
-      <button class="dockBtn dockTab" data-dock="alerts" data-panel="alerts" aria-pressed="false">Hot Alerts</button>
-      <button class="dockBtn dockTab" data-dock="tracks" data-panel="tracks" aria-pressed="false">Tracks</button>
-      <button class="dockBtn dockTab" data-dock="layers" data-panel="layers" aria-pressed="false">Layers</button>
-      <button class="dockBtn dockTab" data-dock="sync" data-panel="sync" aria-pressed="false">Sync</button>
-      <button class="dockBtn dockTab" data-dock="system" data-panel="system" aria-pressed="false">System</button>
+      <div class="dockBar">
+        <button class="dockBtn dockTab" data-dock="overview" data-panel="overview" aria-pressed="false">Overview</button>
+        <button class="dockBtn dockTab" data-dock="categories" data-panel="categories" aria-pressed="false">Categories</button>
+        <button class="dockBtn dockTab" data-dock="sources" data-panel="sources" aria-pressed="false">Sources</button>
+        <button class="dockBtn dockTab" data-dock="nearest" data-panel="nearest" aria-pressed="false">Nearest</button>
+        <button class="dockBtn dockTab" data-dock="watchboard" data-panel="watchboard" aria-pressed="false">Watchboard</button>
+        <button class="dockBtn dockTab" data-dock="alerts" data-panel="alerts" aria-pressed="false">Hot Alerts</button>
+        <button class="dockBtn dockTab" data-dock="tracks" data-panel="tracks" aria-pressed="false">Tracks</button>
+        <button class="dockBtn dockTab" data-dock="layers" data-panel="layers" aria-pressed="false">Layers</button>
+        <button class="dockBtn dockTab" data-dock="sync" data-panel="sync" aria-pressed="false">Sync</button>
+        <button class="dockBtn dockTab" data-dock="system" data-panel="system" aria-pressed="false">System</button>
+      </div>
     </div>
   </footer>
 

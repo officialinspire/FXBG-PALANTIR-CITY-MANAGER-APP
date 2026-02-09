@@ -36,6 +36,12 @@
   --topbarActual: var(--topH);
   --bottombarActual: var(--botH);
   --radius: 18px;
+  --safeTop: env(safe-area-inset-top, 0px);
+  --safeBottom: env(safe-area-inset-bottom, 0px);
+  --mobileHeaderH: 118px;
+  --mobileDockH: 74px;
+  --mapTopInset: calc(var(--safeTop) + var(--mobileHeaderH));
+  --mapBottomInset: calc(var(--safeBottom) + var(--mobileDockH) + 10px);
 }
 
 
@@ -1909,11 +1915,28 @@ body.debug-ui button {
 
  .dock {
   color: var(--txt);
+  width: 100%;
+}
+
+.dockBar {
   display: flex;
   gap: 8px;
   align-items: center;
   justify-content: space-around;
   width: 100%;
+}
+
+#dock .dockBar {
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+  mask-image: linear-gradient(to right, transparent 0, black 18px, black calc(100% - 18px), transparent 100%);
+  -webkit-mask-image: linear-gradient(to right, transparent 0, black 18px, black calc(100% - 18px), transparent 100%);
+}
+
+#dock .dockBar::-webkit-scrollbar {
+  display: none;
 }
 
  .dockBtn {
@@ -2782,7 +2805,7 @@ button {
     height: auto;
   }
 
-  .dock {
+  .dock .dockBar {
     display: flex;
     flex-wrap: nowrap;
     overflow-x: auto;
@@ -2792,7 +2815,7 @@ button {
     scrollbar-width: none;
     justify-content: flex-start;
   }
-  .dock::-webkit-scrollbar {
+  .dock .dockBar::-webkit-scrollbar {
     display: none;
   }
 
@@ -3043,7 +3066,7 @@ button {
     padding: 8px 10px;
     border-radius: 18px;
   }
-  .bottombar .dock, .footerTabs, .tabRow{
+  .bottombar .dockBar, .footerTabs, .tabRow{
     display:flex;
     gap: 8px;
     overflow-x:auto;
@@ -3051,7 +3074,7 @@ button {
     -webkit-overflow-scrolling: touch;
     scrollbar-width:none;
   }
-  .bottombar .dock::-webkit-scrollbar, .footerTabs::-webkit-scrollbar, .tabRow::-webkit-scrollbar { display:none; }
+  .bottombar .dockBar::-webkit-scrollbar, .footerTabs::-webkit-scrollbar, .tabRow::-webkit-scrollbar { display:none; }
   .dockTab, .dockBtn, .footerTab{
     min-height: 40px;
     height: 40px;
@@ -3249,6 +3272,13 @@ button {
   /* Hard reset: prevent wrap chaos */
   .topbar, .topbar * { box-sizing: border-box; }
   .topbar { padding: 10px 10px 8px; }
+
+  #mobileHeader .topbar__center--stacked {
+    display: grid;
+    grid-template-rows: auto auto auto;
+    gap: 6px;
+    padding-top: var(--safeTop);
+  }
 
   /* Force a two-row layout */
   .topbar .topbarRow { display: flex; gap: 10px; align-items: center; }
@@ -4224,6 +4254,37 @@ button {
 
 .leaflet-right .leaflet-control {
   margin-right: 12px;
+}
+
+body.isMobile .leaflet-top {
+  top: var(--mapTopInset) !important;
+}
+
+body.isMobile .leaflet-bottom {
+  bottom: var(--mapBottomInset) !important;
+}
+
+body.isMobile .leaflet-top .leaflet-control {
+  margin-top: 10px;
+}
+
+body.isMobile .leaflet-bottom .leaflet-control {
+  margin-bottom: 10px;
+}
+
+body.isMobile .leaflet-control-container {
+  pointer-events: none;
+}
+
+body.isMobile .leaflet-control {
+  pointer-events: auto;
+}
+
+body.isMobile .leaflet-control-zoom,
+body.isMobile .leaflet-control-layers,
+body.isMobile .locateControl.leaflet-control {
+  margin-top: 10px;
+  margin-bottom: 10px;
 }
 
 /* Style basemap layer control to match app theme */
