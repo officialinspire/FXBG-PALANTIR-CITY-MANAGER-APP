@@ -123,6 +123,7 @@
   let gisCatalogPromise = null;
   let gisCatalogStatus = "idle";
   let gisCatalogError = null;
+  let gisTitleHydrationPromise = null;
 
   function readLoadSheddingPref() {
     try {
@@ -5314,6 +5315,34 @@
     return res.json();
   }
 
+  function getGisCatalogEntries() {
+    const entries = [];
+    GIS_PANEL_GROUPS.forEach((group) => {
+      const groupEntries = Array.isArray(gisCatalogCache?.[group.key]) ? gisCatalogCache[group.key] : [];
+      groupEntries.forEach((entry) => {
+        if (entry?.key) {
+          entries.push(entry);
+        }
+      });
+    });
+    return entries;
+  }
+
+  function updateGisCatalogEntryName(key, name) {
+    if (!key || !name || !gisCatalogCache) return;
+    GIS_PANEL_GROUPS.forEach((group) => {
+      const entries = Array.isArray(gisCatalogCache?.[group.key]) ? gisCatalogCache[group.key] : [];
+      const target = entries.find((entry) => entry.key === key);
+      if (target && !target.name) {
+        target.name = name;
+      }
+    });
+    const layerEntry = GIS_LAYERS.get(key);
+    if (layerEntry?.meta && !layerEntry.meta.name) {
+      layerEntry.meta.name = name;
+    }
+  }
+
   function registerGisCatalogLayers(catalog) {
     GIS_PANEL_GROUPS.forEach((group) => {
       const entries = Array.isArray(catalog?.[group.key]) ? catalog[group.key] : [];
@@ -5339,6 +5368,29 @@
     }
   }
 
+  async function hydrateGisLayerTitles() {
+    if (!gisCatalogCache || gisTitleHydrationPromise) return gisTitleHydrationPromise;
+    const entries = getGisCatalogEntries();
+    const pending = entries.filter((entry) => !entry?.name && entry?.itemId);
+    if (!pending.length) return null;
+
+    gisTitleHydrationPromise = (async () => {
+      for (const entry of pending) {
+        try {
+          const resolution = await resolveGisEntry(entry.key);
+          if (resolution?.ok && resolution.title) {
+            updateGisCatalogEntryName(entry.key, resolution.title);
+            refreshLayersPanelUI();
+          }
+        } catch (err) {
+          console.warn(`[GIS] Title resolve failed for ${entry.key}:`, err);
+        }
+      }
+    })();
+
+    return gisTitleHydrationPromise;
+  }
+
   async function ensureGisCatalogReady() {
     if (gisCatalogCache) return gisCatalogCache;
     if (gisCatalogPromise) return gisCatalogPromise;
@@ -5350,6 +5402,7 @@
         gisCatalogCache = catalog;
         gisCatalogStatus = "ready";
         registerGisCatalogLayers(catalog);
+        hydrateGisLayerTitles();
         return catalog;
       } catch (err) {
         gisCatalogStatus = "error";
@@ -5499,6 +5552,10 @@
               layerUrl = resolution.layerUrl;
               entry.meta.layerUrl = layerUrl;
               entry.meta.resolution = resolution;
+              if (!entry.meta.name && resolution.title) {
+                updateGisCatalogEntryName(entry.meta.key || key, resolution.title);
+                refreshLayersPanelUI();
+              }
             }
           } catch (resolveErr) {
             console.warn(`[GIS] Resolution failed for ${key}:`, resolveErr);
@@ -14766,7 +14823,9 @@
         html += `<div class="dockRowLeft">`;
         html += `<label>`;
         html += `<input type="checkbox" data-gis-layer-key="${escapeAttr(entry.key)}" ${isChecked ? 'checked' : ''}>`;
-        html += `<span>${escapeHtml(entry.name || entry.key)}</span>`;
+        const resolvedTitle = layerEntry?.meta?.resolution?.title;
+        const displayName = layerEntry?.meta?.name || resolvedTitle || entry.name || entry.key;
+        html += `<span>${escapeHtml(displayName)}</span>`;
         html += `</label>`;
         if (statusText) {
           html += `<div class="dockRowMeta" ${statusClass}>${escapeHtml(statusText)}</div>`;

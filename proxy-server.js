@@ -483,6 +483,32 @@ async function fetchPortalItem(portalBase, itemId) {
   return { ok: true, data: upstream.json || null };
 }
 
+async function fetchPortalRelatedItems(portalBase, itemId, relationshipType, direction) {
+  if (!portalBase || !itemId || !relationshipType || !direction) return null;
+  const relatedUrl = `${portalBase.replace(/\/$/, "")}/sharing/rest/content/items/${itemId}/relatedItems?relationshipType=${encodeURIComponent(relationshipType)}&direction=${encodeURIComponent(direction)}&f=pjson`;
+  const urlCheck = checkUrlAllowed(relatedUrl);
+  if (!urlCheck.allowed) {
+    return { ok: false, error: "blocked_url", reason: urlCheck.reason };
+  }
+
+  const upstream = await upstreamFetch(relatedUrl, {
+    expectedType: "json",
+    timeoutMs: 15000,
+    upstreamName: `gis-related-${itemId}`,
+    route: "/api/gis/resolve"
+  });
+
+  if (!upstream.ok) {
+    return {
+      ok: false,
+      error: upstream.error || "upstream_failed",
+      status: upstream.status || 0
+    };
+  }
+
+  return { ok: true, data: upstream.json || null };
+}
+
 async function resolveArcgis(entry) {
   const url = entry?.url || "";
   const itemId = extractItemId(url);
@@ -498,12 +524,41 @@ async function resolveArcgis(entry) {
 
   const item = itemResult.data || {};
   const serviceUrl = item.url || null;
+  let relatedItemId = null;
+  let relatedServiceUrl = null;
   let layerUrl = null;
-  if (serviceUrl) {
-    if (/\/featureserver\/?$/i.test(serviceUrl)) {
-      layerUrl = `${serviceUrl.replace(/\/$/, "")}/0`;
+
+  if (!serviceUrl) {
+    const relationshipTypes = ["Service2Data", "Data2Service"];
+    const directions = ["forward", "reverse"];
+    for (const relationshipType of relationshipTypes) {
+      for (const direction of directions) {
+        const relatedResult = await fetchPortalRelatedItems(portalBase, itemId, relationshipType, direction);
+        const relatedItems = relatedResult?.data?.relatedItems || [];
+        const candidate = relatedItems.find((rel) => rel?.type?.toLowerCase().includes("feature")) || relatedItems[0];
+        if (candidate?.id) {
+          relatedItemId = candidate.id.toLowerCase();
+          const relatedItem = await fetchPortalItem(portalBase, relatedItemId);
+          if (relatedItem?.ok) {
+            relatedServiceUrl = relatedItem.data?.url || null;
+          }
+        }
+        if (relatedServiceUrl) break;
+      }
+      if (relatedServiceUrl) break;
+    }
+  }
+
+  const finalServiceUrl = serviceUrl || relatedServiceUrl;
+  if (finalServiceUrl) {
+    if (/\/(feature|map)server\/\d+$/i.test(finalServiceUrl)) {
+      layerUrl = finalServiceUrl;
+    } else if (/\/featureserver\/?$/i.test(finalServiceUrl)) {
+      layerUrl = `${finalServiceUrl.replace(/\/$/, "")}/0`;
+    } else if (/\/mapserver\/?$/i.test(finalServiceUrl)) {
+      layerUrl = `${finalServiceUrl.replace(/\/$/, "")}/0`;
     } else {
-      layerUrl = serviceUrl;
+      layerUrl = finalServiceUrl;
     }
   }
 
@@ -513,8 +568,9 @@ async function resolveArcgis(entry) {
     portalBase,
     title: item.title || null,
     type: item.type || null,
-    serviceUrl,
-    layerUrl
+    serviceUrl: finalServiceUrl,
+    layerUrl,
+    relatedItemId
   };
 }
 
