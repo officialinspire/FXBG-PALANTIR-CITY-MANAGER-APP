@@ -5357,15 +5357,33 @@
 
   async function loadGisGeojson(key, signal) {
     const res = await fetch(`/api/gis/data?key=${encodeURIComponent(key)}`, { signal });
-    if (!res.ok) {
-      const text = await res.text();
-      throw new Error(`Failed to load GIS data: ${res.status} ${text}`);
-    }
     const contentType = res.headers.get("content-type") || "";
+    if (!res.ok) {
+      let errorPayload = null;
+      if (contentType.includes("json")) {
+        try {
+          errorPayload = await res.json();
+        } catch (err) {
+          errorPayload = null;
+        }
+      } else {
+        try {
+          await res.text();
+        } catch (err) {}
+      }
+      return { ok: false, error: errorPayload?.error || `status_${res.status}` };
+    }
     if (!contentType.includes("json")) {
       throw new Error(`Unexpected GIS payload: ${contentType}`);
     }
-    return res.json();
+    const payload = await res.json();
+    if (payload?.ok === true && payload?.data) {
+      return { ok: true, data: payload.data };
+    }
+    if (payload?.ok === false) {
+      return { ok: false, error: payload.error || "not_cached_yet" };
+    }
+    return { ok: true, data: payload };
   }
 
   function getGisCatalogEntries() {
@@ -5598,49 +5616,62 @@
       try {
         let layerUrl = entry.meta?.layerUrl || null;
         let resolution = null;
-        if (!layerUrl) {
-          try {
-            resolution = await resolveGisEntry(key, controller.signal);
-            if (resolution?.ok && resolution.layerUrl) {
-              layerUrl = resolution.layerUrl;
-              entry.meta.layerUrl = layerUrl;
-              entry.meta.resolution = resolution;
-              if (!entry.meta.name && resolution.title) {
-                updateGisCatalogEntryName(entry.meta.key || key, resolution.title);
-                refreshLayersPanelUI();
-              }
-            }
-          } catch (resolveErr) {
-            console.warn(`[GIS] Resolution failed for ${key}:`, resolveErr);
-          }
-        }
-
         const layer = ensureLeafletLayer();
         layer.addTo(map);
+        const cachedResult = await loadGisGeojson(key, controller.signal);
 
-        if (layerUrl) {
-          const bbox = getMapBbox();
-          const count = await fetchArcgisCount(layerUrl, bbox, controller.signal);
-          const perf = CONFIG.gisOverlays.perf;
-          if (count > perf.maxFeaturesHard) {
-            throw new Error(`Layer exceeds hard limit (${count} > ${perf.maxFeaturesHard}). Zoom in further.`);
-          }
-          let loadLimit = count;
-          if (count > perf.maxFeaturesSoft) {
-            loadLimit = perf.maxFeaturesSoft;
-          }
-          const geojson = await fetchArcgisViewportGeojson(
-            layerUrl,
-            bbox,
-            '*',
-            loadLimit,
-            controller.signal
-          );
-          await addGeojsonChunked(layer, geojson, { signal: controller.signal });
+        if (cachedResult?.ok && cachedResult?.data) {
+          await addGeojsonChunked(layer, cachedResult.data, { signal: controller.signal });
         } else {
-          await ensureGisCached(key, controller.signal);
-          const geojson = await loadGisGeojson(key, controller.signal);
-          await addGeojsonChunked(layer, geojson, { signal: controller.signal });
+          const isOnline = typeof navigator === "undefined" ? true : navigator.onLine;
+          if (!isOnline) {
+            throw new Error("Not available offline yet. Download Offline Pack.");
+          }
+
+          if (!layerUrl) {
+            try {
+              resolution = await resolveGisEntry(key, controller.signal);
+              if (resolution?.ok && resolution.layerUrl) {
+                layerUrl = resolution.layerUrl;
+                entry.meta.layerUrl = layerUrl;
+                entry.meta.resolution = resolution;
+                if (!entry.meta.name && resolution.title) {
+                  updateGisCatalogEntryName(entry.meta.key || key, resolution.title);
+                  refreshLayersPanelUI();
+                }
+              }
+            } catch (resolveErr) {
+              console.warn(`[GIS] Resolution failed for ${key}:`, resolveErr);
+            }
+          }
+
+          if (layerUrl) {
+            const bbox = getMapBbox();
+            const count = await fetchArcgisCount(layerUrl, bbox, controller.signal);
+            const perf = CONFIG.gisOverlays.perf;
+            if (count > perf.maxFeaturesHard) {
+              throw new Error(`Layer exceeds hard limit (${count} > ${perf.maxFeaturesHard}). Zoom in further.`);
+            }
+            let loadLimit = count;
+            if (count > perf.maxFeaturesSoft) {
+              loadLimit = perf.maxFeaturesSoft;
+            }
+            const geojson = await fetchArcgisViewportGeojson(
+              layerUrl,
+              bbox,
+              '*',
+              loadLimit,
+              controller.signal
+            );
+            await addGeojsonChunked(layer, geojson, { signal: controller.signal });
+          } else {
+            await ensureGisCached(key, controller.signal);
+            const refreshed = await loadGisGeojson(key, controller.signal);
+            if (!refreshed?.ok || !refreshed?.data) {
+              throw new Error("Failed to load GIS data after caching.");
+            }
+            await addGeojsonChunked(layer, refreshed.data, { signal: controller.signal });
+          }
         }
 
         entry.loaded = true;
@@ -15127,6 +15158,7 @@
         }
         if (errorSnippet) {
           html += `<div class="dockRowMeta" ${statusClass}>${escapeHtml(errorSnippet)}</div>`;
+          html += `<button class="dockBtnSmall" data-gis-layer-prefetch="${escapeAttr(entry.key)}">Download missing layer</button>`;
         }
         html += `</div>`;
         html += `</div>`;
@@ -15310,6 +15342,40 @@
             await enableGisLayer(key);
           } else {
             disableGisLayer(key);
+          }
+        });
+      });
+
+      dockPanelBody.querySelectorAll('[data-gis-layer-prefetch]').forEach((button) => {
+        button.addEventListener("click", async (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          const key = button.dataset.gisLayerPrefetch;
+          if (!key) return;
+          button.disabled = true;
+          try {
+            const res = await fetch("/api/gis/offline/prefetch", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ keys: [key] })
+            });
+            const data = await res.json();
+            if (!res.ok || !data.ok) {
+              throw new Error(data?.error || "prefetch_failed");
+            }
+            const entry = GIS_LAYERS.get(key);
+            if (entry) {
+              entry.error = null;
+            }
+            refreshLayersPanelUI();
+          } catch (err) {
+            const entry = GIS_LAYERS.get(key);
+            if (entry) {
+              entry.error = err;
+            }
+            refreshLayersPanelUI();
+          } finally {
+            button.disabled = false;
           }
         });
       });
