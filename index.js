@@ -5292,6 +5292,15 @@
     return res.json();
   }
 
+  async function resolveGisEntry(key, signal) {
+    const res = await fetch(`/api/gis/resolve?key=${encodeURIComponent(key)}`, { signal });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`Failed to resolve GIS layer: ${res.status} ${text}`);
+    }
+    return res.json();
+  }
+
   async function loadGisGeojson(key, signal) {
     const res = await fetch(`/api/gis/data?key=${encodeURIComponent(key)}`, { signal });
     if (!res.ok) {
@@ -5461,29 +5470,68 @@
     entry.controller = controller;
     const loadingPromise = (async () => {
       let leafletLayer = entry.leafletLayer;
-      try {
-        await ensureGisCached(key, controller.signal);
-        const geojson = await loadGisGeojson(key, controller.signal);
-        if (!leafletLayer) {
-          const isBasemap = entry.meta?.groupKey === "basemapEnhancers";
-          const pane = isBasemap ? "gisBase" : undefined;
-          leafletLayer = L.geoJSON(null, {
-            style: (feature) => buildGisStyle(entry.meta, feature, isBasemap),
-            pointToLayer: (feature, latlng) => {
-              const hint = getGisHint(entry.meta, feature);
-              if (hint === "point") {
-                return L.circleMarker(latlng, buildGisPointStyle(entry.meta, isBasemap, pane));
-              }
+      const isBasemap = entry.meta?.groupKey === "basemapEnhancers";
+      const pane = isBasemap ? "gisBase" : undefined;
+      const ensureLeafletLayer = () => {
+        if (leafletLayer) return leafletLayer;
+        leafletLayer = L.geoJSON(null, {
+          style: (feature) => buildGisStyle(entry.meta, feature, isBasemap),
+          pointToLayer: (feature, latlng) => {
+            const hint = getGisHint(entry.meta, feature);
+            if (hint === "point") {
               return L.circleMarker(latlng, buildGisPointStyle(entry.meta, isBasemap, pane));
-            },
-            pane,
-            renderer: L.canvas()
-          });
-          entry.leafletLayer = leafletLayer;
+            }
+            return L.circleMarker(latlng, buildGisPointStyle(entry.meta, isBasemap, pane));
+          },
+          pane,
+          renderer: L.canvas()
+        });
+        entry.leafletLayer = leafletLayer;
+        return leafletLayer;
+      };
+      try {
+        let layerUrl = entry.meta?.layerUrl || null;
+        let resolution = null;
+        if (!layerUrl) {
+          try {
+            resolution = await resolveGisEntry(key, controller.signal);
+            if (resolution?.ok && resolution.layerUrl) {
+              layerUrl = resolution.layerUrl;
+              entry.meta.layerUrl = layerUrl;
+              entry.meta.resolution = resolution;
+            }
+          } catch (resolveErr) {
+            console.warn(`[GIS] Resolution failed for ${key}:`, resolveErr);
+          }
         }
 
-        leafletLayer.addTo(map);
-        await addGeojsonChunked(leafletLayer, geojson, { signal: controller.signal });
+        const layer = ensureLeafletLayer();
+        layer.addTo(map);
+
+        if (layerUrl) {
+          const bbox = getMapBbox();
+          const count = await fetchArcgisCount(layerUrl, bbox, controller.signal);
+          const perf = CONFIG.gisOverlays.perf;
+          if (count > perf.maxFeaturesHard) {
+            throw new Error(`Layer exceeds hard limit (${count} > ${perf.maxFeaturesHard}). Zoom in further.`);
+          }
+          let loadLimit = count;
+          if (count > perf.maxFeaturesSoft) {
+            loadLimit = perf.maxFeaturesSoft;
+          }
+          const geojson = await fetchArcgisViewportGeojson(
+            layerUrl,
+            bbox,
+            '*',
+            loadLimit,
+            controller.signal
+          );
+          await addGeojsonChunked(layer, geojson, { signal: controller.signal });
+        } else {
+          await ensureGisCached(key, controller.signal);
+          const geojson = await loadGisGeojson(key, controller.signal);
+          await addGeojsonChunked(layer, geojson, { signal: controller.signal });
+        }
 
         entry.loaded = true;
         entry.enabled = true;
@@ -14708,6 +14756,10 @@
           : layerEntry?.error
             ? "Load failed"
             : "";
+        const errorMessageRaw = layerEntry?.error
+          ? (layerEntry.error.message || String(layerEntry.error))
+          : "";
+        const errorSnippet = errorMessageRaw ? errorMessageRaw.slice(0, 120) : "";
         const statusClass = layerEntry?.error ? "style=\"color:var(--warn);\"" : "";
 
         html += `<div class="dockRow">`;
@@ -14718,6 +14770,9 @@
         html += `</label>`;
         if (statusText) {
           html += `<div class="dockRowMeta" ${statusClass}>${escapeHtml(statusText)}</div>`;
+        }
+        if (errorSnippet) {
+          html += `<div class="dockRowMeta" ${statusClass}>${escapeHtml(errorSnippet)}</div>`;
         }
         html += `</div>`;
         html += `</div>`;
