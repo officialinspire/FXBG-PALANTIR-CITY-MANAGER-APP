@@ -306,6 +306,12 @@ npm install
 
 `up.sh` now auto-detects Android/Termux, supports Android-safe global env locations, and prints the local URL to open from the same device browser.
 
+## Mobile / Termux Quick Start
+
+1. Move the repo into `$HOME` (no spaces in the path).
+2. `npm run termux:setup`
+3. `npm run termux`
+
 ## GitHub PR blocked: "Binary Files are Not Allowed"
 
 If GitHub rulesets reject the PR, check staged files and remove binary assets from the commit.
