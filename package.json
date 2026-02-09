@@ -11,6 +11,7 @@
     "qa": "node scripts/qa-runner.js",
     "qa:suite": "node scripts/qa-suite.js",
     "smoke": "bash scripts/smoke.sh",
+    "smoke:mobile": "bash scripts/smoke-mobile.sh",
     "build:schools": "node scripts/build-schools-nces.js",
     "audit:schools": "node scripts/audit-schools.js",
     "env:where": "node -e \"const fs=require('fs');const p=require('path');const crypto=require('crypto');const f=p.join(__dirname,'.env');console.log('ENV_PATH=',f);if(fs.existsSync(f)){const s=fs.statSync(f);const c=fs.readFileSync(f);const h=crypto.createHash('sha256').update(c).digest('hex').slice(0,8);console.log('mtime=',s.mtime.toISOString(),'size=',s.size,'sha256='+h+'...');}else{console.log('MISSING');}\"",
