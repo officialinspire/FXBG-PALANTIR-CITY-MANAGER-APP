@@ -6955,7 +6955,14 @@
       cache: new Map(),
       requests: new Map()  // Track in-flight requests for cancellation: overlayId -> { controller, cacheKey }
     },
-    air: { aqi: null, timestamp: null },  // Air quality data cache
+    air: {
+      aqi: null,
+      timestamp: null,
+      lastStatus: "unknown",
+      lastError: null,
+      lastSuccessAt: null,
+      lastAttemptAt: null
+    },  // Air quality data cache
     openUV: { value: null, status: "unknown", displayText: null, timestamp: null },
     weather: { baseText: "Weather: Loading…" },
     crime: null,  // Will be initialized with loadCrimeUI()
@@ -11699,40 +11706,58 @@
     if (!CONFIG.air.enabled) return;
     if (store.locks.air) return;
     store.locks.air = true;
+    store.air.lastAttemptAt = Date.now();
     updateFreshnessStatus('waqi', () => freshnessTracker.markAttempt('waqi'));
 
     try {
       const airTextEl = getChipElement("airText");
       const airDotEl = getChipElement("airDot");
+      const airChipEl = getChipElement("chipAir");
+      const resetAirChipTitle = () => {
+        if (airChipEl) airChipEl.title = "Air Quality Index";
+      };
+      const setAirChipWarning = () => {
+        if (airChipEl) airChipEl.title = "⚠ offline / token missing";
+      };
       if (airTextEl) airTextEl.textContent = "AQI: Loading…";
       if (airDotEl) airDotEl.style.backgroundColor = "#888";
+      resetAirChipTitle();
 
       const url = `${CONFIG.air.baseUrl}?lat=${CONFIG.air.lat}&lon=${CONFIG.air.lon}`;
       const response = await fetchJsonWithStatus(url, { headers: { "Accept": "application/json" } });
+      const data = response.data;
 
-      if (response.status === 503 && response.data?.disabled) {
+      if (!response.ok || !data || data.ok === false) {
+        const errorMessage = data?.error || data?.message || "offline / token missing";
         if (!store._airDisabledLogged) {
-          console.warn(`[Air Quality] Disabled: ${response.data?.reason || "missing token"}`);
+          console.warn(`[Air Quality] Unavailable: ${errorMessage}`);
           store._airDisabledLogged = true;
         }
-        if (airTextEl) airTextEl.textContent = "AQI: N/A";
+        store.air.aqi = null;
+        if (airTextEl) airTextEl.textContent = "AQI: --";
         if (airDotEl) airDotEl.style.backgroundColor = "#888";
-        updateFreshnessStatus('waqi', () => freshnessTracker.markFailure('waqi', response.data?.reason || 'missing_waqi_token'), response.data?.reason || 'missing token');
+        setAirChipWarning();
+        store.air.lastStatus = errorMessage === "WAQI_TOKEN missing" ? "missing_token" : "error";
+        store.air.lastError = errorMessage;
+        updateFreshnessStatus('waqi', () => freshnessTracker.markFailure('waqi', errorMessage), errorMessage);
         return;
       }
 
-      const data = response.data;
-
-      if (response.ok && data && data.status === "ok" && data.data && typeof data.data.aqi === "number") {
-        const aqi = data.data.aqi;
+      if (data && data.ok && typeof data.aqi === "number") {
+        const aqi = data.aqi;
         store.air.aqi = aqi;
-        store.air.timestamp = Date.now();
+        store.air.timestamp = data.ts || Date.now();
+        store.air.lastStatus = "ok";
+        store.air.lastError = null;
+        store.air.lastSuccessAt = Date.now();
+        store._airDisabledLogged = false;
 
         // Update chip text
         if (airTextEl) {
           airTextEl.textContent = `AQI: ${aqi}`;
           if (CONFIG.debug.chips) console.log(`[Chip Update] AQI: ${aqi}`);
         }
+        resetAirChipTitle();
 
         // Update dot color based on AQI ranges
         if (airDotEl) {
@@ -11751,8 +11776,12 @@
         updateFreshnessStatus('waqi', () => freshnessTracker.markSuccess('waqi'));
       } else {
         console.warn("[Air Quality] No valid AQI data received");
-        if (airTextEl) airTextEl.textContent = "AQI: N/A";
+        store.air.aqi = null;
+        if (airTextEl) airTextEl.textContent = "AQI: --";
         if (airDotEl) airDotEl.style.backgroundColor = "#888";
+        resetAirChipTitle();
+        store.air.lastStatus = "no_data";
+        store.air.lastError = "aqi_unavailable";
         recordSourceFailure('air', 'invalid_data');
         recordFeedError('air');
         updateFreshnessStatus('waqi', () => freshnessTracker.markFailure('waqi', 'invalid_aqi_data'), 'invalid aqi data');
@@ -11761,8 +11790,13 @@
       console.error("[Air Quality] Fetch failed:", err.message);
       const airTextEl = getChipElement("airText");
       const airDotEl = getChipElement("airDot");
-      if (airTextEl) airTextEl.textContent = "AQI: N/A";
+      const airChipEl = getChipElement("chipAir");
+      store.air.aqi = null;
+      if (airTextEl) airTextEl.textContent = "AQI: --";
       if (airDotEl) airDotEl.style.backgroundColor = "#888";
+      if (airChipEl) airChipEl.title = "⚠ offline / token missing";
+      store.air.lastStatus = "error";
+      store.air.lastError = err?.message || 'aqi_fetch_failed';
       updateFreshnessStatus('waqi', () => freshnessTracker.markFailure('waqi', err?.message || 'aqi_fetch_failed'), err?.message);
     } finally {
       store.locks.air = false;
@@ -15179,6 +15213,11 @@
     const schoolsRefreshLabel = refreshTimes.schools ? formatRelativeTime(refreshTimes.schools) : "Never";
     const trafficRefreshLabel = refreshTimes.traffic ? formatRelativeTime(refreshTimes.traffic) : "Never";
     const crimeRefreshLabel = refreshTimes.crime ? formatRelativeTime(refreshTimes.crime) : "Never";
+    const airStatus = store.air?.lastStatus || "unknown";
+    const airStatusLabel = String(airStatus).replace(/_/g, " ").toUpperCase();
+    const airStatusClass = airStatus === "ok" ? "status-ok" : airStatus === "no_data" ? "status-backoff" : airStatus === "missing_token" ? "status-error" : airStatus === "error" ? "status-error" : "status-backoff";
+    const airErrorLabel = store.air?.lastError || "None";
+    const airSuccessLabel = store.air?.lastSuccessAt ? formatRelativeTime(store.air.lastSuccessAt) : "Never";
 
     let html = "";
 
@@ -15239,6 +15278,22 @@
       html += `</div>`;
     }
 
+    html += `</div>`;
+
+    html += `<div class="dockSectionTitle">Diagnostics</div>`;
+    html += `<div class="dockCard">`;
+    html += `<div class="dockRow">`;
+    html += `<div class="dockRowLeft"><div class="dockRowTitle">AQI fetch status</div></div>`;
+    html += `<div class="dockBadge ${airStatusClass}">${escapeHtml(airStatusLabel)}</div>`;
+    html += `</div>`;
+    html += `<div class="dockRow">`;
+    html += `<div class="dockRowLeft"><div class="dockRowTitle">AQI last error</div>`;
+    html += `<div class="dockRowMeta">${escapeHtml(airErrorLabel)}</div></div>`;
+    html += `</div>`;
+    html += `<div class="dockRow">`;
+    html += `<div class="dockRowLeft"><div class="dockRowTitle">AQI last success</div></div>`;
+    html += `<div class="dockBadge">${escapeHtml(airSuccessLabel)}</div>`;
+    html += `</div>`;
     html += `</div>`;
 
     html += `<div class="dockSectionTitle">Marker Pipeline</div>`;

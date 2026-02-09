@@ -2108,7 +2108,8 @@ const UPSTREAM_CACHE_TTLS = {
   va511Cameras: { ttlMs: 5 * 60 * 1000, staleTtlMs: 60 * 60 * 1000 },
   va511Events: { ttlMs: 10 * 60 * 1000, staleTtlMs: 60 * 60 * 1000 },
   nwsPoints: { ttlMs: 15 * 60 * 1000, staleTtlMs: 60 * 60 * 1000 },
-  diagnostics: { ttlMs: 30 * 1000, staleTtlMs: 2 * 60 * 1000 }
+  diagnostics: { ttlMs: 30 * 1000, staleTtlMs: 2 * 60 * 1000 },
+  waqi: { ttlMs: 5 * 60 * 1000, staleTtlMs: 2 * 60 * 1000 }
 };
 
 const DIAG_TIMEOUT_MS = 8000;
@@ -5386,22 +5387,91 @@ const server = http.createServer(async (req, res) => {
     if (urlObj.pathname === "/api/waqi") {
       const lat = Number(urlObj.searchParams.get("lat"));
       const lon = Number(urlObj.searchParams.get("lon"));
+      const cachePolicy = UPSTREAM_CACHE_TTLS.waqi;
+      const errorCacheTtlMs = 30 * 1000;
 
       if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
-        return send(res, 400, JSON.stringify({ ok: false, error: "invalid_coordinates" }), { "Content-Type": "application/json" });
-      }
-
-      if (!WAQI_TOKEN) {
-        return send(res, 503, JSON.stringify({
+        return send(res, 400, JSON.stringify({
           ok: false,
-          error: "missing_env",
-          message: "Missing WAQI_TOKEN (or WAQI_API_KEY/AQICN_TOKEN) in .env"
+          provider: "waqi",
+          aqi: null,
+          city: null,
+          ts: Date.now(),
+          error: "invalid_coordinates"
         }), { "Content-Type": "application/json" });
       }
 
+      const cacheKey = `waqi:${lat}:${lon}`;
+      const cached = upstreamCache.get(cacheKey);
+      if (cached.hit && !cached.stale) {
+        const payload = cached.value;
+        const status = payload?.ok ? 200 : 503;
+        return send(res, status, JSON.stringify(payload), { "Content-Type": "application/json" });
+      }
+
+      if (!WAQI_TOKEN) {
+        const payload = {
+          ok: false,
+          provider: "waqi",
+          aqi: null,
+          city: null,
+          ts: Date.now(),
+          error: "WAQI_TOKEN missing"
+        };
+        upstreamCache.set(cacheKey, payload, errorCacheTtlMs);
+        return send(res, 503, JSON.stringify(payload), { "Content-Type": "application/json" });
+      }
+
       const targetUrl = `https://api.waqi.info/feed/geo:${lat};${lon}/?token=${WAQI_TOKEN}`;
-      const entry = await proxyFetch(targetUrl, { accept: "application/json" });
-      return send(res, entry.status || 200, entry.body, entry.headers);
+      let payload = null;
+      let statusCode = 200;
+      try {
+        const entry = await proxyFetch(targetUrl, { accept: "application/json" });
+        const bodyText = entry.body ? entry.body.toString("utf8") : "";
+        const data = bodyText ? JSON.parse(bodyText) : null;
+
+        if (entry.status && entry.status >= 200 && entry.status < 300 && data?.status === "ok") {
+          const rawAqi = data?.data?.aqi;
+          const parsedAqi = typeof rawAqi === "number" ? rawAqi : Number.isFinite(Number(rawAqi)) ? Number(rawAqi) : null;
+          const city = data?.data?.city?.name || data?.data?.city || null;
+          payload = {
+            ok: true,
+            provider: "waqi",
+            aqi: Number.isFinite(parsedAqi) ? parsedAqi : null,
+            city,
+            ts: Date.now()
+          };
+          if (payload.aqi === null) {
+            payload.note = "aqi_unavailable";
+          }
+          upstreamCache.set(cacheKey, payload, cachePolicy.ttlMs);
+        } else {
+          const errorMessage = data?.data?.message || data?.message || data?.status || `http_${entry.status || "unknown"}`;
+          payload = {
+            ok: false,
+            provider: "waqi",
+            aqi: null,
+            city: null,
+            ts: Date.now(),
+            error: errorMessage
+          };
+          upstreamCache.set(cacheKey, payload, errorCacheTtlMs);
+          statusCode = 503;
+        }
+      } catch (err) {
+        payload = {
+          ok: false,
+          provider: "waqi",
+          aqi: null,
+          city: null,
+          ts: Date.now(),
+          error: err?.message || "upstream_error"
+        };
+        upstreamCache.set(cacheKey, payload, errorCacheTtlMs);
+        statusCode = 503;
+      }
+
+      return send(res, statusCode, JSON.stringify(payload), { "Content-Type": "application/json" });
     }
 
     // Diagnostics endpoint - test upstream service connectivity
