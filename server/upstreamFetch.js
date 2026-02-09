@@ -97,6 +97,23 @@ function stripJsonp(text) {
   return match ? match[1] : text;
 }
 
+function extractSnippet(buffer, limit = 300) {
+  if (!buffer || buffer.length === 0) return "";
+  const end = Math.min(buffer.length, limit);
+  return buffer.toString("utf8", 0, end);
+}
+
+function startsWithJsonToken(buffer) {
+  if (!buffer || buffer.length === 0) return false;
+  const text = buffer.toString("utf8", 0, Math.min(buffer.length, 2048));
+  for (let i = 0; i < text.length; i += 1) {
+    const char = text[i];
+    if (char === " " || char === "\n" || char === "\r" || char === "\t") continue;
+    return char === "{" || char === "[";
+  }
+  return false;
+}
+
 async function readBodyWithLimit(response, limitBytes) {
   if (!response.body) return Buffer.alloc(0);
 
@@ -164,6 +181,7 @@ async function upstreamFetch(url, opts = {}) {
   let bodyText = undefined;
   let json = undefined;
   let bodyBuffer = undefined;
+  let errorSnippet = undefined;
 
   try {
     for (let attempt = 0; attempt <= maxRedirects; attempt += 1) {
@@ -194,7 +212,23 @@ async function upstreamFetch(url, opts = {}) {
 
       const validation = validateContentType(expectedType, contentType, allowJsonp);
       if (!validation.ok) {
-        error = validation.error;
+        if (expectedType === "json" && bytes > 0 && startsWithJsonToken(bodyBuffer)) {
+          const rawText = bodyBuffer.toString("utf8");
+          const jsonText = allowJsonp ? stripJsonp(rawText) : rawText;
+          try {
+            json = JSON.parse(jsonText);
+          } catch (err) {
+            error = "invalid_json";
+            warnings.push(err.message || "JSON parse failed");
+          }
+        } else {
+          errorSnippet = extractSnippet(bodyBuffer);
+          const typeLabel = contentType || "missing";
+          error = `unexpected_content_type:${typeLabel}`;
+          const statusDetail = response ? `; status:${response.status}` : "";
+          const snippetDetail = errorSnippet ? `; snippet:${errorSnippet}` : "";
+          error = `${error}${statusDetail}${snippetDetail}`;
+        }
       } else if (expectedType === "json" && bytes > 0) {
         const rawText = bodyBuffer.toString("utf8");
         const jsonText = allowJsonp ? stripJsonp(rawText) : rawText;
@@ -230,6 +264,7 @@ async function upstreamFetch(url, opts = {}) {
       bodyText,
       bodyBuffer,
       json,
+      errorSnippet: errorSnippet || undefined,
       error: error || undefined,
       warnings: warnings.length > 0 ? warnings : undefined,
       fetchedAt: new Date().toISOString()
