@@ -5405,6 +5405,25 @@ const server = http.createServer(async (req, res) => {
     }
 
     // Diagnostics endpoint - test upstream service connectivity
+    if (urlObj.pathname === "/api/diagnostics/allowlist" && req.method === "GET") {
+      const allowlistedHosts = Array.from(NORMALIZED_ALLOWED_HOSTS).sort();
+      const blockedHostsSample = Array.from(new Set([
+        ...BLOCKED_HOSTNAMES.map(normalizeHost),
+        "10.0.0.1",
+        "172.16.0.1",
+        "192.168.0.1",
+        "169.254.1.1",
+        "::1"
+      ])).filter(Boolean);
+      const response = {
+        ok: true,
+        allowlistedHosts,
+        blockedHostsSample,
+        notes: "If a feed fails due to blocked host, add to DEV_NOTES allowlist"
+      };
+      return send(res, 200, JSON.stringify(response, null, 2), { "Content-Type": "application/json" });
+    }
+
     if (urlObj.pathname === "/api/diag/upstreams") {
       const cachePolicy = UPSTREAM_CACHE_TTLS.diagnostics;
       const cacheKey = "diag-upstreams";

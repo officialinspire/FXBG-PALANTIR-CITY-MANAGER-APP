@@ -27,6 +27,20 @@ function isObject(value) {
   return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }
 
+function normalizeHost(host) {
+  return String(host || "").trim().toLowerCase().replace(/^www\./, "");
+}
+
+function isHostAllowlisted(host, allowlistedHosts) {
+  const normalized = normalizeHost(host);
+  if (!normalized) return false;
+  for (const allowed of allowlistedHosts) {
+    if (normalized === allowed) return true;
+    if (normalized.endsWith(`.${allowed}`) && normalized.length > allowed.length + 1) return true;
+  }
+  return false;
+}
+
 async function fetchText(url, { headers = {}, timeoutMs = FETCH_TIMEOUT_MS } = {}) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -71,6 +85,31 @@ function warn(message) {
 
 function fail(message) {
   return { status: "fail", message };
+}
+
+async function fetchAllowlistDiagnostics() {
+  const result = await getJson("/api/diagnostics/allowlist");
+  if (!result.ok) {
+    return { ok: false, error: result.error };
+  }
+  if (result.status === 404) {
+    return { ok: false, notSupported: true };
+  }
+  if (result.status !== 200) {
+    return { ok: false, error: `status_${result.status}` };
+  }
+  const data = result.data;
+  if (!isObject(data) || data.ok !== true || !Array.isArray(data.allowlistedHosts)) {
+    return { ok: false, error: "invalid_allowlist_payload" };
+  }
+  const allowlistedHosts = data.allowlistedHosts.map(normalizeHost).filter(Boolean);
+  return { ok: true, allowlistedHosts };
+}
+
+function formatAllowlistDetail(host, allowlistInfo) {
+  if (!allowlistInfo?.allowlistedHosts) return "allowlist=unknown";
+  const allowed = isHostAllowlisted(host, allowlistInfo.allowlistedHosts);
+  return `allowlist=${allowed ? "yes" : "no"}`;
 }
 
 async function runTest(name, fn, results) {
@@ -280,21 +319,30 @@ async function testVa511Status() {
   return { message: data.ok === false ? "reported not ok" : "ok" };
 }
 
-async function testRssFeed(feed, results) {
+async function testRssFeed(feed, results, allowlistInfo) {
   const name = `RSS ${feed.id}`;
   const url = `${BASE_URL}/proxy?url=${encodeURIComponent(feed.url)}`;
   const { response, text, error } = await fetchText(url, { headers: { Accept: RSS_ACCEPT } });
+  const host = safeHost(feed.url);
+  const allowlistDetail = formatAllowlistDetail(host, allowlistInfo);
 
   if (error) {
     results.failures += 1;
-    logFail(name, `host=${safeHost(feed.url)} error=${error.message || error}`);
+    logFail(name, `url=${feed.url} host=${host} ${allowlistDetail} error=${error.message || error}`);
     results.failedFeeds.push({ feed, error: error.message || String(error) });
     return;
   }
 
   if (response.status !== 200) {
+    let reason = "upstream_error";
+    if (response.status === 403 && allowlistInfo?.allowlistedHosts) {
+      const isAllowed = isHostAllowlisted(host, allowlistInfo.allowlistedHosts);
+      reason = isAllowed ? "blocked_unexpected" : "blocked_by_allowlist";
+    } else if (response.status >= 500) {
+      reason = "upstream_down";
+    }
     results.failures += 1;
-    logFail(name, `host=${safeHost(feed.url)} status=${response.status}`);
+    logFail(name, `url=${feed.url} host=${host} ${allowlistDetail} status=${response.status} reason=${reason}`);
     results.failedFeeds.push({ feed, error: `status_${response.status}` });
     return;
   }
@@ -322,7 +370,7 @@ async function testRssFeed(feed, results) {
 
 function safeHost(feedUrl) {
   try {
-    return new URL(feedUrl).host;
+    return new URL(feedUrl).hostname;
   } catch {
     return "unknown-host";
   }
@@ -345,6 +393,7 @@ async function main() {
   await runTest("VA511 /api/va511/status", testVa511Status, results);
 
   const { feeds, warning } = await discoverRssFeeds();
+  const allowlistInfo = await fetchAllowlistDiagnostics();
   if (warning) {
     logWarn("RSS feed discovery", warning);
     results.warnings += 1;
@@ -356,7 +405,7 @@ async function main() {
   } else {
     for (const feed of feeds) {
       // eslint-disable-next-line no-await-in-loop
-      await testRssFeed(feed, results);
+      await testRssFeed(feed, results, allowlistInfo.ok ? allowlistInfo : null);
     }
   }
 
