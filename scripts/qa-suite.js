@@ -152,6 +152,54 @@ function extractRssFeeds() {
   return { feeds };
 }
 
+async function fetchRssRegistryFeeds() {
+  const url = new URL("/api/feeds/registry", BASE_URL).toString();
+  const { response, text, error } = await fetchText(url, {
+    headers: { Accept: "application/json" }
+  });
+
+  if (error) {
+    return { ok: false, warning: `Feed registry request failed: ${error.message || error}` };
+  }
+
+  if (!response || response.status === 404) {
+    return { ok: false, warning: "Feed registry not available" };
+  }
+
+  let data = null;
+  try {
+    data = JSON.parse(text);
+  } catch (parseError) {
+    return {
+      ok: false,
+      warning: `Feed registry invalid JSON: ${parseError.message || parseError}`
+    };
+  }
+
+  if (!isObject(data) || data.ok !== true || !Array.isArray(data.feeds)) {
+    return { ok: false, warning: "Feed registry response missing ok:true or feeds[]" };
+  }
+
+  const feeds = data.feeds
+    .filter((feed) => feed && typeof feed.url === "string")
+    .map((feed) => ({
+      id: feed.key || feed.id || feed.url,
+      url: feed.url
+    }));
+
+  return { ok: true, feeds };
+}
+
+async function discoverRssFeeds() {
+  const registry = await fetchRssRegistryFeeds();
+  if (registry.ok) {
+    return { feeds: registry.feeds, warning: registry.warning };
+  }
+
+  const fallback = extractRssFeeds();
+  return { feeds: fallback.feeds, warning: registry.warning || fallback.warning };
+}
+
 async function testHealth() {
   const result = await getJson("/api/health");
   if (!result.ok) return fail(result.error);
@@ -296,7 +344,7 @@ async function main() {
   await runTest("Cache /cache/stats", testCacheStats, results);
   await runTest("VA511 /api/va511/status", testVa511Status, results);
 
-  const { feeds, warning } = extractRssFeeds();
+  const { feeds, warning } = await discoverRssFeeds();
   if (warning) {
     logWarn("RSS feed discovery", warning);
     results.warnings += 1;
