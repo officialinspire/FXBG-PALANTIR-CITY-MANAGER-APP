@@ -15051,11 +15051,11 @@
     html += `</div>`;
 
     html += `<div class="dockCard">`;
-    html += `<div class="dockSectionTitle">AOI Filter (Mobile)</div>`;
-    html += `<div class="dockMetaText">Controls mobile marker gating: primary AOI only, or include near-user GPS AOI.</div>`;
+    html += `<div class="dockSectionTitle">AOI Mode (Mobile)</div>`;
+    html += `<div class="dockMetaText">Smart = primary AOI + nearby GPS AOI. Primary = primary AOI only. Off = no AOI gating.</div>`;
     html += `<div class="dockActionRow dockActionRow--three">`;
-    html += `<button class="dockBtnSmall" data-aoi-mode="mobile-smart" aria-pressed="${store.aoi.mode === 'mobile-smart'}">AOI: Smart (Primary+GPS)</button>`;
-    html += `<button class="dockBtnSmall" data-aoi-mode="primary-only" aria-pressed="${store.aoi.mode === 'primary-only'}">AOI: Primary Only</button>`;
+    html += `<button class="dockBtnSmall" data-aoi-mode="mobile-smart" aria-pressed="${store.aoi.mode === 'mobile-smart'}">AOI: Smart</button>`;
+    html += `<button class="dockBtnSmall" data-aoi-mode="primary-only" aria-pressed="${store.aoi.mode === 'primary-only'}">AOI: Primary</button>`;
     html += `<button class="dockBtnSmall" data-aoi-mode="off" aria-pressed="${store.aoi.mode === 'off'}">AOI: Off</button>`;
     html += `</div>`;
     html += `</div>`;
