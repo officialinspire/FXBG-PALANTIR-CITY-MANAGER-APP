@@ -3731,6 +3731,36 @@
                  .trim();
   }
 
+  function normalizeStreetMatchKey(value) {
+    return String(value || '')
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  function isSpotsyJurisdiction(jurisdictionHint) {
+    return String(jurisdictionHint || '').toLowerCase().includes('spotsylvania');
+  }
+
+  function getSpotsyStreetMatch(phrase) {
+    if (!store?.spotsyStreetIndex?.length || !phrase) return null;
+    const normalizedPhrase = normalizeStreetMatchKey(phrase);
+    if (!normalizedPhrase) return null;
+    for (const street of store.spotsyStreetIndex) {
+      if (street && normalizedPhrase.includes(street)) {
+        return street;
+      }
+    }
+    return null;
+  }
+
+  const SPOTSY_STRICT_STREET_TYPE = /\b(road|street|st\.?|ave|avenue|blvd|boulevard|ln|lane|dr|drive|ct|court)\b/i;
+
+  function hasSpotsyStreetType(phrase) {
+    return SPOTSY_STRICT_STREET_TYPE.test(String(phrase || ''));
+  }
+
   /**
    * Street type abbreviations and their full forms for pattern matching
    */
@@ -3917,6 +3947,7 @@
       };
     }
 
+    const isSpotsy = isSpotsyJurisdiction(jurisdictionHint);
     const best = pickBestCandidate(candidates, jurisdictionHint);
     if (!best) return null;
 
@@ -3933,7 +3964,7 @@
       cityHint: jurisdictionHint,
       defaultCenter: { lat: source?.defaultLoc?.lat || CONFIG.center.lat, lng: source?.defaultLoc?.lon || CONFIG.center.lon }
     });
-    if (precise) {
+    if (precise && precise.locationMethod !== 'fallback_center') {
       return {
         lat: precise.lat,
         lon: precise.lon,
@@ -3943,6 +3974,26 @@
         chosenCandidate: { phrase: best.rawPhrase, type: best.type },
         _geocode: precise.geocodeMeta
       };
+    }
+
+    if (isSpotsy && hasSpotsyStreetType(best.phrase)) {
+      const strictQuery = `${best.phrase.replace(/[,.\s]+$/, '')}, Spotsylvania County, VA`;
+      if (CONFIG.debug.rssGeo) {
+        console.log(`[Location] Spotsy strict geocode: "${strictQuery}"`);
+      }
+      const strictGeocoded = await geocodeLocation(strictQuery, jurisdictionHint);
+      if (strictGeocoded) {
+        return {
+          lat: strictGeocoded.lat,
+          lon: strictGeocoded.lon,
+          locationText: best.rawPhrase,
+          locationMethod: 'extract+geocode_strict',
+          locationConfidence: baseConfidence,
+          chosenCandidate: { phrase: best.rawPhrase, type: best.type },
+          _geocode: { confidence: baseConfidence, method: 'extract+geocode_strict', label: best.rawPhrase },
+          flag: null
+        };
+      }
     }
 
     const geocoded = await geocodeLocation(enrichedPhrase, jurisdictionHint);
@@ -4388,6 +4439,7 @@
       let score = candidate.confidenceBase || typeScores[candidate.type] || 50;
 
       const lowerPhrase = candidate.phrase.toLowerCase();
+      const spotsyStreetMatch = isSpotsyJurisdiction(jurisdictionHint) ? getSpotsyStreetMatch(candidate.phrase) : null;
 
       // Bonus: Contains street number
       if (/^\d{1,5}\s/.test(candidate.phrase)) {
@@ -4433,7 +4485,11 @@
         score += 5;
       }
 
-      return { ...candidate, score };
+      if (spotsyStreetMatch) {
+        score += 12;
+      }
+
+      return { ...candidate, score, spotsyStreetMatch };
     });
 
     // Sort by score descending
@@ -4443,7 +4499,8 @@
     if (CONFIG.debug.rssGeo && scored.length > 0) {
       console.log(`[Location] Top ${Math.min(3, scored.length)} candidates:`);
       scored.slice(0, 3).forEach((c, i) => {
-        console.log(`  ${i + 1}. [${c.type}] "${c.phrase}" (score: ${c.score})`);
+        const spotsyNote = c.spotsyStreetMatch ? ` (spotsy street match)` : '';
+        console.log(`  ${i + 1}. [${c.type}] "${c.phrase}" (score: ${c.score})${spotsyNote}`);
       });
     }
 
@@ -6524,6 +6581,8 @@
     },
     places: [],
     placesIndex: new Map(),
+    spotsyStreetList: [],
+    spotsyStreetIndex: [],
     schoolAddressOverrides: { version: 1, items: [] },
     schoolOverridesIndex: new Map(),
     dorms: [],
@@ -10043,6 +10102,30 @@
     }
   }
 
+  async function loadSpotsyStreetList() {
+    try {
+      const response = await fetchJsonWithTimeout('/api/spotsy/streets', { timeoutMs: 15000 });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const payload = response.data || response;
+      const streets = Array.isArray(payload?.streets) ? payload.streets : [];
+      store.spotsyStreetList = streets;
+      store.spotsyStreetIndex = streets.map(normalizeStreetMatchKey).filter(Boolean);
+      await idbSaveMeta('spotsyStreetList', payload);
+      if (streets.length > 0) {
+        console.log(`[Spotsylvania Streets] Loaded ${streets.length} entries`);
+      }
+      return;
+    } catch (err) {
+      const cached = await idbGetMeta('spotsyStreetList');
+      const streets = Array.isArray(cached?.streets) ? cached.streets : [];
+      store.spotsyStreetList = streets;
+      store.spotsyStreetIndex = streets.map(normalizeStreetMatchKey).filter(Boolean);
+      if (streets.length > 0) {
+        console.warn(`[Spotsylvania Streets] Using cached list (${streets.length} entries): ${err.message}`);
+      }
+    }
+  }
+
   async function loadSchoolsAddressOverrides() {
     try {
       const response = await fetchJsonWithTimeout('/api/geo/schools-overrides', { timeoutMs: 15000 });
@@ -11819,6 +11902,7 @@
 
     await Promise.all([
       loadPlacesDataset().catch(() => {}),
+      loadSpotsyStreetList().catch(() => {}),
       loadSchoolsAddressOverrides().catch(() => {}),
       loadDormsDataset().catch(() => {})
     ]);
@@ -15953,6 +16037,7 @@
       }
 
       await loadPlacesDataset();
+      await loadSpotsyStreetList();
 
       // Load cached reports and merge if needed
       const cachedReports = await idbGetReports();
