@@ -18,7 +18,11 @@ const path = require("path");
 const os = require("os");
 const { Writable } = require("stream");
 const crypto = require("crypto");
-const dotenv = require("dotenv");
+let dotenv = null;
+try {
+  dotenv = require("dotenv");
+  dotenv.config();
+} catch {}
 const { upstreamFetch } = require("./server/upstreamFetch");
 const { createCache } = require("./server/cache");
 
@@ -26,7 +30,9 @@ const { createCache } = require("./server/cache");
 // Environment & Logging Setup
 // -----------------------------
 const ENV_PATH = path.join(__dirname, ".env");
-dotenv.config({ path: ENV_PATH });
+if (dotenv?.config) {
+  dotenv.config({ path: ENV_PATH });
+}
 
 const REQUIRED_ENV = [];
 
@@ -426,6 +432,90 @@ async function readGisCacheMeta(key) {
   const hasRaw = fs.existsSync(rawPath);
   if (!hasRaw) return null;
   return { ...meta, rawPath, metaPath };
+}
+
+function extractItemId(url) {
+  const text = String(url || "");
+  if (!text) return null;
+  const patterns = [
+    /\/content\/items\/([a-f0-9]{32})\/data/i,
+    /\/datasets\/([a-f0-9]{32})(?:[/?#]|$)/i,
+    /#\/geohub\/datasets\/([a-f0-9]{32})(?:[/?#]|$)/i
+  ];
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    if (match?.[1]) return match[1].toLowerCase();
+  }
+  return null;
+}
+
+function portalBaseForUrl(url) {
+  const text = String(url || "");
+  if (text.includes("gis.spotsylvania.va.us")) {
+    return "https://gis.spotsylvania.va.us/portal";
+  }
+  return "https://www.arcgis.com";
+}
+
+async function fetchPortalItem(portalBase, itemId) {
+  if (!portalBase || !itemId) return null;
+  const itemUrl = `${portalBase.replace(/\/$/, "")}/sharing/rest/content/items/${itemId}?f=pjson`;
+  const urlCheck = checkUrlAllowed(itemUrl);
+  if (!urlCheck.allowed) {
+    return { ok: false, error: "blocked_url", reason: urlCheck.reason };
+  }
+
+  const upstream = await upstreamFetch(itemUrl, {
+    expectedType: "json",
+    timeoutMs: 15000,
+    upstreamName: `gis-resolve-${itemId}`,
+    route: "/api/gis/resolve"
+  });
+
+  if (!upstream.ok) {
+    return {
+      ok: false,
+      error: upstream.error || "upstream_failed",
+      status: upstream.status || 0
+    };
+  }
+
+  return { ok: true, data: upstream.json || null };
+}
+
+async function resolveArcgis(entry) {
+  const url = entry?.url || "";
+  const itemId = extractItemId(url);
+  if (!itemId) {
+    return { ok: false, error: "missing_item_id" };
+  }
+
+  const portalBase = portalBaseForUrl(url);
+  const itemResult = await fetchPortalItem(portalBase, itemId);
+  if (!itemResult?.ok) {
+    return { ok: false, error: itemResult?.error || "item_fetch_failed", reason: itemResult?.reason, status: itemResult?.status };
+  }
+
+  const item = itemResult.data || {};
+  const serviceUrl = item.url || null;
+  let layerUrl = null;
+  if (serviceUrl) {
+    if (/\/featureserver\/?$/i.test(serviceUrl)) {
+      layerUrl = `${serviceUrl.replace(/\/$/, "")}/0`;
+    } else {
+      layerUrl = serviceUrl;
+    }
+  }
+
+  return {
+    ok: true,
+    itemId,
+    portalBase,
+    title: item.title || null,
+    type: item.type || null,
+    serviceUrl,
+    layerUrl
+  };
 }
 
 async function getDirectorySizeBytes(dirPath) {
@@ -3695,6 +3785,30 @@ const server = http.createServer(async (req, res) => {
     if (urlObj.pathname === "/api/gis/catalog" && req.method === "GET") {
       const catalog = await readGisCatalog();
       return send(res, 200, JSON.stringify(catalog, null, 2), { "Content-Type": "application/json" });
+    }
+
+    if (urlObj.pathname === "/api/gis/resolve" && req.method === "GET") {
+      const rawKey = urlObj.searchParams.get("key");
+      const key = sanitizeGisKey(rawKey);
+      if (!key) {
+        return send(res, 400, JSON.stringify({ ok: false, error: "invalid_key" }), { "Content-Type": "application/json" });
+      }
+
+      const catalog = await readGisCatalog();
+      const entry = findGisCatalogEntry(catalog, key);
+      if (!entry) {
+        return send(res, 404, JSON.stringify({ ok: false, error: "unknown_key" }), { "Content-Type": "application/json" });
+      }
+
+      const resolvedPath = path.join(GIS_CACHE_DIR, `${key}.resolved.json`);
+      const cachedResolution = await readJsonFile(resolvedPath);
+      if (cachedResolution) {
+        return send(res, 200, JSON.stringify(cachedResolution, null, 2), { "Content-Type": "application/json" });
+      }
+
+      const resolution = await resolveArcgis(entry);
+      await writeJsonFile(resolvedPath, resolution);
+      return send(res, 200, JSON.stringify(resolution, null, 2), { "Content-Type": "application/json" });
     }
 
     if (urlObj.pathname === "/api/gis/fetch" && req.method === "GET") {
