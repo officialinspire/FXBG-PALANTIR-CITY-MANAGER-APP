@@ -2787,6 +2787,7 @@ button {
     flex-wrap: nowrap;
     overflow-x: auto;
     gap: 8px;
+    padding-bottom: calc(10px + env(safe-area-inset-bottom));
     -webkit-overflow-scrolling: touch;
     scrollbar-width: none;
     justify-content: flex-start;
@@ -2797,7 +2798,7 @@ button {
 
   /* Footer tab buttons: smaller, clear active state */
   .dockBtn {
-    min-height: 40px;
+    min-height: 44px;
     padding: 8px 12px;
     border-radius: 14px;
     font-size: 12px;
@@ -2811,6 +2812,17 @@ button {
     outline: 2px solid rgba(255,255,255,.20);
     opacity: 1;
     background: rgba(255,255,255,.14);
+  }
+
+  .dock .btn {
+    min-height: 44px;
+  }
+
+  .dock .btnLabel {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 28vw;
   }
 
   /* Prevent the bottom panel from being hidden behind footer */
@@ -2868,6 +2880,10 @@ button {
     padding: 6px 10px;
     font-size: 12px;
     flex-shrink: 0;
+  }
+
+  .leaflet-control-container {
+    padding-bottom: 90px;
   }
 
   /* Optional: ultra-compact mode for very narrow screens */
