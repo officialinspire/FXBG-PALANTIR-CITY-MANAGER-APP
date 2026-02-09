@@ -80,6 +80,21 @@
     quickSmokeReport: []
   };
 
+  const SYSTEM_SUBTABS = {
+    STATUS: "status",
+    OFFLINE: "offline"
+  };
+
+  let systemSubtab = SYSTEM_SUBTABS.STATUS;
+
+  const offlinePackState = {
+    status: null,
+    progress: null,
+    error: null,
+    pollTimer: null,
+    activePrefetchPack: null
+  };
+
   function bind(id, event, handler) {
     const el = document.getElementById(id);
     if (!el) {
@@ -107,8 +122,10 @@
     HUB_DEVICE_ID: 'fxbg.hubDeviceId',
     TRACK_HAPTICS: 'fxbg.trackHaptics',
     THEME_CURRENT: 'fxbg_theme_current',
-    THEME_RECENT: 'fxbg_theme_recent'
+    THEME_RECENT: 'fxbg_theme_recent',
+    OFFLINE_PACK_INSTALLED: 'fxbg.offlinePackInstalled'
   };
+  const OFFLINE_PACK_UPDATED_KEY = 'fxbg.offlinePackUpdated';
   const LOAD_SHEDDING_STORAGE_KEY = "fxbg.loadShedding";
   const GIS_LAYERS = new Map(); // key -> { leafletLayer, enabled, meta, loaded }
   const GIS_PANEL_GROUPS = [
@@ -131,6 +148,42 @@
     } catch {
       return false;
     }
+  }
+
+  function readOfflinePackInstalled() {
+    try {
+      const stored = localStorage.getItem(STORAGE_KEYS.OFFLINE_PACK_INSTALLED);
+      if (stored === "core" || stored === "field") return stored;
+    } catch {}
+    return "none";
+  }
+
+  function writeOfflinePackInstalled(value) {
+    try {
+      localStorage.setItem(STORAGE_KEYS.OFFLINE_PACK_INSTALLED, value);
+    } catch {}
+  }
+
+  function readOfflinePackUpdated() {
+    try {
+      const stored = localStorage.getItem(OFFLINE_PACK_UPDATED_KEY);
+      const parsed = JSON.parse(stored || "{}");
+      return {
+        core: Number.isFinite(parsed.core) ? parsed.core : null,
+        field: Number.isFinite(parsed.field) ? parsed.field : null
+      };
+    } catch {
+      return { core: null, field: null };
+    }
+  }
+
+  function writeOfflinePackUpdated(pack, ts) {
+    if (!pack) return;
+    const current = readOfflinePackUpdated();
+    current[pack] = ts;
+    try {
+      localStorage.setItem(OFFLINE_PACK_UPDATED_KEY, JSON.stringify(current));
+    } catch {}
   }
 
   currentUiMode = readStoredUiMode();
@@ -14647,8 +14700,21 @@
     return lines;
   }
 
-  // Render System tab
-  function renderSystemHTML() {
+  function formatMb(bytes) {
+    if (!Number.isFinite(bytes)) return "0.0";
+    return (bytes / (1024 * 1024)).toFixed(1);
+  }
+
+  function renderSystemSubnav() {
+    return `
+      <div class="dockSubnav">
+        <button class="dockSubnavBtn ${systemSubtab === SYSTEM_SUBTABS.STATUS ? 'isActive' : ''}" data-system-subtab="status" type="button">System Status</button>
+        <button class="dockSubnavBtn ${systemSubtab === SYSTEM_SUBTABS.OFFLINE ? 'isActive' : ''}" data-system-subtab="offline" type="button">Offline Packs</button>
+      </div>
+    `;
+  }
+
+  function renderSystemStatusHTML() {
     const health = healthTracker.computeHealth();
     const staleCount = healthTracker.staleDataCount;
     const uniqueMissing = Array.from(new Set(qa.missing));
@@ -14751,6 +14817,235 @@
     html += `<div id="dockQuickSmokeReport" style="margin-top:8px;">${formatQaSmokeLines(qa.quickSmokeReport)}</div>`;
     html += `</div>`;
 
+    return html;
+  }
+
+  function renderOfflinePacksHTML() {
+    const status = offlinePackState.status;
+    const progress = offlinePackState.progress;
+    const updated = readOfflinePackUpdated();
+    const installed = readOfflinePackInstalled();
+    const coreStats = status?.byTier?.core || { count: 0, bytes: 0 };
+    const fieldStats = status?.byTier?.field || { count: 0, bytes: 0 };
+    const coreBudget = Number.isFinite(status?.budgets?.core) ? status.budgets.core : null;
+    const fieldBudget = Number.isFinite(status?.budgets?.field) ? status.budgets.field : null;
+    const lastCoreUpdate = updated.core ? formatRelativeTime(updated.core) : "Never";
+    const lastFieldUpdate = updated.field ? formatRelativeTime(updated.field) : "Never";
+    const currentKey = progress?.currentKey || "—";
+    const done = Number.isFinite(progress?.done) ? progress.done : 0;
+    const total = Number.isFinite(progress?.total) ? progress.total : 0;
+    const errors = Array.isArray(progress?.errors) ? progress.errors.slice(-3) : [];
+
+    let html = "";
+    html += `<div class="dockCard">`;
+    html += `<div class="dockRow">`;
+    html += `<div class="dockRowLeft">`;
+    html += `<div class="dockRowTitle">Core Pack</div>`;
+    html += `<div class="dockRowMeta">Cached ${coreStats.count} • ${formatMb(coreStats.bytes)} MB</div>`;
+    html += `<div class="dockRowMeta">Last updated ${escapeHtml(lastCoreUpdate)}${coreBudget !== null ? ` • Budget ${coreBudget} MB` : ''}</div>`;
+    html += `</div>`;
+    html += `<div class="dockBadge">${installed === "core" ? "PRIMARY" : "CORE"}</div>`;
+    html += `</div>`;
+    html += `<div class="dockRow">`;
+    html += `<div class="dockRowLeft">`;
+    html += `<div class="dockRowTitle">Field Pack</div>`;
+    html += `<div class="dockRowMeta">Cached ${fieldStats.count} • ${formatMb(fieldStats.bytes)} MB</div>`;
+    html += `<div class="dockRowMeta">Last updated ${escapeHtml(lastFieldUpdate)}${fieldBudget !== null ? ` • Budget ${fieldBudget} MB` : ''}</div>`;
+    html += `</div>`;
+    html += `<div class="dockBadge">${installed === "field" ? "PRIMARY" : "FIELD"}</div>`;
+    html += `</div>`;
+    if (!status) {
+      html += `<div class="dockRowMeta">Loading offline pack status…</div>`;
+    }
+    html += `</div>`;
+
+    html += `<div class="dockSectionTitle">Actions</div>`;
+    html += `<div class="dockCard">`;
+    html += `<div class="dockActionRow dockActionRow--two">`;
+    html += `<button class="dockBtnSmall" id="offlineDownloadCore" type="button">Download Core Kit</button>`;
+    html += `<button class="dockBtnSmall" id="offlineDownloadField" type="button">Download Field Pack</button>`;
+    html += `</div>`;
+    html += `<div class="dockActionRow dockActionRow--three">`;
+    html += `<button class="dockBtnSmall" id="offlineEvictBudget" type="button">Evict to Budget</button>`;
+    html += `<button class="dockBtnSmall" id="offlineRefreshCore" type="button">Refresh Core</button>`;
+    html += `<button class="dockBtnSmall" id="offlineRefreshField" type="button">Refresh Field</button>`;
+    html += `</div>`;
+    html += `</div>`;
+
+    html += `<div class="dockSectionTitle">Progress</div>`;
+    html += `<div class="dockCard">`;
+    html += `<div class="dockRow">`;
+    html += `<div class="dockRowLeft"><div class="dockRowTitle">Current key</div><div class="dockRowMeta">${escapeHtml(currentKey)}</div></div>`;
+    html += `<div class="dockBadge">${progress?.running ? 'RUNNING' : 'IDLE'}</div>`;
+    html += `</div>`;
+    html += `<div class="dockRow">`;
+    html += `<div class="dockRowLeft"><div class="dockRowTitle">Queue</div><div class="dockRowMeta">${done} / ${total}</div></div>`;
+    html += `</div>`;
+    html += `<div class="dockRow">`;
+    html += `<div class="dockRowLeft"><div class="dockRowTitle">Recent errors</div>`;
+    if (!errors.length) {
+      html += `<div class="dockRowMeta">None</div>`;
+    } else {
+      errors.forEach((entry) => {
+        html += `<div class="dockRowMeta" style="color:var(--warn);">${escapeHtml(entry.key || 'unknown')}: ${escapeHtml(entry.error || 'error')}</div>`;
+      });
+    }
+    html += `</div>`;
+    html += `</div>`;
+    if (offlinePackState.error) {
+      html += `<div class="dockRowMeta" style="color:var(--warn);margin-top:6px;">${escapeHtml(offlinePackState.error)}</div>`;
+    }
+    html += `</div>`;
+
+    return html;
+  }
+
+  async function fetchOfflinePackStatus() {
+    try {
+      const res = await fetch("/api/gis/offline/status");
+      const data = await res.json();
+      if (!res.ok || !data.ok) {
+        throw new Error(data.error || "status_failed");
+      }
+      offlinePackState.status = data;
+      offlinePackState.error = null;
+    } catch (err) {
+      offlinePackState.error = err?.message || String(err);
+    }
+  }
+
+  async function fetchOfflinePackProgress() {
+    try {
+      const res = await fetch("/api/gis/offline/progress");
+      const data = await res.json();
+      if (!res.ok || !data.ok) {
+        throw new Error(data.error || "progress_failed");
+      }
+      offlinePackState.progress = data;
+      if (!data.running && offlinePackState.activePrefetchPack && data.total > 0 && data.done >= data.total) {
+        writeOfflinePackUpdated(offlinePackState.activePrefetchPack, Date.now());
+        offlinePackState.activePrefetchPack = null;
+      }
+      offlinePackState.error = null;
+    } catch (err) {
+      offlinePackState.error = err?.message || String(err);
+    }
+  }
+
+  async function refreshOfflinePackPanel() {
+    await Promise.all([fetchOfflinePackStatus(), fetchOfflinePackProgress()]);
+    if (dockState?.isOpen && dockState.tab === "system" && systemSubtab === SYSTEM_SUBTABS.OFFLINE) {
+      renderDock();
+    }
+  }
+
+  function startOfflinePackPolling() {
+    if (offlinePackState.pollTimer) return;
+    refreshOfflinePackPanel();
+    offlinePackState.pollTimer = setInterval(() => {
+      refreshOfflinePackPanel();
+    }, 3000);
+  }
+
+  function stopOfflinePackPolling() {
+    if (offlinePackState.pollTimer) {
+      clearInterval(offlinePackState.pollTimer);
+      offlinePackState.pollTimer = null;
+    }
+  }
+
+  async function startOfflinePackPrefetch(pack) {
+    if (!pack) return;
+    offlinePackState.activePrefetchPack = pack;
+    writeOfflinePackInstalled(pack);
+    try {
+      const res = await fetch("/api/gis/offline/prefetch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pack })
+      });
+      const data = await res.json();
+      if (!res.ok || !data.ok) {
+        throw new Error(data.error || "prefetch_failed");
+      }
+      await refreshOfflinePackPanel();
+    } catch (err) {
+      offlinePackState.error = err?.message || String(err);
+      if (dockState?.isOpen && dockState.tab === "system" && systemSubtab === SYSTEM_SUBTABS.OFFLINE) {
+        renderDock();
+      }
+    }
+  }
+
+  async function evictOfflinePacksToBudget() {
+    try {
+      await fetch("/api/gis/offline/evict", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pack: "core" })
+      });
+      await fetch("/api/gis/offline/evict", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pack: "field" })
+      });
+      await refreshOfflinePackPanel();
+    } catch (err) {
+      offlinePackState.error = err?.message || String(err);
+      if (dockState?.isOpen && dockState.tab === "system" && systemSubtab === SYSTEM_SUBTABS.OFFLINE) {
+        renderDock();
+      }
+    }
+  }
+
+  function getOfflineEntriesForPack(pack) {
+    const entries = getGisCatalogEntries();
+    return entries.filter((entry) => entry?.offline?.tier === pack);
+  }
+
+  async function refreshOfflinePack(pack) {
+    if (!pack) return;
+    await ensureGisCatalogReady();
+    const entries = getOfflineEntriesForPack(pack);
+    if (!entries.length) {
+      offlinePackState.error = `No offline entries found for ${pack} pack.`;
+      if (dockState?.isOpen && dockState.tab === "system" && systemSubtab === SYSTEM_SUBTABS.OFFLINE) {
+        renderDock();
+      }
+      return;
+    }
+    let hasError = false;
+    for (const entry of entries) {
+      try {
+        const res = await fetch("/api/gis/offline/refresh", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ key: entry.key, force: true })
+        });
+        const data = await res.json();
+        if (!res.ok || !data.ok) {
+          hasError = true;
+          console.warn("[Offline Packs] Refresh failed", entry.key, data);
+        }
+      } catch (err) {
+        hasError = true;
+        console.warn("[Offline Packs] Refresh failed", entry.key, err);
+      }
+    }
+    if (!hasError) {
+      writeOfflinePackUpdated(pack, Date.now());
+    }
+    await refreshOfflinePackPanel();
+  }
+
+  // Render System tab
+  function renderSystemHTML() {
+    let html = renderSystemSubnav();
+    if (systemSubtab === SYSTEM_SUBTABS.OFFLINE) {
+      html += renderOfflinePacksHTML();
+    } else {
+      html += renderSystemStatusHTML();
+    }
     return html;
   }
 
@@ -14978,13 +15273,32 @@
     }
 
     if (dockState.tab === "system") {
-      bind("dockRunQuickSmoke", "click", () => runQuickSmoke());
-      const loadSheddingToggle = document.getElementById("loadSheddingToggle");
-      if (loadSheddingToggle) {
-        loadSheddingToggle.addEventListener("click", () => {
-          setLoadShedding(!store.loadShedding);
+      dockPanelBody.querySelectorAll("[data-system-subtab]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const next = btn.dataset.systemSubtab;
+          if (!next || next === systemSubtab) return;
+          systemSubtab = next;
           renderDock();
         });
+      });
+
+      if (systemSubtab === SYSTEM_SUBTABS.STATUS) {
+        bind("dockRunQuickSmoke", "click", () => runQuickSmoke());
+        const loadSheddingToggle = document.getElementById("loadSheddingToggle");
+        if (loadSheddingToggle) {
+          loadSheddingToggle.addEventListener("click", () => {
+            setLoadShedding(!store.loadShedding);
+            renderDock();
+          });
+        }
+        stopOfflinePackPolling();
+      } else if (systemSubtab === SYSTEM_SUBTABS.OFFLINE) {
+        bind("offlineDownloadCore", "click", () => startOfflinePackPrefetch("core"));
+        bind("offlineDownloadField", "click", () => startOfflinePackPrefetch("field"));
+        bind("offlineEvictBudget", "click", () => evictOfflinePacksToBudget());
+        bind("offlineRefreshCore", "click", () => refreshOfflinePack("core"));
+        bind("offlineRefreshField", "click", () => refreshOfflinePack("field"));
+        startOfflinePackPolling();
       }
     }
 
@@ -15079,7 +15393,7 @@
     const criticalBindingsByTab = {
       overview: ['dockRefreshAll', 'dockResetFilters'],
       settings: ['themeApplyBtn', 'themeReset'],
-      system: ['dockRunQuickSmoke'],
+      system: systemSubtab === SYSTEM_SUBTABS.STATUS ? ['dockRunQuickSmoke'] : [],
       sync: ['hubPullNow', 'hubPushNow', 'hubStatusNow'],
       tracks: ['trackStartBtn', 'trackStopBtn']
     };
@@ -15129,6 +15443,7 @@
     dockOverlay.classList.remove("isOpen");
     dockPanel.setAttribute("aria-hidden", "true");
     dockOverlay.setAttribute("aria-hidden", "true");
+    stopOfflinePackPolling();
 
     // Update button active states
     dockButtons.forEach(btn => {
@@ -15155,6 +15470,10 @@
   // Set dock tab (when already open)
   function setDockTab(tab) {
     dockState.tab = tab;
+
+    if (tab !== "system") {
+      stopOfflinePackPolling();
+    }
 
     // Update button active states
     dockButtons.forEach(btn => {
