@@ -60,6 +60,17 @@ bash scripts/mobile.sh
 
 Open `http://127.0.0.1:8000` on the phone. For LAN access from another device, use `http://<phone-ip>:8000`.
 
+#### One-command Termux run
+From anywhere inside the repo:
+```bash
+bash scripts/termux-run.sh
+```
+
+Need a reminder for the full path?
+```bash
+bash scripts/termux-quickstart.sh
+```
+
 ### 5. Open in Browser
 ```
 http://localhost:8000
