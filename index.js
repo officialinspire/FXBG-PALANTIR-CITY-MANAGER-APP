@@ -6957,6 +6957,10 @@
     if (IS_MOBILE_UI && currentUiMode === UI_MODES.FIELD && locationEnabled) {
       startLocationWatch();
     }
+
+    if (IS_MOBILE_UI) {
+      scheduleVa511CamsViewportRefresh();
+    }
   }
 
   function wireUiModeToggle(scope = document) {
@@ -7125,6 +7129,7 @@
     },
     va511CamsItems: [],
     va511CamsEnabled: readStoredVa511CamsEnabled(),
+    va511CamsBboxKey: null,
     diagnostics: {
       rss: {}  // Keyed by source.id: { ok, httpStatus, itemsParsed, itemsIngested, error, timestamp }
     },
@@ -9709,9 +9714,54 @@
     return items;
   }
 
+  function shouldUseVa511Viewport() {
+    return IS_MOBILE_UI && currentUiMode === UI_MODES.FIELD;
+  }
+
+  function getVa511ViewportBbox(padding = 0.1) {
+    if (!map || typeof map.getBounds !== "function") return null;
+    const bounds = map.getBounds();
+    if (!bounds) return null;
+    const padded = bounds.pad(padding);
+    return {
+      minLon: padded.getWest(),
+      minLat: padded.getSouth(),
+      maxLon: padded.getEast(),
+      maxLat: padded.getNorth()
+    };
+  }
+
+  function getVa511BboxKey(bbox) {
+    return [
+      bbox.minLon.toFixed(3),
+      bbox.minLat.toFixed(3),
+      bbox.maxLon.toFixed(3),
+      bbox.maxLat.toFixed(3)
+    ].join(",");
+  }
+
+  function buildVa511CamsUrl(bbox) {
+    const url = new URL("/api/va511/cams", window.location.origin);
+    if (bbox) {
+      url.searchParams.set("bbox", [
+        bbox.minLon.toFixed(5),
+        bbox.minLat.toFixed(5),
+        bbox.maxLon.toFixed(5),
+        bbox.maxLat.toFixed(5)
+      ].join(","));
+    }
+    return url.toString();
+  }
+
   async function loadVa511CamsFromServer() {
     try {
-      const res = await fetchJsonWithTimeout("/api/va511/cams", { timeoutMs: 20000 });
+      const bbox = shouldUseVa511Viewport() ? getVa511ViewportBbox(0.1) : null;
+      if (bbox) {
+        store.va511CamsBboxKey = getVa511BboxKey(bbox);
+      } else {
+        store.va511CamsBboxKey = null;
+      }
+      const res = await fetchJsonWithTimeout(buildVa511CamsUrl(bbox), { timeoutMs: 20000 });
       if (!res.ok) {
         throw new Error(`http ${res.status}`);
       }
@@ -9731,6 +9781,15 @@
       console.warn("[VA511 Cams] Server camera load failed:", err);
       return { added: 0, total: 0, error: err?.message || String(err) };
     }
+  }
+
+  let va511CamsViewportTimer = null;
+  function scheduleVa511CamsViewportRefresh() {
+    if (!shouldUseVa511Viewport()) return;
+    clearTimeout(va511CamsViewportTimer);
+    va511CamsViewportTimer = setTimeout(() => {
+      loadVa511CamsFromServer();
+    }, 400);
   }
 
   async function pollVa511() {
@@ -14276,6 +14335,8 @@
     scheduleMapRedraw();
   });
   map.on("moveend", scheduleMapRedraw);
+  map.on("zoomend", scheduleVa511CamsViewportRefresh);
+  map.on("moveend", scheduleVa511CamsViewportRefresh);
   syncPrecisionControlLabels();
 
   map.on("click", (event) => {
