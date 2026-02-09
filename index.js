@@ -319,11 +319,29 @@
 
   function parseRgbChannels(colorValue) {
     if (!colorValue) return null;
-    const match = String(colorValue).trim().match(/rgba?\(([^)]+)\)/i);
-    if (!match) return null;
-    const parts = match[1].split(',').slice(0, 3).map(v => Number.parseFloat(v.trim()));
-    if (parts.length < 3 || parts.some(v => Number.isNaN(v))) return null;
-    return parts.map(v => Math.max(0, Math.min(255, v)));
+    const raw = String(colorValue).trim();
+    const rgbMatch = raw.match(/rgba?\(([^)]+)\)/i);
+    if (rgbMatch) {
+      const parts = rgbMatch[1].split(',').slice(0, 3).map(v => Number.parseFloat(v.trim()));
+      if (parts.length < 3 || parts.some(v => Number.isNaN(v))) return null;
+      return parts.map(v => Math.max(0, Math.min(255, v)));
+    }
+    if (raw.startsWith('#')) {
+      const hex = raw.replace('#', '');
+      if (hex.length === 3) {
+        const r = parseInt(hex[0] + hex[0], 16);
+        const g = parseInt(hex[1] + hex[1], 16);
+        const b = parseInt(hex[2] + hex[2], 16);
+        return [r, g, b];
+      }
+      if (hex.length === 6) {
+        const r = parseInt(hex.slice(0, 2), 16);
+        const g = parseInt(hex.slice(2, 4), 16);
+        const b = parseInt(hex.slice(4, 6), 16);
+        return [r, g, b];
+      }
+    }
+    return null;
   }
 
   function relativeLuminance(rgb) {
@@ -366,6 +384,42 @@
     } catch {}
   }
 
+  function applyContrastGuard() {
+    try {
+      const root = document.documentElement;
+      const styles = getComputedStyle(root);
+      const bg = parseRgbChannels(styles.getPropertyValue('--bg')) || parseRgbChannels(styles.backgroundColor);
+      const panelBg = parseRgbChannels(styles.getPropertyValue('--panelBg'));
+      const text = parseRgbChannels(styles.getPropertyValue('--text'));
+
+      const contrastRatio = (bgColor, fgColor) => {
+        if (!bgColor || !fgColor) return null;
+        const l1 = relativeLuminance(bgColor);
+        const l2 = relativeLuminance(fgColor);
+        return (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05);
+      };
+
+      const textContrast = contrastRatio(bg, text);
+      const panelContrast = contrastRatio(panelBg || bg, text);
+      const minContrast = Math.min(textContrast || 10, panelContrast || 10);
+
+      if (minContrast < 3) {
+        const bgLuma = relativeLuminance(bg || [0, 0, 0]);
+        const safeText = bgLuma > 0.55 ? '#0f172a' : '#f8fafc';
+        const mutedText = bgLuma > 0.55 ? 'rgba(15, 23, 42, 0.72)' : 'rgba(248, 250, 252, 0.72)';
+        root.style.setProperty('--text', safeText);
+        root.style.setProperty('--textMuted', mutedText);
+        root.style.setProperty('--btnText', safeText);
+        root.style.setProperty('--chipText', safeText);
+      } else {
+        root.style.removeProperty('--text');
+        root.style.removeProperty('--textMuted');
+        root.style.removeProperty('--btnText');
+        root.style.removeProperty('--chipText');
+      }
+    } catch {}
+  }
+
   function applyTheme(themeKey, options = {}) {
     const nextTheme = THEME_REGISTRY[themeKey] ? themeKey : THEME_DEFAULT_KEY;
     document.documentElement.dataset.theme = nextTheme;
@@ -379,6 +433,7 @@
     if (selectEl && selectEl.value !== nextTheme) selectEl.value = nextTheme;
     renderThemeRecentChips(nextTheme);
     checkThemeContrastSanity(nextTheme);
+    applyContrastGuard();
   }
 
   // -----------------------------
