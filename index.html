@@ -71,8 +71,8 @@
       </div>
     </div>
 
-    <div class="topbar__center">
-      <div class="topbarRow topbarRow--status" id="topbarStatusRow">
+    <div class="topbar__center topbar__center--stacked">
+      <div class="topbarRow topbarRow--chips" id="topbarChipsRow">
         <div class="chip chip--live" id="chipLive">
           <span class="dot"></span>
           <span id="liveText">Live</span>
@@ -88,8 +88,6 @@
           <span class="chip__text" id="trafficText">I‑95: Loading…</span>
         </div>
 
-        <button class="btn btn--compact btn--ghost mobileHudMoreBtn" id="mobileHudMoreBtn" type="button">More</button>
-
         <div class="chip" id="chipAir" title="Air Quality Index">
           <span class="dot" id="airDot"></span>
           <span id="airText">AQI: …</span>
@@ -104,7 +102,10 @@
           <span class="chip__text" id="swStatusTextMobile">📦 Cached</span>
           <button class="btn btn--ghost swUpdateBtn swUpdateBtn--hidden" id="swUpdateBtnMobile" type="button">Update</button>
         </div>
+      </div>
 
+      <div class="topbarRow topbarRow--status" id="topbarStatusRow">
+        <button class="btn btn--compact btn--ghost mobileHudMoreBtn" id="mobileHudMoreBtn" type="button">More</button>
         <div class="freshnessBadges" id="freshnessBadgesMobile" aria-label="Feed freshness status"></div>
       </div>
 

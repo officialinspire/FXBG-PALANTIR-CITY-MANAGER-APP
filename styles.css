@@ -3312,6 +3312,50 @@ button {
   .topbar { position: relative; }
 }
 
+@media (max-width: 720px) and (pointer: coarse) {
+  .topbar__center--stacked {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .topbar__center--stacked .topbarRow {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    min-height: 40px;
+    padding: 4px 2px;
+    align-items: center;
+  }
+
+  .topbar__center--stacked .topbarRow::-webkit-scrollbar {
+    display: none;
+  }
+
+  .topbar__center--stacked .topbarRow--chips,
+  .topbar__center--stacked .topbarRow--status,
+  .topbar__center--stacked .topbarRow--actions {
+    gap: 8px;
+  }
+
+  .topbarRow--status .freshnessBadges {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: nowrap;
+    white-space: nowrap;
+  }
+
+  .topbarRow--status .freshnessPill,
+  .topbarRow--status .freshnessPillBtn {
+    min-height: 28px;
+    display: inline-flex;
+    align-items: center;
+    white-space: nowrap;
+  }
+}
+
 /* JS-authoritative UI mode classes (fixes mobile ghost desktop header overlay) */
 .ui-mobile .desktop-only { display: none !important; }
 .ui-mobile .mobile-only  { display: block !important; }
