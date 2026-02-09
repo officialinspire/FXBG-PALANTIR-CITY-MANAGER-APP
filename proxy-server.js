@@ -462,6 +462,7 @@ const VA511_EVENTS_CACHE_TTL_MS = 3 * 60 * 1000;   // 3 minutes fresh
 const VA511_EVENTS_STALE_TTL_MS = 60 * 60 * 1000;   // 1 hour stale fallback
 const VA511_CAMS_CACHE_TTL_MS = 5 * 60 * 1000;      // 5 minutes fresh
 const VA511_CAMS_STALE_TTL_MS = 60 * 60 * 1000;     // 1 hour stale fallback
+const VA511_CAMS_MAX_BYTES = 15 * 1024 * 1024;      // 15MB payload limit for cameras
 const va511EventsMemoryCache = { ts: 0, payload: null };
 const va511CamsMemoryCache = { ts: 0, payload: null };
 
@@ -1425,7 +1426,7 @@ const VA511_UPSTREAM_HEADERS = {
   "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 };
 
-async function fetchVa511Layer(sourceUrl, memCache, ttlMs, staleTtlMs, diskCacheFile, layerName) {
+async function fetchVa511Layer(sourceUrl, memCache, ttlMs, staleTtlMs, diskCacheFile, layerName, maxBytesOverride) {
   const now = Date.now();
   // 1. Fresh memory cache?
   if (memCache.payload && (now - memCache.ts) < ttlMs) {
@@ -1438,6 +1439,7 @@ async function fetchVa511Layer(sourceUrl, memCache, ttlMs, staleTtlMs, diskCache
       expectedType: "json",
       timeoutMs: 15000,
       headers: VA511_UPSTREAM_HEADERS,
+      maxBytes: maxBytesOverride,
       upstreamName: `va511-${layerName}`,
       route: `/api/va511/${layerName}`
     });
@@ -1475,7 +1477,7 @@ async function fetchVa511Events() {
 }
 
 async function fetchVa511Cams() {
-  return fetchVa511Layer(VA511_CAMS_SOURCE_URL, va511CamsMemoryCache, VA511_CAMS_CACHE_TTL_MS, VA511_CAMS_STALE_TTL_MS, VA511_CAMS_CACHE_FILE, "cams");
+  return fetchVa511Layer(VA511_CAMS_SOURCE_URL, va511CamsMemoryCache, VA511_CAMS_CACHE_TTL_MS, VA511_CAMS_STALE_TTL_MS, VA511_CAMS_CACHE_FILE, "cams", VA511_CAMS_MAX_BYTES);
 }
 
 // ---------------------------------------------------------------------------
@@ -2160,7 +2162,7 @@ const upstreamCache = createCache();
 const upstreamTestRateLimit = new Map();
 const UPSTREAM_TEST_RATE_LIMIT_MS = 10_000;
 
-function updateUpstreamStatus(name, { ok, status, elapsedMs, cacheHit = false, stale = false, message } = {}) {
+function updateUpstreamStatus(name, { ok, status, elapsedMs, cacheHit = false, stale = false, message, contentType, errorSnippet } = {}) {
   if (!name) return;
   const existing = upstreamStatus.get(name) || {};
   const nowIso = new Date().toISOString();
@@ -2170,6 +2172,8 @@ function updateUpstreamStatus(name, { ok, status, elapsedMs, cacheHit = false, s
     lastOkAt: ok ? nowIso : existing.lastOkAt || null,
     lastOk: typeof ok === "boolean" ? ok : existing.lastOk ?? null,
     lastStatus: status ?? existing.lastStatus ?? null,
+    lastContentType: contentType ?? existing.lastContentType ?? null,
+    lastErrorSnippet: errorSnippet ?? existing.lastErrorSnippet ?? null,
     lastElapsedMs: Number.isFinite(elapsedMs) ? elapsedMs : existing.lastElapsedMs ?? null,
     cacheHit: Boolean(cacheHit),
     stale: Boolean(stale),
@@ -3618,6 +3622,8 @@ async function runUpstreamFetch(name, url, options = {}) {
     ok: result.ok,
     status: result.status,
     elapsedMs: result.elapsedMs,
+    contentType: result.contentType,
+    errorSnippet: result.errorSnippet,
     cacheHit: options.cacheState === "hit",
     stale: options.cacheState === "stale",
     message: result.error || (result.warnings ? result.warnings.join("; ") : null)
@@ -5288,11 +5294,15 @@ const server = http.createServer(async (req, res) => {
 
       for (const upstream of REQUIRED_UPSTREAMS) {
         const lastSuccess = upstreamLastSuccess.get(upstream.name) || null;
+        const statusState = upstreamStatus.get(upstream.name) || {};
         upstreams.push({
           name: upstream.name,
           url: upstream.url,
           required: upstream.required,
           lastSuccess: lastSuccess,
+          lastStatus: statusState.lastStatus ?? null,
+          lastContentType: statusState.lastContentType ?? null,
+          lastErrorSnippet: statusState.lastErrorSnippet ?? null,
           usingCached: lastSuccess !== null
         });
       }
