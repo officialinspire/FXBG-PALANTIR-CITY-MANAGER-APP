@@ -182,6 +182,93 @@ function requestLogUrl(urlObj) {
   return urlObj.pathname;
 }
 
+function matchStringField(block, fieldName) {
+  const regex = new RegExp(`${fieldName}\\s*:\\s*"([^"]+)"`);
+  const match = block.match(regex);
+  return match ? match[1] : null;
+}
+
+function parseRssFeedEntry(entry) {
+  const key = matchStringField(entry, "id") || matchStringField(entry, "key");
+  const name = matchStringField(entry, "name");
+  const url = matchStringField(entry, "url");
+  const category = matchStringField(entry, "category");
+  const enabledMatch = entry.match(/enabledByDefault\\s*:\\s*(true|false)/);
+  const enabledByDefault = enabledMatch ? enabledMatch[1] === "true" : true;
+
+  if (!url) return null;
+
+  return {
+    key: key || url,
+    name: name || key || url,
+    url,
+    category: category || null,
+    enabledByDefault
+  };
+}
+
+function extractRssFeedRegistry(content) {
+  const rssIndex = content.indexOf("rss: [");
+  if (rssIndex === -1) return [];
+
+  const arrayStart = content.indexOf("[", rssIndex);
+  if (arrayStart === -1) return [];
+
+  let depth = 0;
+  let arrayEnd = -1;
+  for (let i = arrayStart; i < content.length; i += 1) {
+    const char = content[i];
+    if (char === "[") depth += 1;
+    if (char === "]") depth -= 1;
+    if (depth === 0) {
+      arrayEnd = i;
+      break;
+    }
+  }
+
+  if (arrayEnd === -1) return [];
+
+  const rssBlock = content.slice(arrayStart + 1, arrayEnd);
+  const feeds = [];
+  const seen = new Set();
+  let entryStart = -1;
+  let braceDepth = 0;
+
+  for (let i = 0; i < rssBlock.length; i += 1) {
+    const char = rssBlock[i];
+    if (char === "{") {
+      if (braceDepth === 0) {
+        entryStart = i;
+      }
+      braceDepth += 1;
+    } else if (char === "}") {
+      braceDepth -= 1;
+      if (braceDepth === 0 && entryStart !== -1) {
+        const entry = rssBlock.slice(entryStart, i + 1);
+        const feed = parseRssFeedEntry(entry);
+        if (feed && !seen.has(feed.url)) {
+          feeds.push(feed);
+          seen.add(feed.url);
+        }
+        entryStart = -1;
+      }
+    }
+  }
+
+  return feeds;
+}
+
+async function loadRssFeedRegistry() {
+  const configPath = path.join(__dirname, "index.js");
+  try {
+    const content = await fsp.readFile(configPath, "utf8");
+    return extractRssFeedRegistry(content);
+  } catch (error) {
+    console.warn(`[feeds] Failed to read RSS registry from index.js: ${error.message}`);
+    return [];
+  }
+}
+
 function toCacheMeta(cache, ttlMs) {
   if (!cache) return null;
   return {
@@ -4436,6 +4523,15 @@ const server = http.createServer(async (req, res) => {
       };
 
       return send(res, 200, JSON.stringify(health, null, 2), { "Content-Type": "application/json" });
+    }
+
+    if (urlObj.pathname === "/api/feeds/registry") {
+      const feeds = await loadRssFeedRegistry();
+      const payload = {
+        ok: true,
+        feeds
+      };
+      return send(res, 200, JSON.stringify(payload), { "Content-Type": "application/json" });
     }
 
     if (urlObj.pathname === "/api/health/offline-readiness") {
