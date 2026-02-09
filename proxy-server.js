@@ -658,9 +658,36 @@ function buildGisCacheSource(entry, resolution) {
   };
 }
 
+const DEFAULT_OFFLINE_PACK_BUDGET_MB = {
+  core: 500,
+  field: 4000
+};
+
 function getOfflinePackBudgetMB(catalog, pack) {
   const budget = catalog?.offlinePacks?.[pack]?.storageBudgetMB;
-  return Number.isFinite(budget) ? budget : null;
+  if (Number.isFinite(budget)) return budget;
+  if (pack && Object.prototype.hasOwnProperty.call(DEFAULT_OFFLINE_PACK_BUDGET_MB, pack)) {
+    return DEFAULT_OFFLINE_PACK_BUDGET_MB[pack];
+  }
+  return null;
+}
+
+function getOfflinePackBudgetBytes(catalog, pack) {
+  const budgetMB = getOfflinePackBudgetMB(catalog, pack);
+  if (!Number.isFinite(budgetMB)) return null;
+  return budgetMB * 1024 * 1024;
+}
+
+function getOfflinePackUsageBytes(catalog, pack, index) {
+  if (!pack) return null;
+  const entries = listGisCatalogEntries(catalog);
+  const entryMap = new Map(entries.map((entry) => [entry.key, entry]));
+  const items = Object.values(index.items || {}).filter((item) => item?.cached);
+  return items.reduce((acc, item) => {
+    const entry = entryMap.get(item.key);
+    if (!offlineTierMatchesPack(entry, pack)) return acc;
+    return acc + (item.bytes || 0);
+  }, 0);
 }
 
 async function resolveGisLayerUrl(key, entry) {
@@ -1104,7 +1131,7 @@ async function summarizeOfflineStatus(catalog) {
   };
 }
 
-async function runOfflinePrefetch(entries, { force = false } = {}) {
+async function runOfflinePrefetch(entries, { force = false, pack = null, catalog = null } = {}) {
   offlinePrefetchState.running = true;
   offlinePrefetchState.currentKey = null;
   offlinePrefetchState.done = 0;
@@ -1115,12 +1142,41 @@ async function runOfflinePrefetch(entries, { force = false } = {}) {
 
   logOfflinePack(`prefetch_start total=${entries.length}`);
 
+  const budgetBytes = catalog && pack ? getOfflinePackBudgetBytes(catalog, pack) : null;
+  let usageBytes = 0;
+  if (budgetBytes !== null) {
+    const index = await readGisCacheIndex();
+    usageBytes = getOfflinePackUsageBytes(catalog, pack, index) || 0;
+    if (usageBytes >= budgetBytes) {
+      const message = "budget_exceeded: Evict offline packs or increase storageBudgetMB.";
+      offlinePrefetchState.errors.push({ key: "pack", error: message });
+      logOfflinePack(`prefetch_stop reason=${message}`);
+      offlinePrefetchState.running = false;
+      offlinePrefetchState.currentKey = null;
+      offlinePrefetchState.lastUpdatedAt = Date.now();
+      return;
+    }
+  }
+
   for (const entry of entries) {
     offlinePrefetchState.currentKey = entry.key;
     offlinePrefetchState.lastUpdatedAt = Date.now();
     try {
       const index = await readGisCacheIndex();
       const cachedItem = index.items[entry.key];
+      const cachedBytes = cachedItem?.bytes || 0;
+      if (budgetBytes !== null) {
+        usageBytes = getOfflinePackUsageBytes(catalog, pack, index) || usageBytes;
+        const estMB = Number.isFinite(entry?.offline?.estSizeMB) ? entry.offline.estSizeMB : null;
+        const estBytes = Number.isFinite(estMB) ? estMB * 1024 * 1024 : null;
+        const projectedBytes = estBytes !== null ? Math.max(0, usageBytes - cachedBytes) + estBytes : null;
+        if (projectedBytes !== null && projectedBytes > budgetBytes) {
+          const message = "budget_exceeded: Evict offline packs or increase storageBudgetMB.";
+          offlinePrefetchState.errors.push({ key: entry.key, error: message });
+          logOfflinePack(`prefetch_stop key=${entry.key} reason=${message}`);
+          break;
+        }
+      }
       if (!force && cachedItem && await isGisCacheItemValid(entry.key, cachedItem)) {
         await touchGisCacheIndexItem(entry.key, entry);
         logOfflinePack(`prefetch_skip_cached key=${entry.key}`);
@@ -1137,6 +1193,25 @@ async function runOfflinePrefetch(entries, { force = false } = {}) {
           offlinePrefetchState.errors.push({ key: entry.key, error: errorCode });
           logOfflinePack(`prefetch_error key=${entry.key} error=${errorCode}`);
         } else {
+          const newBytes = result?.bytes || result?.cached?.meta?.bytes || cachedBytes;
+          if (budgetBytes !== null) {
+            usageBytes = Math.max(0, usageBytes - cachedBytes + (newBytes || 0));
+            if (usageBytes > budgetBytes) {
+              const message = "budget_exceeded: Evict offline packs or increase storageBudgetMB.";
+              await removeGisCacheFiles(entry.key, cachedItem);
+              await updateGisCacheIndexItem(entry.key, (current) => ({
+                ...current,
+                key: entry.key,
+                cached: false,
+                bytes: 0,
+                cachedAt: null,
+                lastUsedAt: null
+              }));
+              offlinePrefetchState.errors.push({ key: entry.key, error: message });
+              logOfflinePack(`prefetch_stop key=${entry.key} reason=${message}`);
+              break;
+            }
+          }
           logOfflinePack(`prefetch_ok key=${entry.key}`);
         }
       }
@@ -4572,12 +4647,37 @@ const server = http.createServer(async (req, res) => {
 
         const catalog = await readGisCatalog();
         const entries = buildOfflineQueue(catalog, { pack, keys });
+        const budgetBytes = pack ? getOfflinePackBudgetBytes(catalog, pack) : null;
 
         if (entries.length === 0) {
           return send(res, 200, JSON.stringify({ ok: true, started: false, queued: 0 }, null, 2), { "Content-Type": "application/json" });
         }
 
-        setImmediate(() => runOfflinePrefetch(entries, { force }));
+        if (budgetBytes !== null) {
+          const index = await readGisCacheIndex();
+          const usageBytes = getOfflinePackUsageBytes(catalog, pack, index) || 0;
+          if (usageBytes >= budgetBytes) {
+            return send(res, 409, JSON.stringify({
+              ok: false,
+              error: "budget_exceeded",
+              message: "Offline pack is over budget. Evict cached items or increase storageBudgetMB."
+            }, null, 2), { "Content-Type": "application/json" });
+          }
+          const estimatedBytes = entries.reduce((acc, entry) => {
+            const estMB = Number.isFinite(entry?.offline?.estSizeMB) ? entry.offline.estSizeMB : null;
+            if (!Number.isFinite(estMB)) return acc;
+            return acc + (estMB * 1024 * 1024);
+          }, 0);
+          if (estimatedBytes > 0 && (usageBytes + estimatedBytes) > budgetBytes) {
+            return send(res, 409, JSON.stringify({
+              ok: false,
+              error: "budget_exceeded",
+              message: "Offline pack would exceed budget. Evict cached items or increase storageBudgetMB."
+            }, null, 2), { "Content-Type": "application/json" });
+          }
+        }
+
+        setImmediate(() => runOfflinePrefetch(entries, { force, pack, catalog }));
         return send(res, 200, JSON.stringify({ ok: true, started: true, queued: entries.length }, null, 2), { "Content-Type": "application/json" });
       } catch (err) {
         return send(res, 400, JSON.stringify({ ok: false, error: "invalid_payload", message: err.message }, null, 2), { "Content-Type": "application/json" });

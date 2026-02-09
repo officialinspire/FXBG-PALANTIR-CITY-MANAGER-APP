@@ -14858,14 +14858,48 @@
     const installed = readOfflinePackInstalled();
     const coreStats = status?.byTier?.core || { count: 0, bytes: 0 };
     const fieldStats = status?.byTier?.field || { count: 0, bytes: 0 };
+    const optionalStats = status?.byTier?.optional || { count: 0, bytes: 0 };
     const coreBudget = Number.isFinite(status?.budgets?.core) ? status.budgets.core : null;
     const fieldBudget = Number.isFinite(status?.budgets?.field) ? status.budgets.field : null;
+    const coreBudgetBytes = coreBudget !== null ? coreBudget * 1024 * 1024 : null;
+    const fieldBudgetBytes = fieldBudget !== null ? fieldBudget * 1024 * 1024 : null;
+    const coreUsageBytes = coreStats.bytes || 0;
+    const fieldUsageBytes = (coreStats.bytes || 0) + (fieldStats.bytes || 0) + (optionalStats.bytes || 0);
+    const coreOverBudget = coreBudgetBytes !== null && coreUsageBytes > coreBudgetBytes;
+    const fieldOverBudget = fieldBudgetBytes !== null && fieldUsageBytes > fieldBudgetBytes;
     const lastCoreUpdate = updated.core ? formatRelativeTime(updated.core) : "Never";
     const lastFieldUpdate = updated.field ? formatRelativeTime(updated.field) : "Never";
     const currentKey = progress?.currentKey || "—";
     const done = Number.isFinite(progress?.done) ? progress.done : 0;
     const total = Number.isFinite(progress?.total) ? progress.total : 0;
     const errors = Array.isArray(progress?.errors) ? progress.errors.slice(-3) : [];
+
+    const renderStorageMeter = (label, usageBytes, budgetMB, overBudget) => {
+      if (!Number.isFinite(budgetMB)) {
+        return `
+          <div class="offlineMeter">
+            <div class="offlineMeter__label">${escapeHtml(label)} Storage</div>
+            <div class="offlineMeter__meta">
+              <span>${formatMb(usageBytes)} MB used</span>
+              <span>No budget set</span>
+            </div>
+          </div>
+        `;
+      }
+      const budgetBytes = budgetMB * 1024 * 1024;
+      const percent = budgetBytes > 0 ? Math.min(100, Math.round((usageBytes / budgetBytes) * 100)) : 0;
+      return `
+        <div class="offlineMeter ${overBudget ? 'offlineMeter--over' : ''}">
+          <div class="offlineMeter__label">${escapeHtml(label)} Storage</div>
+          <div class="offlineMeter__bar"><div class="offlineMeter__fill" style="width:${percent}%"></div></div>
+          <div class="offlineMeter__meta">
+            <span>${formatMb(usageBytes)} MB used</span>
+            <span>${budgetMB} MB budget</span>
+          </div>
+          ${overBudget ? '<div class="offlineMeter__warning">Over budget — evict cached items or increase budget.</div>' : ''}
+        </div>
+      `;
+    };
 
     let html = "";
     html += `<div class="dockCard">`;
@@ -14885,6 +14919,10 @@
     html += `</div>`;
     html += `<div class="dockBadge">${installed === "field" ? "PRIMARY" : "FIELD"}</div>`;
     html += `</div>`;
+    if (status) {
+      html += renderStorageMeter("Core Pack", coreUsageBytes, coreBudget, coreOverBudget);
+      html += renderStorageMeter("Field Pack", fieldUsageBytes, fieldBudget, fieldOverBudget);
+    }
     if (!status) {
       html += `<div class="dockRowMeta">Loading offline pack status…</div>`;
     }
