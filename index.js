@@ -127,6 +127,7 @@
   };
   const OFFLINE_PACK_UPDATED_KEY = 'fxbg.offlinePackUpdated';
   const LOAD_SHEDDING_STORAGE_KEY = "fxbg.loadShedding";
+  const AOI_MODE_STORAGE_KEY = "fxbg.aoiMode";
   const GIS_LAYERS = new Map(); // key -> { leafletLayer, enabled, meta, loaded }
   const GIS_PANEL_GROUPS = [
     { key: "basemapEnhancers", label: "Basemap Enhancers" },
@@ -148,6 +149,18 @@
     } catch {
       return false;
     }
+  }
+
+  function readAoiModePref() {
+    const fallback = IS_MOBILE_UI ? "mobile-smart" : "off";
+    try {
+      const stored = localStorage.getItem(AOI_MODE_STORAGE_KEY);
+      if (!stored) return fallback;
+      if (stored === "off" || stored === "primary-only" || stored === "mobile-smart") {
+        return stored;
+      }
+    } catch {}
+    return fallback;
   }
 
   function readOfflinePackInstalled() {
@@ -319,6 +332,12 @@
 
     // Region filter bbox (expanded to include all data source areas: FXBG, Stafford, Spotsy, Caroline, Warrenton, etc.)
     bbox: { minLat: 37.9, maxLat: 38.9, minLon: -78.0, maxLon: -77.0 },
+
+    // Primary AOI (FXBG + Stafford + Spotsylvania) — used to keep mobile clean
+    primaryAoiBbox: { minLat: 38.10, maxLat: 38.55, minLon: -77.75, maxLon: -77.20 },
+
+    // GPS AOI radius (miles). When user is outside primary AOI, we load markers near them only.
+    gpsAoiMilesRadius: 15,
 
     // POI-specific bbox (bounds for schools, hospitals, clinics in FXBG metro area)
     // Expanded to include full K-12 schools dataset: lat 38.1285–38.5312, lon -77.6215–-77.3425
@@ -2662,6 +2681,28 @@
     return lat >= bbox.minLat && lat <= bbox.maxLat && lon >= bbox.minLon && lon <= bbox.maxLon;
   }
 
+  function milesToLatDelta(miles) {
+    return miles / 69.0;
+  }
+
+  function milesToLonDelta(miles, atLat) {
+    const latRad = (atLat || 38.3) * Math.PI / 180;
+    const milesPerDeg = 69.172 * Math.cos(latRad);
+    return milesPerDeg > 0.0001 ? (miles / milesPerDeg) : (miles / 54.0);
+  }
+
+  function makeGpsBbox(lat, lon, milesRadius) {
+    const dLat = milesToLatDelta(milesRadius);
+    const dLon = milesToLonDelta(milesRadius, lat);
+    return { minLat: lat - dLat, maxLat: lat + dLat, minLon: lon - dLon, maxLon: lon + dLon };
+  }
+
+  function updateGpsAoiFromFix(lat, lon) {
+    if (!IS_MOBILE_UI) return;
+    store.aoi.gpsBbox = makeGpsBbox(lat, lon, CONFIG.gpsAoiMilesRadius);
+    store.aoi.lastGpsFixTs = Date.now();
+  }
+
   /**
    * Standardize coordinate keys on an item object.
    * Ensures every item has: lat (number), lon (number), lng (number) where lng === lon
@@ -2688,6 +2729,29 @@
       return CONFIG.poiBbox;
     }
     return CONFIG.bbox;
+  }
+
+  function isAllowedByMobileAOI(item) {
+    if (!IS_MOBILE_UI) return true;
+
+    // If user explicitly disables AOI gating
+    if (store?.aoi?.mode === "off") return true;
+
+    const lat = item.lat;
+    const lon = item.lon ?? item.lng;
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) return false;
+
+    // Always allow things in primary AOI
+    if (inBbox(lat, lon, CONFIG.primaryAoiBbox)) return true;
+
+    // If mode is primary-only, block everything else
+    if (store?.aoi?.mode === "primary-only") return false;
+
+    // mobile-smart: allow outside only if near the user (GPS AOI)
+    const gps = store?.aoi?.gpsBbox;
+    if (gps && inBbox(lat, lon, gps)) return true;
+
+    return false;
   }
 
   function pickEmojiCategory(text, fallbackEmoji, fallbackCategory, fallbackTone) {
@@ -5168,10 +5232,12 @@
     }
     updateUserLocationMarker(lat, lng, accuracy);
     currentUserLocation = { lat, lng, accuracy, ts: Date.now() };
+    updateGpsAoiFromFix(lat, lng);
     if (persist) {
       saveStoredLocation({ lat, lng, accuracy, zoom: nextZoom });
     }
     if (storeReady) {
+      redrawThrottled();
       updateNearestPanel();
       evaluateAlertRules();
     }
@@ -6789,6 +6855,11 @@
       lastSyncAt: null,
       clients: []
     },
+    aoi: {
+      mode: readAoiModePref(), // "off" | "primary-only" | "mobile-smart"
+      gpsBbox: null,
+      lastGpsFixTs: 0
+    },
     loadShedding: readLoadSheddingPref(),
     freshnessTransitions: new Map()
   };
@@ -6802,6 +6873,15 @@
       autoLoadBasemapEnhancers();
     }
     refreshLayersPanelUI();
+  }
+
+  function setAoiMode(mode) {
+    if (!mode || !store?.aoi) return;
+    store.aoi.mode = mode;
+    try {
+      localStorage.setItem(AOI_MODE_STORAGE_KEY, mode);
+    } catch {}
+    redrawThrottled();
   }
 
   // -----------------------------
@@ -8430,8 +8510,17 @@
         filtered.category++;
         continue;
       }
-      if (!inBbox(item.lat, item.lon, getBboxForItem(item))) {
+      // Hard AOI gates (fixes "bbox counted but not applied" bug)
+      const bboxCheck = inBbox(item.lat, item.lon, getBboxForItem(item));
+      if (!bboxCheck) {
         filtered.bbox++;
+        continue;
+      }
+
+      // Mobile AOI policy: only FXBG/Stafford/Spotsy unless near-user GPS AOI
+      if (!isAllowedByMobileAOI(item)) {
+        filtered.bbox++;
+        continue;
       }
       if (item.sourceId === "fxbg-crime-reports" && !isCrimeItemVisible(item)) {
         filtered.crime++;
@@ -14796,6 +14885,16 @@
     html += `<div class="dockMetaText">When enabled, pause heavy map clustering, reduce list rerenders, and slow marker refreshes to prevent lockups.</div>`;
     html += `</div>`;
 
+    html += `<div class="dockCard">`;
+    html += `<div class="dockSectionTitle">AOI Filter (Mobile)</div>`;
+    html += `<div class="dockMetaText">Controls mobile marker gating: primary AOI only, or include near-user GPS AOI.</div>`;
+    html += `<div class="dockActionRow dockActionRow--three">`;
+    html += `<button class="dockBtnSmall" data-aoi-mode="mobile-smart" aria-pressed="${store.aoi.mode === 'mobile-smart'}">AOI: Smart (Primary+GPS)</button>`;
+    html += `<button class="dockBtnSmall" data-aoi-mode="primary-only" aria-pressed="${store.aoi.mode === 'primary-only'}">AOI: Primary Only</button>`;
+    html += `<button class="dockBtnSmall" data-aoi-mode="off" aria-pressed="${store.aoi.mode === 'off'}">AOI: Off</button>`;
+    html += `</div>`;
+    html += `</div>`;
+
     // Recent errors
     if (healthTracker.recentErrors.size > 0) {
       html += `<div class="dockSectionTitle">Recent Errors (${healthTracker.recentErrors.size})</div>`;
@@ -15361,6 +15460,14 @@
             renderDock();
           });
         }
+        dockPanelBody.querySelectorAll("[data-aoi-mode]").forEach((btn) => {
+          btn.addEventListener("click", () => {
+            const mode = btn.dataset.aoiMode;
+            if (!mode || mode === store.aoi.mode) return;
+            setAoiMode(mode);
+            renderDock();
+          });
+        });
         stopOfflinePackPolling();
       } else if (systemSubtab === SYSTEM_SUBTABS.OFFLINE) {
         bind("offlineDownloadCore", "click", () => startOfflinePackPrefetch("core"));
