@@ -3178,12 +3178,12 @@ button {
 .mobile-only  { display: none; }
 
 /* Mobile breakpoint: small screen + coarse pointer => show mobile UI */
-@media (max-width: 980px) and (pointer: coarse) {
+@media (max-width: 1024px) and (pointer: coarse) {
   .desktop-only { display: none; }
   .mobile-only  { display: block; }
 }
 
-@media (max-width: 980px) and (pointer: coarse) {
+@media (max-width: 1024px) and (pointer: coarse) {
   .ui-mobile #mobileHeader .chip__text,
   .ui-mobile #mobileHeader .weatherWidget .weatherText,
   .ui-mobile #mobileHeader .weatherChip .weatherText,
@@ -3193,6 +3193,73 @@ button {
     text-overflow: ellipsis;
     white-space: nowrap;
   }
+}
+
+@media (max-width: 1024px) and (pointer: coarse) {
+  /* Hard reset: prevent wrap chaos */
+  .topbar, .topbar * { box-sizing: border-box; }
+  .topbar { padding: 10px 10px 8px; }
+
+  /* Force a two-row layout */
+  .topbar .topbarRow { display: flex; gap: 10px; align-items: center; }
+  .topbar .topbarRow { flex-wrap: nowrap !important; }
+
+  /* Row 1: title */
+  .topbarRow--title {
+    justify-content: space-between;
+  }
+  .topbarTitleWrap {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+  }
+  .topbarTitleWrap .titleText {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 65vw;
+  }
+
+  /* Row 2: status chips scroll, never wrap */
+  .topbarRow--status {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+  .topbarRow--status::-webkit-scrollbar { display: none; }
+
+  .topbarRow--status .chip {
+    flex: 0 0 auto;
+    max-width: 78vw;
+    white-space: nowrap;
+  }
+
+  /* Actions row scroll */
+  .topbarRow--actions {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+  .topbarRow--actions::-webkit-scrollbar { display: none; }
+
+  .topbarRow--actions .btn {
+    flex: 0 0 auto;
+  }
+
+  /* Prevent status chips from expanding weirdly */
+  #chipTraffic, #chipWeather, #chipAQI, #chipAir, #chipCameras {
+    min-width: unset !important;
+    width: auto !important;
+    max-width: 78vw !important;
+  }
+
+  /* If any chip uses grid/flex internally, keep it tight */
+  .chipInner { display: flex; gap: 8px; align-items: center; min-width: 0; }
+  .chipText { overflow: hidden; text-overflow: ellipsis; }
+
+  /* If your header is 'disjointed' due to absolute/fixed, force stable stacking */
+  .topbar { position: relative; }
 }
 
 /* JS-authoritative UI mode classes (fixes mobile ghost desktop header overlay) */
