@@ -27,6 +27,21 @@
   --focus: color-mix(in srgb, var(--accent) 68%, white 32%);
   --glow: 0 0 0 3px color-mix(in srgb, var(--accent) 36%, transparent);
 
+  --bg: var(--bg0);
+  --panelBg: color-mix(in srgb, var(--card) 88%, var(--bg0) 12%);
+  --panelBorder: var(--stroke);
+  --panelHeaderBg: color-mix(in srgb, var(--panelBg) 92%, var(--bg1) 8%);
+  --panelRowBg: color-mix(in srgb, var(--panelBg) 94%, var(--bg0) 6%);
+  --panelRowHover: color-mix(in srgb, var(--panelBg) 86%, var(--accent) 14%);
+  --panelDivider: color-mix(in srgb, var(--panelBorder) 70%, transparent);
+  --text: var(--txt);
+  --textMuted: var(--muted);
+  --chipText: var(--chipTxt);
+  --btnText: var(--btnTxt);
+  --btnHover: var(--btnBgHover);
+  --danger: var(--bad);
+  --ok: var(--good);
+
   --muted2: var(--txt2);
   --shadowA: rgba(0,0,0,.55);
   --shadowB: rgba(255,255,255,.05);
@@ -247,7 +262,7 @@ html[data-theme="mountain-ops"]{
 html, body { height: 100%; }
 body{
   margin: 0;
-  color: var(--txt);
+  color: var(--text);
   font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji","Segoe UI Emoji";
   background:
     radial-gradient(1200px 900px at 20% 10%, rgba(126,240,255,.12), transparent 60%),
@@ -375,7 +390,7 @@ body{
 }
 .chip__text{
   font-size: 12px;
-  color: rgba(255,255,255,.92);
+  color: var(--text);
   line-height: 1.15;
   white-space: normal;
   overflow: visible;
@@ -4738,17 +4753,83 @@ body.dispatch-mode .panel {
 .bottombar,
 .dock,
 .card,
-.panel {
-  color: var(--txt);
+.panel,
+.newsFlashPanel,
+.radioPanel,
+.timelinePanel,
+.crimePanel,
+.reportPanel,
+.dockPanel,
+.diagnosticsDrawer,
+.offlineMapModal__card,
+.freshnessModal__card {
+  color: var(--text);
 }
 
 .topbar,
 .bottombar,
 .panel,
 .dockCard,
-.card {
-  border-color: var(--stroke);
-  background: var(--card);
+.card,
+.newsFlashPanel,
+.radioPanel,
+.timelinePanel,
+.crimePanel,
+.reportPanel,
+.dockPanel,
+.diagnosticsDrawer,
+.offlineMapModal__card,
+.freshnessModal__card {
+  border-color: var(--panelBorder);
+  background: var(--panelBg);
+}
+
+.panel__handle,
+.newsFlashPanel__header,
+.newsFlashPanel__filters,
+.radioPanel__header,
+.timelinePanel__header,
+.timelinePanel__filters,
+.timelinePanel__actions,
+.timelinePanel__sync,
+.crimePanel__header,
+.reportPanel__header,
+.dockPanelHeader,
+.dockTabs,
+.dockPanelHeader,
+.diagnosticsDrawer__header,
+.newsFlashPanel__jurisdiction,
+.reportPanel__submitBar {
+  background: var(--panelHeaderBg);
+  border-color: var(--panelBorder);
+}
+
+.panel__title,
+.newsFlashPanel__title,
+.radioPanel__title,
+.timelinePanel__title,
+.crimePanel__title,
+.reportPanel__title,
+.dockPanelTitle,
+.diagnosticsDrawer__title {
+  color: var(--text);
+}
+
+.divider,
+.panelLocationMeta,
+.dockRow,
+.dockToggleRow,
+.overlayGroup__toggle,
+.newsFlashPanel__filters,
+.newsFlashPanel__jurisdiction,
+.newsFlashPanel__count,
+.timelinePanel__filters,
+.timelinePanel__actions,
+.timelinePanel__sync,
+.crimePanel__controls,
+.reportPanel__section,
+.diagnosticsRow {
+  border-color: var(--panelDivider);
 }
 
 button,
@@ -4764,7 +4845,7 @@ button,
 .radioStationPlayBtn,
 .panelList__item {
   background: var(--btnBg);
-  color: var(--btnTxt);
+  color: var(--btnText);
   border: 1px solid var(--btnStroke);
   box-shadow: var(--shadow1);
 }
@@ -4781,7 +4862,7 @@ button:hover,
 .watchboardBtn:hover,
 .radioStationPlayBtn:hover,
 .panelList__item:hover {
-  background: var(--btnBgHover);
+  background: var(--btnHover);
   box-shadow: var(--shadow2);
 }
 
@@ -4805,7 +4886,7 @@ button:active,
 .newsItem__jurisdiction,
 .newsItem__category {
   background: var(--chipBg);
-  color: var(--chipTxt);
+  color: var(--chipText);
   border: 1px solid var(--chipStroke);
   box-shadow: var(--shadow1);
 }
@@ -4850,5 +4931,112 @@ button:focus-visible {
 
 .dock,
 .topbar {
-  color: var(--txt);
+  color: var(--text);
+}
+
+.panel,
+.newsFlashPanel,
+.radioPanel,
+.timelinePanel,
+.crimePanel,
+.reportPanel,
+.dockPanel,
+.diagnosticsDrawer,
+.offlineToast,
+.offlineMapControl,
+.offlineMapModal__card,
+.freshnessModal__card,
+.leaflet-popup-content-wrapper,
+.leaflet-popup-tip {
+  background: var(--panelBg);
+  border-color: var(--panelBorder);
+  color: var(--text);
+}
+
+.panelList__item,
+.newsItem,
+.radioPlayer,
+.radioLink,
+.radioStationRow,
+.radioNowPlayingBar,
+.timelineItem,
+.crime-list-item,
+.dockCard,
+.dockRow,
+.nearestItem,
+.watchboardCard,
+.alertRuleCard,
+.alertItem,
+.diagnosticsSection,
+.diagnosticsBanner {
+  background: var(--panelRowBg);
+  border-color: var(--panelBorder);
+  color: var(--text);
+}
+
+.panelList__item:hover,
+.newsItem:hover,
+.radioLink:hover,
+.radioStationRow:hover,
+.timelineItem:hover,
+.crime-list-item:hover,
+.dockRow:hover,
+.nearestItem:hover,
+.watchboardCard:hover {
+  background: var(--panelRowHover);
+}
+
+.kv__k,
+.panel__desc,
+.newsItem__meta,
+.newsItem__summary,
+.radioStatus,
+.timelinePanel__status,
+.timelineItem__summary,
+.crime-list-item__meta,
+.crime-applied,
+.reportStatus,
+.reportLocationValue,
+.dockRowMeta,
+.dockMetaText,
+.diagnosticsSection__content--subtle,
+.diagnosticsSection__title,
+.diagnosticsRow,
+.radioNowPlayingText .label,
+.timelineItem__time {
+  color: var(--textMuted);
+}
+
+.newsItem__jurisdiction,
+.newsItem__category,
+.timelineBadge,
+.timelineItem__kind,
+.locationBadge,
+.dockBadge {
+  border-color: var(--panelBorder);
+}
+
+.locationBadge,
+.timelineBadge,
+.timelineItem__kind {
+  color: var(--text);
+  background: color-mix(in srgb, var(--panelRowBg) 75%, var(--accent) 25%);
+}
+
+.dockBadge {
+  background: color-mix(in srgb, var(--panelRowBg) 70%, var(--bg) 30%);
+  color: var(--text);
+}
+
+.newsFlashPanel__count,
+.radioSection__title,
+.dockSectionTitle {
+  color: var(--accent);
+  border-color: var(--panelDivider);
+}
+
+.newsFlashPanel__count,
+.radioSection__title,
+.dockSectionTitle {
+  background: color-mix(in srgb, var(--panelBg) 85%, var(--accent) 15%);
 }
