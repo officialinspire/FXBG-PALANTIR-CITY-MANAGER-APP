@@ -8594,7 +8594,7 @@
     const marker = L.marker([base.lat, base.lon ?? base.lng], {
       icon: makeEmojiIcon("📍", "warn", "stack", { confidence: null }, { stackCount: items.length })
     });
-    marker.bindPopup(`<div style="min-width:220px;"><strong>${items.length} incidents in this area</strong><div style="margin-top:6px;font-size:12px;opacity:.85;">Zoom in for exact marker placement.</div><div style="margin-top:8px;">${stackList}</div>${moreText}</div>`, { closeButton: false });
+    marker.bindPopup(`<div style="min-width:220px;"><strong>${items.length} incidents in this area</strong><div style="margin-top:6px;font-size:12px;opacity:.85;">Multiple items share the same location. Select one from the list.</div><div style="margin-top:8px;">${stackList}</div>${moreText}</div>`, { closeButton: false });
     markerLayer.addLayer(marker);
   }
 
