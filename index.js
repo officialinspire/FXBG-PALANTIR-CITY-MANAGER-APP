@@ -5389,6 +5389,9 @@
   const DECLUTTER_STACK_ZOOM = 13;
   const STACK_RADIUS_METERS = 30;
   const TAP_IDENTIFY_RADIUS_METERS = 60;
+  const MOBILE_SPIDER_LIMIT = 10;
+  const MOBILE_SPIDER_RADIUS_METERS = 18;
+  let mobileSpiderLayer = null;
 
   // -----------------------------
   // Location Awareness
@@ -6834,6 +6837,7 @@
   }
   function closePanel() {
     clearSelection();
+    clearMobileSpiderLayer();
     panel.classList.add("panel--collapsed");
     panelHandle.setAttribute("aria-expanded", "false");
   }
@@ -8420,6 +8424,55 @@
     return out;
   }
 
+  function createSpiderRing(lat, lon, count) {
+    if (!Number.isFinite(lat) || !Number.isFinite(lon) || count <= 0) return [];
+    const latPerMeter = 1 / 111111;
+    const lonPerMeter = 1 / (111111 * Math.max(0.2, Math.cos((lat * Math.PI) / 180)));
+    const points = [];
+    for (let i = 0; i < count; i += 1) {
+      const angle = (Math.PI * 2 * i) / count;
+      points.push({
+        lat: lat + Math.sin(angle) * MOBILE_SPIDER_RADIUS_METERS * latPerMeter,
+        lon: lon + Math.cos(angle) * MOBILE_SPIDER_RADIUS_METERS * lonPerMeter
+      });
+    }
+    return points;
+  }
+
+  function clearMobileSpiderLayer() {
+    if (!mobileSpiderLayer) return;
+    try {
+      map.removeLayer(mobileSpiderLayer);
+    } catch {}
+    mobileSpiderLayer = null;
+  }
+
+  function openMobileSpiderfy(items) {
+    if (!IS_MOBILE_UI || !Array.isArray(items) || !items.length) return;
+    clearMobileSpiderLayer();
+    const base = items[0];
+    const baseLat = Number(base.lat);
+    const baseLon = Number(base.lon ?? base.lng);
+    if (!Number.isFinite(baseLat) || !Number.isFinite(baseLon)) return;
+    const spiderItems = items.slice(0, MOBILE_SPIDER_LIMIT);
+    const ring = createSpiderRing(baseLat, baseLon, spiderItems.length);
+    mobileSpiderLayer = L.layerGroup();
+
+    spiderItems.forEach((item, index) => {
+      const point = ring[index];
+      if (!point) return;
+      const spiderMarker = L.marker([point.lat, point.lon], {
+        icon: makeEmojiIcon(item.emoji, item.tone, item.sourceId, item._geocode)
+      });
+      spiderMarker.on("click", () => {
+        selectItem(item.id);
+      });
+      mobileSpiderLayer.addLayer(spiderMarker);
+    });
+
+    mobileSpiderLayer.addTo(map);
+  }
+
   function renderPopup(item) {
     const cat = CATEGORIES[item.category]?.label || item.category;
     const safeTitle = escapeHtml(item.title);
@@ -8518,6 +8571,16 @@
   function attachStackMarker(items) {
     if (!items?.length) return;
     const base = items[0];
+    if (IS_MOBILE_UI) {
+      const marker = L.marker([base.lat, base.lon ?? base.lng], {
+        icon: makeEmojiIcon("📍", "warn", "stack", { confidence: null }, { stackCount: items.length })
+      });
+      marker.on("click", () => {
+        openMobileSpiderfy(items);
+      });
+      markerLayer.addLayer(marker);
+      return;
+    }
     const previewItems = items.slice(0, 12);
     const stackList = previewItems.map((item) => {
       const itemId = escapeAttr(item.id || "");
@@ -14528,6 +14591,7 @@
   syncPrecisionControlLabels();
 
   map.on("click", (event) => {
+    clearMobileSpiderLayer();
     if (store.mapUi.tapToIdentify) {
       runTapIdentify(event.latlng);
     }
