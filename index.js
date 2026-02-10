@@ -3995,6 +3995,39 @@
     }
   }
 
+  const GEOCODE_SEMAPHORE_MAX = 4;
+  let geocodeSemaphoreInFlight = 0;
+  const geocodeSemaphoreQueue = [];
+
+  async function withGeocodeSemaphore(task) {
+    if (geocodeSemaphoreInFlight >= GEOCODE_SEMAPHORE_MAX) {
+      await new Promise(resolve => geocodeSemaphoreQueue.push(resolve));
+    }
+    geocodeSemaphoreInFlight++;
+    try {
+      return await task();
+    } finally {
+      geocodeSemaphoreInFlight = Math.max(0, geocodeSemaphoreInFlight - 1);
+      const next = geocodeSemaphoreQueue.shift();
+      if (next) next();
+    }
+  }
+
+  async function geocodeAddressIfNeeded(addressKey, addressText, jurisdiction) {
+    if (!addressKey || !addressText) return null;
+    const cacheKey = String(addressKey).trim().toLowerCase();
+    const cachedGeo = geocodeCache.get(cacheKey);
+    if (cachedGeo && Number.isFinite(cachedGeo.lat) && Number.isFinite(cachedGeo.lon)) {
+      return { lat: Number(cachedGeo.lat), lon: Number(cachedGeo.lon), aoi: cachedGeo.aoi || null };
+    }
+    const geocoded = await withGeocodeSemaphore(() => geocodeLocation(addressText, jurisdiction));
+    if (geocoded && Number.isFinite(geocoded.lat) && Number.isFinite(geocoded.lon)) {
+      geocodeCache.set(cacheKey, { lat: geocoded.lat, lon: geocoded.lon, aoi: geocoded.aoi || null, timestamp: Date.now() });
+      return geocoded;
+    }
+    return null;
+  }
+
 
   // -----------------------------
   // Location Extraction Pipeline (Module 1 v2)
@@ -4369,7 +4402,7 @@
       notes.push('rss_candidate_failed');
     }
 
-    const placeOverride = resolvePlaceOverride(item || {});
+    const placeOverride = await resolvePlaceOverride(item || {}, { category, jurisdiction });
     if (placeOverride && Number.isFinite(placeOverride.lat) && Number.isFinite(placeOverride.lon)) {
       return { lat: placeOverride.lat, lon: placeOverride.lon, method: placeOverride.method || 'places_dataset', confidence: placeOverride.confidence ?? 98, notes };
     }
@@ -4435,7 +4468,7 @@
     };
   }
 
-  function resolvePlaceOverride({ id, name, address, city, state, zip, lat, lon, lng }) {
+  async function resolvePlaceOverride({ id, name, address, city, state, zip, lat, lon, lng }, opts = {}) {
     const idx = store?.placesIndex;
     if (!idx || idx.size === 0) return null;
     const keys = [id, name, normalizeAddressKey(address, city, state, zip)]
@@ -4443,6 +4476,37 @@
       .filter(Boolean);
     const hit = keys.map(k => idx.get(k)).find(Boolean);
     if (!hit) return null;
+
+    const poiCategories = new Set(['school', 'dorm', 'college', 'campus', 'poi']);
+    const category = String(opts.category || '').toLowerCase();
+    const shouldPreferAddressGeocode = poiCategories.has(category);
+
+    if (shouldPreferAddressGeocode) {
+      const mergedAddress = {
+        address: hit.address || address,
+        city: hit.city || city,
+        state: hit.state || state,
+        zip: hit.zip || zip
+      };
+      const addressKey = normalizeAddressKey(mergedAddress.address, mergedAddress.city, mergedAddress.state, mergedAddress.zip);
+      const addressText = buildStructuredAddress(mergedAddress);
+      if (addressKey && addressText) {
+        const geocoded = await geocodeAddressIfNeeded(addressKey, addressText, opts.jurisdiction || 'Regional');
+        if (geocoded) {
+          return {
+            lat: Number(geocoded.lat),
+            lon: Number(geocoded.lon),
+            confidence: 92,
+            method: 'address_geocode_live',
+            approximate: false,
+            address: mergedAddress.address,
+            city: mergedAddress.city,
+            state: mergedAddress.state,
+            zip: mergedAddress.zip
+          };
+        }
+      }
+    }
 
     if (Number.isFinite(hit.lat) && Number.isFinite(hit.lng)) {
       return {
@@ -4458,7 +4522,7 @@
       };
     }
 
-    const inputAddressKey = normalizeAddressKey(address, city, state, zip);
+    const inputAddressKey = normalizeAddressKey(hit.address || address, hit.city || city, hit.state || state, hit.zip || zip);
     const cachedGeo = inputAddressKey ? geocodeCache.get(inputAddressKey) : null;
     if (cachedGeo && Number.isFinite(cachedGeo.lat) && Number.isFinite(cachedGeo.lon)) {
       return {
@@ -10350,14 +10414,14 @@
   }
 
   // Ingest external cameras (WetMet API)
-  function ingestExternalCameras() {
+  async function ingestExternalCameras() {
     if (!CONFIG.externalCameras.enabled) return { added: 0, total: 0 };
 
     const cameras = CONFIG.externalCameras.cameras || [];
     let added = 0;
 
     for (const cam of cameras) {
-      const override = resolvePlaceOverride({
+      const override = await resolvePlaceOverride({
         id: cam.id,
         name: cam.name,
         address: cam.address,
@@ -10366,7 +10430,7 @@
         zip: cam.zip,
         lat: cam.lat,
         lon: cam.lon
-      });
+      }, { category: cam.type === 'school' ? 'school' : cam.type === 'poi' ? 'poi' : '', jurisdiction: cam.jurisdiction || 'Regional' });
       const lat = Number(override?.lat ?? cam.lat);
       const lon = Number(override?.lon ?? cam.lon);
       if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
@@ -10666,7 +10730,7 @@
     }
 
     try {
-      const result = ingestExternalCameras();
+      const result = await ingestExternalCameras();
       store.lastFetch.externalCameras = now;
       console.log(`[ExternalCameras] Loaded ${result.added} external camera markers`);
     } catch (e) {
@@ -10761,7 +10825,7 @@
         address: addressOverride?.address || school.address,
         addressSource: addressOverride?.address ? 'override' : (school.address ? 'dataset' : 'missing')
       };
-      const override = resolvePlaceOverride({
+      const override = await resolvePlaceOverride({
         id: enrichedSchool.id || enrichedSchool.ncesId,
         name: enrichedSchool.name,
         address: enrichedSchool.address,
@@ -10770,7 +10834,7 @@
         zip: enrichedSchool.zip,
         lat: enrichedSchool.lat ?? enrichedSchool.latitude ?? enrichedSchool.LAT ?? enrichedSchool.y,
         lon: enrichedSchool.lon ?? enrichedSchool.lng ?? enrichedSchool.longitude ?? enrichedSchool.LON ?? enrichedSchool.x
-      });
+      }, { category: 'school', jurisdiction: enrichedSchool.jurisdiction || 'Regional' });
 
       const resolved = await resolveLatLngForPlace(enrichedSchool, 'school', { allowFallbackCenter: false });
       if (!resolved) {
@@ -10945,7 +11009,7 @@
     };
 
     for (const college of colleges) {
-      const override = resolvePlaceOverride({
+      const override = await resolvePlaceOverride({
         id: college.id,
         name: college.name,
         address: college.address,
@@ -10954,7 +11018,7 @@
         zip: college.zip,
         lat: college.lat ?? college.latitude ?? college.LAT,
         lon: college.lng ?? college.lon ?? college.longitude ?? college.LON
-      });
+      }, { category: 'college', jurisdiction: college.jurisdiction || 'Regional' });
       const resolved = await resolveLatLngForPlace(college, 'campus');
       let lat = Number(resolved?.lat ?? override?.lat ?? college.lat ?? college.latitude ?? college.LAT);
       let lon = Number(resolved?.lon ?? override?.lon ?? college.lng ?? college.lon ?? college.longitude ?? college.LON);
