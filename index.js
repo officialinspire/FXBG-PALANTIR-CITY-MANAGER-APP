@@ -2908,9 +2908,6 @@
   function isAllowedByMobileAOI(item) {
     if (!IS_MOBILE_UI) return true;
 
-    // If user explicitly disables AOI gating
-    if (store?.aoi?.mode === "off") return true;
-
     const lat = item.lat;
     const lon = item.lon ?? item.lng;
     if (!Number.isFinite(lat) || !Number.isFinite(lon)) return false;
@@ -2920,10 +2917,8 @@
     // Always allow primary AOI regions
     if (regionTag === "fxbg" || regionTag === "stafford" || regionTag === "spotsy") return true;
 
-    // If mode is primary-only, block everything else
-    if (store?.aoi?.mode === "primary-only") return false;
-
     // mobile-smart: allow outside only if near the user (GPS AOI)
+    if (store?.aoi?.mode !== "mobile-smart") return false;
     const gps = store?.aoi?.gpsBbox;
     if (gps && inBbox(lat, lon, gps)) return true;
 
@@ -8109,6 +8104,10 @@
     return R * c;
   }
 
+  function haversineMeters(lat1, lon1, lat2, lon2) {
+    return haversineDistance(lat1, lon1, lat2, lon2);
+  }
+
   function formatDistanceMiles(meters) {
     if (!Number.isFinite(meters)) return "—";
     const miles = meters / 1609.34;
@@ -8909,6 +8908,10 @@
     return 10;
   }
 
+  function importanceScore(item) {
+    return getMarkerPriority(item);
+  }
+
   function redrawImmediate() {
     enforceCaps();
     if (store.loadShedding) {
@@ -8968,14 +8971,43 @@
       visibleItems.push(item);
     }
 
-    if (IS_MOBILE_UI || store.mobilePerf) {
+    if (IS_MOBILE_UI) {
+      const cap = Number(CONFIG?.perf?.mobileMarkerCap || MOBILE_MARKER_CAP || 200);
+      const user = currentUserLocation || store?.location?.lastFix || store?.locationFix || store?.location || null;
+      const hasUser = user && Number.isFinite(user.lat) && Number.isFinite(user.lon ?? user.lng);
+      const now = Date.now();
+
+      const score = (item) => {
+        const imp = importanceScore(item);
+        let distPenalty = 0;
+        if (hasUser) {
+          const lng = item.lon ?? item.lng;
+          const userLon = user.lon ?? user.lng;
+          if (Number.isFinite(item.lat) && Number.isFinite(lng) && Number.isFinite(userLon)) {
+            const d = haversineMeters(user.lat, userLon, item.lat, lng);
+            distPenalty = Math.min(d, 50000) / 1000;
+          }
+        }
+
+        const tsRaw = item.timestamp || item.time || item.published || item.ts || 0;
+        const ts = Number(tsRaw) || Date.parse(tsRaw) || 0;
+        const ageMin = ts ? (now - ts) / 60000 : 999999;
+        return (imp * 10) - distPenalty - (ageMin / 60);
+      };
+
+      visibleItems.sort((a, b) => score(b) - score(a));
+      if (visibleItems.length > cap) {
+        suppressedByCap = visibleItems.length - cap;
+        visibleItems.length = cap;
+      }
+    } else if (store.mobilePerf) {
       const getItemTs = (item) => {
         if (Number.isFinite(item?.ts)) return item.ts;
         const parsed = item?.timestamp ? new Date(item.timestamp).getTime() : 0;
         return Number.isFinite(parsed) ? parsed : 0;
       };
       visibleItems.sort((a, b) => getMarkerPriority(b) - getMarkerPriority(a) || getItemTs(b) - getItemTs(a));
-      if (store.mobilePerf && visibleItems.length > MOBILE_MARKER_CAP) {
+      if (visibleItems.length > MOBILE_MARKER_CAP) {
         const protectedItems = [];
         const suppressibleItems = [];
         for (const item of visibleItems) {
