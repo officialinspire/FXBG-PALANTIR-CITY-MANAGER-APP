@@ -9117,8 +9117,7 @@
     if (!store.loadShedding) {
       clusters.clearLayers();
       markerLayer.clearLayers();
-      if (map.hasLayer(clusters)) map.removeLayer(clusters);
-      if (map.hasLayer(markerLayer)) map.removeLayer(markerLayer);
+      // Do not remove layers from map here (prevents flicker)
       store.markersById.clear();
     }
 
@@ -9217,7 +9216,8 @@
         }
         markerCount++;
       }
-      map.addLayer(markerLayer);
+      if (!map.hasLayer(markerLayer)) map.addLayer(markerLayer);
+      if (map.hasLayer(clusters)) map.removeLayer(clusters);
     } else {
       if (downtownMode) {
         const byExact = new Map();
@@ -9241,14 +9241,16 @@
             markerCount++;
           }
         }
-        map.addLayer(markerLayer);
+        if (!map.hasLayer(markerLayer)) map.addLayer(markerLayer);
+        if (map.hasLayer(clusters)) map.removeLayer(clusters);
       } else {
         for (const item of visibleItems) {
           attachMarker(item, null, null, { useClusters: true });
           if (item.sourceType === 'rss' || item.category === 'alerts' || item.category === 'incident' || item.category === 'incidents') rssMarkerStats.placedMarkers++;
           markerCount++;
         }
-        map.addLayer(clusters);
+        if (!map.hasLayer(clusters)) map.addLayer(clusters);
+        if (map.hasLayer(markerLayer)) map.removeLayer(markerLayer);
       }
     }
 
