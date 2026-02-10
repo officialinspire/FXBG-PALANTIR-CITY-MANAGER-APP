@@ -5420,6 +5420,7 @@
   const LOCATION_PROMPT_SEEN_KEY = STORAGE_KEYS.LOCATION_PROMPT_SEEN;
   let userLocationMarker = null;
   let userLocationCircle = null;
+  let userHudCircle = null;
   let locationWatchId = null;
   let currentUserLocation = null;
 
@@ -5480,6 +5481,10 @@
     }
   }
 
+  function metersFromMiles(mi) {
+    return mi * 1609.344;
+  }
+
   function updateUserLocationMarker(lat, lng, accuracy) {
     const icon = L.divIcon({ className: "userLocationMarker" });
     if (!userLocationMarker) {
@@ -5506,6 +5511,24 @@
     }
   }
 
+  function updateUserHudCircle(lat, lng) {
+    if (!IS_MOBILE_UI) return;
+    const radiusMeters = metersFromMiles(CONFIG.gpsAoiMilesRadius || 0.06);
+    if (!userHudCircle) {
+      userHudCircle = L.circle([lat, lng], {
+        radius: radiusMeters,
+        color: "#7cc6ff",
+        weight: 1,
+        opacity: 0.45,
+        fillColor: "#7cc6ff",
+        fillOpacity: 0.04
+      }).addTo(map);
+    } else {
+      userHudCircle.setLatLng([lat, lng]);
+      userHudCircle.setRadius(radiusMeters);
+    }
+  }
+
   function applyUserLocation({ lat, lng, accuracy, zoom, persist = true, animate = true, center = true } = {}) {
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
     const shouldCenter = IS_MOBILE_UI ? (center !== false) : Boolean(center);
@@ -5521,6 +5544,7 @@
       map.setView([lat, lng], nextZoom, { animate });
     }
     updateUserLocationMarker(lat, lng, accuracy);
+    updateUserHudCircle(lat, lng);
     currentUserLocation = { lat, lng, accuracy, ts: Date.now() };
     updateGpsAoiFromFix(lat, lng);
     if (persist) {
@@ -5564,6 +5588,10 @@
     if (userLocationCircle) {
       try { map.removeLayer(userLocationCircle); } catch {}
       userLocationCircle = null;
+    }
+    if (userHudCircle) {
+      try { map.removeLayer(userHudCircle); } catch {}
+      userHudCircle = null;
     }
     currentUserLocation = null;
     if (storeReady) {
