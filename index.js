@@ -2930,6 +2930,19 @@
     return (tag === "fxbg" || tag === "stafford" || tag === "spotsy") ? tag : "fxbg";
   }
 
+  function getMobileAllowedRegionTag() {
+    if (!IS_MOBILE_UI) return null;
+    return store?.mobile?.regionTag || null;
+  }
+
+  function isAllowedByMobileJurisdiction(item) {
+    if (!IS_MOBILE_UI) return true;
+    const allowed = getMobileAllowedRegionTag();
+    if (!allowed) return true; // before GPS resolves
+    const tag = item?.regionTag || assignRegionTag(item);
+    return tag === allowed;
+  }
+
   function isAllowedByMobileAOI(item) {
     if (!IS_MOBILE_UI) return true;
 
@@ -2939,11 +2952,8 @@
 
     const regionTag = item.regionTag || assignRegionTag(item);
 
-    // Primary AOI regions on mobile are scoped to the resolved user jurisdiction
-    if (regionTag === "fxbg" || regionTag === "stafford" || regionTag === "spotsy") {
-      const mobileRegion = store?.mobile?.regionTag || "fxbg";
-      return regionTag === mobileRegion;
-    }
+    // Jurisdiction filtering is handled by isAllowedByMobileJurisdiction().
+    if (regionTag === "fxbg" || regionTag === "stafford" || regionTag === "spotsy") return true;
 
     // mobile-smart: allow outside only if near the user (GPS AOI)
     if (store?.aoi?.mode !== "mobile-smart") return false;
@@ -8604,6 +8614,7 @@
   }
 
   function attachMarker(item, renderLat = null, renderLon = null, options = {}) {
+    if (IS_MOBILE_UI && !isAllowedByMobileJurisdiction(item)) return;
     const markerLat = Number.isFinite(renderLat) ? renderLat : item.lat;
     const markerLon = Number.isFinite(renderLon) ? renderLon : (item.lon ?? item.lng);
     const markerMeta = options.originalLatLon ? { originalLatLng: options.originalLatLon } : null;
@@ -8631,6 +8642,7 @@
   function attachStackMarker(items) {
     if (!items?.length) return;
     const base = items[0];
+    if (IS_MOBILE_UI && !isAllowedByMobileJurisdiction(base)) return;
     if (IS_MOBILE_UI) {
       const marker = L.marker([base.lat, base.lon ?? base.lng], {
         icon: makeEmojiIcon("📍", "warn", "stack", { confidence: null }, { stackCount: items.length })
@@ -9032,7 +9044,7 @@
     // Prioritize by marker priority (cameras > POIs) then by proximity to map center.
     if ((IS_MOBILE_UI || store.mobilePerf) && cams.length > MOBILE_MARKER_CAP) {
       const gpsBbox = store?.aoi?.gpsBbox || null;
-      cams = cams.filter(isAllowedByMobileAOI);
+      cams = cams.filter((item) => isAllowedByMobileJurisdiction(item) && isAllowedByMobileAOI(item));
       cams.sort((a, b) => compareMobileMarkers(a, b, gpsBbox));
       cams = cams.slice(0, MOBILE_MARKER_CAP);
     }
@@ -9134,8 +9146,9 @@
   }
 
   function getMarkerPriority(item) {
+    if (item?.meta?.isCamera || isTrafficCameraItem(item)) return 1000;
+    if (Number.isFinite(item?.meta?.markerPriority)) return item.meta.markerPriority;
     if (Number.isFinite(item?.priority)) return item.priority;
-    if (isTrafficCameraItem(item)) return 100;
     if (isTrafficIncidentItem(item)) return 90;
     if (item?.category === "alerts") return 80;
     if (["school", "college", "hospital", "clinic", "shelter", "fire_ems", "police_crime"].includes(item?.category)) return 70;
@@ -9214,11 +9227,6 @@
         continue;
       }
 
-      // Mobile AOI policy: only FXBG/Stafford/Spotsy unless near-user GPS AOI
-      if (!isAllowedByMobileAOI(item)) {
-        filtered.aoi++;
-        continue;
-      }
       if (item.sourceId === "fxbg-crime-reports" && !isCrimeItemVisible(item)) {
         filtered.crime++;
         continue;
@@ -9229,8 +9237,10 @@
     if (IS_MOBILE_UI) {
       const cap = Number(CONFIG?.perf?.mobileMarkerCap || MOBILE_MARKER_CAP || 500);
       const gpsBbox = store?.aoi?.gpsBbox || null;
-      const aoiFiltered = visibleItems.filter(isAllowedByMobileAOI);
+      const jFiltered = visibleItems.filter(isAllowedByMobileJurisdiction);
+      const aoiFiltered = jFiltered.filter(isAllowedByMobileAOI);
 
+      filtered.aoi += (visibleItems.length - aoiFiltered.length);
       visibleItems.length = 0;
       visibleItems.push(...aoiFiltered);
       visibleItems.sort((a, b) => compareMobileMarkers(a, b, gpsBbox));
@@ -10011,6 +10021,7 @@
         sourceId: "va511-cams",
         sourceName: "VA511 — Cameras",
         priority: 100,
+        meta: { markerPriority: 1000, isCamera: true },
         tone: "good",
         timestamp: now
       });
