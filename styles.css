@@ -3317,6 +3317,32 @@ button {
 }
 
 @media (max-width: 1024px) and (pointer: coarse) {
+  :root{
+    --topH: 76px;
+    --mobileHeaderH: 86px;
+  }
+
+  #mobileHeader.topbar{
+    padding: 6px 8px 6px !important;
+    gap: 6px !important;
+    border-radius: 14px;
+  }
+
+  #mobileHeader .topbar__center--stacked{
+    gap: 4px !important;
+  }
+
+  #mobileHeader .brand__mark{ font-size: 16px; line-height: 1; }
+  #mobileHeader .brand__title{ font-size: 13px; line-height: 1.05; }
+  #mobileHeader .brand__sub{ font-size: 10px; line-height: 1.05; opacity: .85; }
+
+  #mobileHeader .chip{
+    padding: 4px 8px !important;
+    border-radius: 999px;
+  }
+  #mobileHeader .chip__text{ font-size: 11px; }
+  #mobileHeader .btn--compact{ padding: 6px 8px; min-height: 28px; }
+
   /* Hard reset: prevent wrap chaos */
   .topbar, .topbar * { box-sizing: border-box; }
   .topbar { padding: 10px 10px 8px; }
