@@ -189,7 +189,7 @@
   const AOI_MODE_STORAGE_KEY = "fxbg.aoiMode";
   const MOBILE_PERF_STORAGE_KEY = "fxbg.mobilePerf";
   const ACTIVE_CATEGORIES_STORAGE_KEY = "fxbg.activeCategories";
-  const MOBILE_MARKER_CAP = 200;
+  const MOBILE_MARKER_CAP = 500;
   const MAP_REDRAW_DEBOUNCE_MS = 320;
   const LOAD_SHEDDING_CORE_POLL_MS = 90 * 1000;
   const GIS_LAYERS = new Map(); // key -> { leafletLayer, enabled, meta, loaded }
@@ -8898,11 +8898,9 @@
     // On mobile, cap stable sources to prevent them from bypassing the total item limit.
     // Prioritize by marker priority (cameras > POIs) then by proximity to map center.
     if ((IS_MOBILE_UI || store.mobilePerf) && cams.length > MOBILE_MARKER_CAP) {
-      cams.sort((a, b) => {
-        const pa = getMarkerPriority(a);
-        const pb = getMarkerPriority(b);
-        return pb - pa;
-      });
+      const gpsBbox = store?.aoi?.gpsBbox || null;
+      cams = cams.filter(isAllowedByMobileAOI);
+      cams.sort((a, b) => compareMobileMarkers(a, b, gpsBbox));
       cams = cams.slice(0, MOBILE_MARKER_CAP);
     }
 
@@ -9012,8 +9010,28 @@
     return 10;
   }
 
-  function importanceScore(item) {
-    return getMarkerPriority(item);
+  function getRegionPriority(item) {
+    const regionTag = item?.regionTag || assignRegionTag(item);
+    return (regionTag === "fxbg" || regionTag === "stafford" || regionTag === "spotsy") ? 1 : 0;
+  }
+
+  function compareMobileMarkers(a, b, gpsBbox = null) {
+    const regionDiff = getRegionPriority(b) - getRegionPriority(a);
+    if (regionDiff) return regionDiff;
+
+    const markerDiff = getMarkerPriority(b) - getMarkerPriority(a);
+    if (markerDiff) return markerDiff;
+
+    if (store?.aoi?.mode === "mobile-smart" && gpsBbox) {
+      const aLon = a?.lon ?? a?.lng;
+      const bLon = b?.lon ?? b?.lng;
+      const aInsideGps = Number.isFinite(a?.lat) && Number.isFinite(aLon) && inBbox(a.lat, aLon, gpsBbox) ? 1 : 0;
+      const bInsideGps = Number.isFinite(b?.lat) && Number.isFinite(bLon) && inBbox(b.lat, bLon, gpsBbox) ? 1 : 0;
+      const gpsDiff = bInsideGps - aInsideGps;
+      if (gpsDiff) return gpsDiff;
+    }
+
+    return 0;
   }
 
   function redrawImmediate() {
@@ -9076,30 +9094,13 @@
     }
 
     if (IS_MOBILE_UI) {
-      const cap = Number(CONFIG?.perf?.mobileMarkerCap || MOBILE_MARKER_CAP || 200);
-      const user = currentUserLocation || store?.location?.lastFix || store?.locationFix || store?.location || null;
-      const hasUser = user && Number.isFinite(user.lat) && Number.isFinite(user.lon ?? user.lng);
-      const now = Date.now();
+      const cap = Number(CONFIG?.perf?.mobileMarkerCap || MOBILE_MARKER_CAP || 500);
+      const gpsBbox = store?.aoi?.gpsBbox || null;
+      const aoiFiltered = visibleItems.filter(isAllowedByMobileAOI);
 
-      const score = (item) => {
-        const imp = importanceScore(item);
-        let distPenalty = 0;
-        if (hasUser) {
-          const lng = item.lon ?? item.lng;
-          const userLon = user.lon ?? user.lng;
-          if (Number.isFinite(item.lat) && Number.isFinite(lng) && Number.isFinite(userLon)) {
-            const d = haversineMeters(user.lat, userLon, item.lat, lng);
-            distPenalty = Math.min(d, 50000) / 1000;
-          }
-        }
-
-        const tsRaw = item.timestamp || item.time || item.published || item.ts || 0;
-        const ts = Number(tsRaw) || Date.parse(tsRaw) || 0;
-        const ageMin = ts ? (now - ts) / 60000 : 999999;
-        return (imp * 10) - distPenalty - (ageMin / 60);
-      };
-
-      visibleItems.sort((a, b) => score(b) - score(a));
+      visibleItems.length = 0;
+      visibleItems.push(...aoiFiltered);
+      visibleItems.sort((a, b) => compareMobileMarkers(a, b, gpsBbox));
       if (visibleItems.length > cap) {
         suppressedByCap = visibleItems.length - cap;
         visibleItems.length = cap;
