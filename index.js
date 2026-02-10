@@ -5026,6 +5026,25 @@
     minZoom: 7
   }).setView([CONFIG.center.lat, CONFIG.center.lon], CONFIG.zoom);
 
+  function getMobilePopupPadding() {
+    const topEl = document.getElementById("mobileHeader") || document.getElementById("desktopHeader");
+    const dockEl = document.getElementById("dock");
+    const topH = topEl ? topEl.getBoundingClientRect().height : 0;
+    const dockH = dockEl ? dockEl.getBoundingClientRect().height : 0;
+    return { top: Math.ceil(topH + 16), bottom: Math.ceil(dockH + 24), left: 16, right: 16 };
+  }
+
+  map.on("popupopen", (e) => {
+    if (!IS_MOBILE_UI) return;
+    const p = getMobilePopupPadding();
+    try {
+      map.panInside(e.popup.getLatLng(), {
+        paddingTopLeft: L.point(p.left, p.top),
+        paddingBottomRight: L.point(p.right, p.bottom)
+      });
+    } catch {}
+  });
+
   const gisBasePane = map.createPane("gisBase");
   gisBasePane.style.zIndex = 250;
   gisBasePane.style.pointerEvents = "none";
@@ -6572,7 +6591,7 @@
               }
             }
             popupContent += `</div>`;
-            layer.bindPopup(popupContent);
+            layer.bindPopup(popupContent, IS_MOBILE_UI ? getPopupOpts() : undefined);
           }
         }
       });
@@ -8599,8 +8618,13 @@
          </div>`
       : "";
 
+    const mobileCloseButton = IS_MOBILE_UI
+      ? `<button class="fxbgPopupClose" type="button" onclick="this.closest('.leaflet-popup').querySelector('.leaflet-popup-close-button')?.click()">Close ✕</button>`
+      : "";
+
     return `
       <div style="min-width:220px; max-width:280px">
+        ${mobileCloseButton}
         <div style="font-weight:900; font-size:13px; margin-bottom:6px">${item.emoji} ${safeTitle}</div>
         <div style="color:rgba(255,255,255,.70); font-size:12px; margin-bottom:8px">${cat} • ${fmtTime(item.timestamp)}</div>
         ${cameraPreview}
@@ -8611,6 +8635,17 @@
         ${poiCoordsDebug}
       </div>
     `;
+  }
+
+  function getPopupOpts() {
+    if (!IS_MOBILE_UI) return { closeButton: false };
+    return {
+      closeButton: true,
+      autoClose: true,
+      closeOnClick: true,
+      maxWidth: 320,
+      className: "fxbgPopup fxbgPopup--mobile"
+    };
   }
 
   function attachMarker(item, renderLat = null, renderLon = null, options = {}) {
@@ -8630,7 +8665,7 @@
       }
       selectItem(item.id);
     });
-    m.bindPopup(renderPopup({ ...item, _downtownMeta: markerMeta }), { closeButton: false });
+    m.bindPopup(renderPopup({ ...item, _downtownMeta: markerMeta }), getPopupOpts());
     if (options.useClusters !== false) {
       clusters.addLayer(m);
     } else {
@@ -8666,7 +8701,7 @@
     const marker = L.marker([base.lat, base.lon ?? base.lng], {
       icon: makeEmojiIcon("📍", "warn", "stack", { confidence: null }, { stackCount: items.length })
     });
-    marker.bindPopup(`<div style="min-width:220px;"><strong>${items.length} incidents in this area</strong><div style="margin-top:6px;font-size:12px;opacity:.85;">Multiple items share the same location. Select one from the list.</div><div style="margin-top:8px;">${stackList}</div>${moreText}</div>`, { closeButton: false });
+    marker.bindPopup(`<div style="min-width:220px;"><strong>${items.length} incidents in this area</strong><div style="margin-top:6px;font-size:12px;opacity:.85;">Multiple items share the same location. Select one from the list.</div><div style="margin-top:8px;">${stackList}</div>${moreText}</div>`, getPopupOpts());
     markerLayer.addLayer(marker);
   }
 
@@ -12934,7 +12969,8 @@
       html: `<span>${emoji}</span>`
     });
     const marker = L.marker([item.lat, item.lng], { icon });
-    marker.bindPopup(buildReportPopup(item), { maxWidth: 240 });
+    const reportPopupOpts = IS_MOBILE_UI ? getPopupOpts() : { ...getPopupOpts(), maxWidth: 240 };
+    marker.bindPopup(buildReportPopup(item), reportPopupOpts);
     return marker;
   }
 
