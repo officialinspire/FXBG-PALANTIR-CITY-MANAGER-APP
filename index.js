@@ -8518,10 +8518,20 @@
   function attachStackMarker(items) {
     if (!items?.length) return;
     const base = items[0];
+    const previewItems = items.slice(0, 12);
+    const stackList = previewItems.map((item) => {
+      const itemId = escapeAttr(item.id || "");
+      const itemTitle = escapeHtml(item.title || "Untitled incident");
+      return `<button type="button" data-stack-open="${itemId}" style="display:block;width:100%;text-align:left;margin-top:6px;padding:6px 8px;border:1px solid rgba(255,255,255,.15);border-radius:6px;background:rgba(255,255,255,.06);color:#fff;font-size:12px;cursor:pointer;">${escapeHtml(item.emoji || "📍")} ${itemTitle}</button>`;
+    }).join("");
+    const moreCount = items.length - previewItems.length;
+    const moreText = moreCount > 0
+      ? `<div style="margin-top:6px;font-size:11px;opacity:.7;">+${moreCount} more incidents in this stack.</div>`
+      : "";
     const marker = L.marker([base.lat, base.lon ?? base.lng], {
       icon: makeEmojiIcon("📍", "warn", "stack", { confidence: null }, { stackCount: items.length })
     });
-    marker.bindPopup(`<div style="min-width:200px;"><strong>${items.length} incidents in this area</strong><div style="margin-top:6px;font-size:12px;opacity:.85;">Zoom in for exact marker placement.</div></div>`, { closeButton: false });
+    marker.bindPopup(`<div style="min-width:220px;"><strong>${items.length} incidents in this area</strong><div style="margin-top:6px;font-size:12px;opacity:.85;">Zoom in for exact marker placement.</div><div style="margin-top:8px;">${stackList}</div>${moreText}</div>`, { closeButton: false });
     markerLayer.addLayer(marker);
   }
 
@@ -14489,6 +14499,14 @@
   }
 
   document.addEventListener("click", (event) => {
+    const stackOpenButton = event.target?.closest?.("[data-stack-open]");
+    if (stackOpenButton) {
+      event.preventDefault();
+      const id = stackOpenButton.getAttribute("data-stack-open") || "";
+      const item = store.itemsById.get(id);
+      if (item) selectItem(item.id);
+      return;
+    }
     if (event.target?.id === "downtownModeToggle") {
       store.mapUi.forceDowntownMode = !store.mapUi.forceDowntownMode;
       syncPrecisionControlLabels();
