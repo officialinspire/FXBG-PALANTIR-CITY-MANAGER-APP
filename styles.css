@@ -984,14 +984,11 @@ body.debug-ui button {
 .mobile-perf .emojiMarker,
 .mobile-perf .emojiMarker::before,
 .mobile-perf .emojiMarker--selected,
-.mobile-perf .emojiMarker--pulse,
-.mobile-perf .leaflet-marker-icon,
-.mobile-perf .leaflet-marker-shadow{
+.mobile-perf .emojiMarker--pulse{
   box-shadow: none !important;
   filter: none !important;
   animation: none !important;
   transition: none !important;
-  transform: none !important;
 }
 
 /* --- Panel list (category focus) --- */
