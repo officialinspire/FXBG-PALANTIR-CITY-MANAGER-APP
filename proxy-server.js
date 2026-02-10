@@ -697,6 +697,8 @@ function extractItemId(url) {
   const patterns = [
     /\/content\/items\/([a-f0-9]{32})\/data/i,
     /\/datasets\/([a-f0-9]{32})(?:[/?#]|$)/i,
+    /\/documents\/([a-f0-9]{32})(?:[/?#]|$)/i,
+    /\/apps\/([a-f0-9]{32})(?:[/?#]|$)/i,
     /#\/geohub\/datasets\/([a-f0-9]{32})(?:[/?#]|$)/i
   ];
   for (const pattern of patterns) {
@@ -705,6 +707,15 @@ function extractItemId(url) {
   }
   return null;
 }
+
+console.assert(
+  extractItemId("https://data-fredericksburg.opendata.arcgis.com/documents/00212477b4da4c4982c58ccf7d1815e8") === "00212477b4da4c4982c58ccf7d1815e8",
+  "extractItemId should parse ArcGIS Hub documents URLs"
+);
+console.assert(
+  extractItemId("https://data-fredericksburg.opendata.arcgis.com/datasets/1c0bfe9000954094b748f61b3e42e2cc") === "1c0bfe9000954094b748f61b3e42e2cc",
+  "extractItemId should parse ArcGIS Hub datasets URLs"
+);
 
 function portalBaseForUrl(url) {
   const text = String(url || "");
