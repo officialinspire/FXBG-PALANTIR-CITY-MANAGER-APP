@@ -476,6 +476,11 @@
     // GPS AOI radius (miles). When user is outside primary AOI, we load markers near them only.
     gpsAoiMilesRadius: 15,
 
+    mobile: {
+      defaultZoom: 17,
+      cityBlockMiles: 0.06
+    },
+
     // POI-specific bbox (bounds for schools, hospitals, clinics in FXBG metro area)
     // Expanded to include full K-12 schools dataset: lat 38.1285–38.5312, lon -77.6215–-77.3425
     poiBbox: { minLat: 38.12, maxLat: 38.54, minLon: -77.63, maxLon: -77.34 },
@@ -2324,6 +2329,10 @@
     }
   };
 
+  if (IS_MOBILE_UI) {
+    CONFIG.gpsAoiMilesRadius = CONFIG.mobile.cityBlockMiles;
+  }
+
   // -----------------------------
   // Data source health tracking (reduces console spam)
   // -----------------------------
@@ -2915,6 +2924,12 @@
     return item.regionTag;
   }
 
+  function resolveUserRegionTag(lat, lon) {
+    const dummy = { lat, lon, lng: lon };
+    const tag = assignRegionTag(dummy);
+    return (tag === "fxbg" || tag === "stafford" || tag === "spotsy") ? tag : "fxbg";
+  }
+
   function isAllowedByMobileAOI(item) {
     if (!IS_MOBILE_UI) return true;
 
@@ -2924,8 +2939,11 @@
 
     const regionTag = item.regionTag || assignRegionTag(item);
 
-    // Always allow primary AOI regions
-    if (regionTag === "fxbg" || regionTag === "stafford" || regionTag === "spotsy") return true;
+    // Primary AOI regions on mobile are scoped to the resolved user jurisdiction
+    if (regionTag === "fxbg" || regionTag === "stafford" || regionTag === "spotsy") {
+      const mobileRegion = store?.mobile?.regionTag || "fxbg";
+      return regionTag === mobileRegion;
+    }
 
     // mobile-smart: allow outside only if near the user (GPS AOI)
     if (store?.aoi?.mode !== "mobile-smart") return false;
@@ -5490,8 +5508,16 @@
 
   function applyUserLocation({ lat, lng, accuracy, zoom, persist = true, animate = true, center = true } = {}) {
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
-    const nextZoom = Number.isFinite(zoom) ? zoom : 15;
-    if (center) {
+    const shouldCenter = IS_MOBILE_UI ? (center !== false) : Boolean(center);
+    const nextZoom = Number.isFinite(zoom) ? zoom : (IS_MOBILE_UI ? CONFIG.mobile.defaultZoom : 15);
+
+    if (IS_MOBILE_UI && !store.mobile.regionTag) {
+      store.mobile.regionTag = resolveUserRegionTag(lat, lng);
+      store.mobile.lastResolvedAt = Date.now();
+      console.log("[MobileAOI] regionTag=", store.mobile.regionTag, "radiusMiles=", CONFIG.gpsAoiMilesRadius);
+    }
+
+    if (shouldCenter) {
       map.setView([lat, lng], nextZoom, { animate });
     }
     updateUserLocationMarker(lat, lng, accuracy);
@@ -7169,6 +7195,8 @@
   };
   const LOAD_SHEDDING_REDRAW_MS = 600;
   const LOAD_SHEDDING_LIST_THRESHOLD = 300;
+  const initialAoiMode = readAoiModePref();
+  const validAoiModes = new Set(["off", "primary-only", "mobile-smart"]);
 
   const store = {
     itemsById: new Map(),
@@ -7265,8 +7293,12 @@
       lastSyncAt: null,
       clients: []
     },
+    mobile: {
+      regionTag: null,
+      lastResolvedAt: 0
+    },
     aoi: {
-      mode: readAoiModePref(), // "off" | "primary-only" | "mobile-smart"
+      mode: (IS_MOBILE_UI && !validAoiModes.has(initialAoiMode)) ? "mobile-smart" : initialAoiMode, // "off" | "primary-only" | "mobile-smart"
       gpsBbox: null,
       lastGpsFixTs: 0
     },
