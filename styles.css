@@ -916,14 +916,16 @@ body.debug-ui button {
 .emojiMarker[data-tone="bad"]{ outline: 2px solid rgba(255,107,138,.25); }
 
 @media (max-width: 860px){
-  .topbar{ grid-template-columns: 1fr 1fr; height: auto; padding: 10px; }
+  .topbar{ grid-template-columns: 1fr 1fr; height: auto; padding: 6px 8px; }
   .topbar__center{ justify-content:flex-start; flex-wrap: wrap; }
   .topbar__right{ justify-content:flex-start; }
-  :root{ --topH: 118px; }
+  :root{ --topH: 92px; }
 }
 
 @media (max-width: 620px){
+  .topbar{ padding: 6px 8px; }
   .bottombar{ grid-template-columns: 1fr; height: auto; }
+  :root{ --topH: 92px; }
   :root{ --botH: 108px; }
   .panel{
     left: 12px;
@@ -5036,4 +5038,36 @@ button:focus-visible {
 .radioSection__title,
 .dockSectionTitle {
   background: color-mix(in srgb, var(--panelBg) 85%, var(--accent) 15%);
+}
+
+/* Desktop-only chip min widths */
+@media (min-width: 861px){
+  #chipTraffic{ min-width: clamp(240px, 28vw, 420px); }
+  #chipWeather{ min-width: clamp(240px, 28vw, 420px); }
+}
+
+/* Mobile stacked-header chip row: keep single-line and scrollable */
+.topbarRow--chips{
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 8px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+
+.topbarRow--chips::-webkit-scrollbar{ display: none; }
+
+@media (max-width: 860px){
+  #chipTraffic, #chipWeather { min-width: 180px; }
+  .chip { padding: 6px 10px; border-radius: 999px; }
+  .chip__text { font-size: 12px; }
+  .brand__title { font-size: 14px; }
+  .brand__sub { font-size: 11px; }
+}
+
+@media (max-width: 620px){
+  :root{ --topH: 92px; }
+  .topbar{ padding: 6px 8px; }
 }
