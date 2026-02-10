@@ -869,6 +869,30 @@ body.debug-ui button {
 }
 .leaflet-container{ background: rgba(10,14,24,1); }
 
+.fxbgPopup--mobile .leaflet-popup-content {
+  margin: 10px 12px;
+  font-size: 14px;
+  line-height: 1.25;
+  max-height: 45vh;
+  overflow: auto;
+}
+
+.fxbgPopupClose{
+  display:block;
+  width:100%;
+  padding:10px 12px;
+  margin:0 0 10px 0;
+  border-radius:10px;
+  border:1px solid rgba(255,255,255,.18);
+  background: rgba(0,0,0,.35);
+  color: inherit;
+  font-weight: 700;
+}
+
+.fxbgPopup--mobile a, .fxbgPopup--mobile button {
+  min-height: 44px;
+}
+
 /* Map tiles: increase contrast/brightness for better readability while keeping dark theme */
 .leaflet-tile-pane .leaflet-tile {
   filter: brightness(1.40) contrast(1.20);
