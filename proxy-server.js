@@ -879,6 +879,13 @@ async function resolveArcgis(entry) {
   };
 }
 
+async function resolveArcgisWithTimeout(entry, timeoutMs = 8000) {
+  return Promise.race([
+    resolveArcgis(entry),
+    sleep(timeoutMs).then(() => ({ ok: false, error: "resolve_timeout" }))
+  ]);
+}
+
 function buildGisCacheSource(entry, resolution) {
   return {
     url: entry?.url || null,
@@ -5153,6 +5160,39 @@ const server = http.createServer(async (req, res) => {
       const resolution = await resolveArcgis(entry);
       await writeJsonFile(resolvedPath, resolution);
       return send(res, 200, JSON.stringify(resolution, null, 2), { "Content-Type": "application/json" });
+    }
+
+    if (urlObj.pathname === "/api/gis/validate" && req.method === "GET") {
+      const includeAll = urlObj.searchParams.get("all") === "1";
+      const catalog = await readGisCatalog();
+      const entries = listGisCatalogEntries(catalog);
+      const limitedEntries = includeAll ? entries : entries.slice(0, 25);
+      const items = [];
+
+      for (const entry of limitedEntries) {
+        const itemId = extractItemId(entry?.url || "");
+        const result = await resolveArcgisWithTimeout(entry);
+        const layerUrl = result?.layerUrl || null;
+        const resolvedOk = Boolean(result?.ok && layerUrl);
+        let error = null;
+        if (!resolvedOk) {
+          error = result?.error || (result?.ok ? "missing_layer_url" : "resolve_failed");
+        }
+
+        items.push({
+          key: entry?.key || null,
+          category: entry?.category || null,
+          url: entry?.url || null,
+          itemId,
+          resolvedOk,
+          layerUrl,
+          error
+        });
+      }
+
+      return send(res, 200, JSON.stringify({ ok: true, count: items.length, items }, null, 2), {
+        "Content-Type": "application/json"
+      });
     }
 
     if (urlObj.pathname === "/api/gis/fetch" && req.method === "GET") {
