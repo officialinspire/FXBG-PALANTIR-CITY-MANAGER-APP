@@ -9301,12 +9301,14 @@
   }
 
   let mapRedrawTimeout = null;
+  let isInteracting = false;
   function scheduleMapRedraw() {
     if (mapRedrawTimeout) {
       clearTimeout(mapRedrawTimeout);
     }
     mapRedrawTimeout = setTimeout(() => {
       mapRedrawTimeout = null;
+      if (IS_MOBILE_UI && isInteracting) return;
       scheduleRender();
     }, MAP_REDRAW_DEBOUNCE_MS);
   }
@@ -14579,6 +14581,19 @@
       store.mapUi.tapToIdentify = !store.mapUi.tapToIdentify;
       syncPrecisionControlLabels();
     }
+  });
+
+  map.on("movestart", () => {
+    if (IS_MOBILE_UI) isInteracting = true;
+  });
+  map.on("zoomstart", () => {
+    if (IS_MOBILE_UI) isInteracting = true;
+  });
+  map.on("moveend", () => {
+    if (IS_MOBILE_UI) isInteracting = false;
+  });
+  map.on("zoomend", () => {
+    if (IS_MOBILE_UI) isInteracting = false;
   });
 
   map.on("zoomend", () => {
