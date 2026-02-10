@@ -9027,7 +9027,7 @@
     }
 
     const downtownMode = isDowntownModeEnabled();
-    const useStacks = store.mobilePerf ? true : shouldUseDeclutterStacking();
+    const useStacks = IS_MOBILE_UI ? true : (store.mobilePerf ? true : shouldUseDeclutterStacking());
 
     if (useStacks) {
       for (const stack of buildDeclutterStacks(visibleItems)) {
