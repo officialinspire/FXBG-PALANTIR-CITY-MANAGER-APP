@@ -3470,6 +3470,12 @@ button {
 /* Specific safeguard: desktop header must never overlay in mobile mode */
 .ui-mobile #desktopHeader { display: none !important; }
 
+@media (max-width: 1024px) and (pointer: coarse) {
+  .ui-mobile .stage {
+    top: calc(10px + var(--mobileHeaderH) + env(safe-area-inset-top));
+  }
+}
+
 /* Desktop header: keep old 3-column grid as default */
 .topbar.desktop-only {
   display: grid;
