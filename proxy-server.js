@@ -694,8 +694,25 @@ function sleep(ms) {
 function extractItemId(url) {
   const text = String(url || "");
   if (!text) return null;
+
+  try {
+    const parsed = new URL(text);
+    const candidate = sanitizeArcgisItemId(parsed.searchParams.get("id"));
+    if (candidate) return candidate;
+    const hashQuery = parsed.hash.includes("?") ? parsed.hash.slice(parsed.hash.indexOf("?") + 1) : "";
+    if (hashQuery) {
+      const hashParams = new URLSearchParams(hashQuery);
+      const hashCandidate = sanitizeArcgisItemId(hashParams.get("id"));
+      if (hashCandidate) return hashCandidate;
+    }
+  } catch {
+    // no-op: fallback to regex patterns below
+  }
+
   const patterns = [
     /\/content\/items\/([a-f0-9]{32})\/data/i,
+    /\/content\/items\/([a-f0-9]{32})(?:[/?#]|$)/i,
+    /\/home\/item\.html.*[?&]id=([a-f0-9]{32})(?:[&#]|$)/i,
     /\/datasets\/([a-f0-9]{32})(?:[/?#]|$)/i,
     /#\/geohub\/datasets\/([a-f0-9]{32})(?:[/?#]|$)/i
   ];
@@ -704,6 +721,79 @@ function extractItemId(url) {
     if (match?.[1]) return match[1].toLowerCase();
   }
   return null;
+}
+
+function slugifyKeyPart(value) {
+  const slug = String(value || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 40);
+  return slug || "layer";
+}
+
+function buildStableCatalogKey(title, itemId, existingKeys = new Set()) {
+  const safeItemId = sanitizeArcgisItemId(itemId);
+  const suffix = safeItemId ? safeItemId.slice(-6) : crypto.createHash("sha1").update(String(title || "untitled")).digest("hex").slice(0, 6);
+  const baseKey = `${slugifyKeyPart(title)}_${suffix}`;
+  if (!existingKeys.has(baseKey)) return baseKey;
+
+  let next = 2;
+  while (existingKeys.has(`${baseKey}_${next}`)) {
+    next += 1;
+  }
+  return `${baseKey}_${next}`;
+}
+
+function buildArcgisGeojsonUrl(layerUrl) {
+  if (!layerUrl) return null;
+  const base = layerUrl.replace(/\/+$/, "");
+  return `${base}/query?where=1%3D1&outFields=*&f=geojson`;
+}
+
+function normalizeImportUrl(rawUrl) {
+  const text = String(rawUrl || "").trim();
+  if (!text) return null;
+  try {
+    const parsed = new URL(text);
+    parsed.hash = "";
+    return parsed.toString();
+  } catch {
+    return text;
+  }
+}
+
+async function resolveImportGisEntry(sourceUrl) {
+  const normalizedUrl = normalizeImportUrl(sourceUrl);
+  const itemId = extractItemId(normalizedUrl);
+  if (!itemId) {
+    return { ok: false, error: "missing_item_id" };
+  }
+
+  const portalBase = portalBaseForUrl(normalizedUrl);
+  const itemInfoResult = await fetchArcgisItemInfo(itemId);
+  if (!itemInfoResult?.ok) {
+    return {
+      ok: false,
+      error: itemInfoResult?.error || "iteminfo_failed",
+      status: itemInfoResult?.status || 0
+    };
+  }
+
+  const resolution = await resolveArcgis({ url: normalizedUrl, itemId, portalBase });
+  const title = resolution?.title || itemInfoResult?.data?.title || itemInfoResult?.data?.name || itemId;
+  const layerGeojsonUrl = buildArcgisGeojsonUrl(resolution?.layerUrl || null);
+  const itemDataGeojsonUrl = `${portalBase.replace(/\/$/, "")}/sharing/rest/content/items/${itemId}/data?f=geojson`;
+  const resolvedDownloadUrl = layerGeojsonUrl || itemDataGeojsonUrl;
+
+  return {
+    ok: true,
+    itemId,
+    name: title,
+    url: resolvedDownloadUrl,
+    portalBase,
+    sourceUrl: normalizedUrl
+  };
 }
 
 function portalBaseForUrl(url) {
@@ -5102,6 +5192,93 @@ const server = http.createServer(async (req, res) => {
       }
       const catalog = await readGisCatalog();
       return send(res, 200, JSON.stringify(catalog, null, 2), { "Content-Type": "application/json" });
+    }
+
+    if (urlObj.pathname === "/api/gis/import" && req.method === "POST") {
+      try {
+        const body = await readBody(req, PAYLOAD_LIMITS.json);
+        const payload = safeJsonParse(body.toString("utf8"), null, "gis import");
+        const group = String(payload?.group || "").trim();
+        const urls = Array.isArray(payload?.urls) ? payload.urls : [];
+
+        if (!group || !Array.isArray(urls) || urls.length === 0) {
+          return send(res, 400, JSON.stringify({ ok: false, error: "invalid_payload", message: "Provide group and at least one url." }, null, 2), {
+            "Content-Type": "application/json"
+          });
+        }
+
+        const catalog = await readGisCatalog();
+        if (!Array.isArray(catalog[group])) {
+          return send(res, 400, JSON.stringify({ ok: false, error: "invalid_group" }, null, 2), { "Content-Type": "application/json" });
+        }
+
+        const existingEntries = listGisCatalogEntries(catalog);
+        const existingUrls = new Set(existingEntries.map((entry) => normalizeImportUrl(entry?.url)).filter(Boolean));
+        const existingItemIds = new Set(existingEntries.map((entry) => sanitizeArcgisItemId(entry?.itemId)).filter(Boolean));
+        const existingKeys = new Set(existingEntries.map((entry) => entry.key).filter(Boolean));
+        const added = [];
+        const skipped = [];
+        const errors = [];
+
+        for (const rawUrl of urls) {
+          const normalizedUrl = normalizeImportUrl(rawUrl);
+          if (!normalizedUrl) {
+            skipped.push({ url: rawUrl, reason: "empty_url" });
+            continue;
+          }
+
+          const parsedItemId = extractItemId(normalizedUrl);
+          if (parsedItemId && existingItemIds.has(parsedItemId)) {
+            skipped.push({ url: normalizedUrl, reason: "duplicate_item_id", itemId: parsedItemId });
+            continue;
+          }
+          if (existingUrls.has(normalizedUrl)) {
+            skipped.push({ url: normalizedUrl, reason: "duplicate_url" });
+            continue;
+          }
+
+          const resolved = await resolveImportGisEntry(normalizedUrl);
+          if (!resolved.ok) {
+            errors.push({ url: normalizedUrl, error: resolved.error || "resolve_failed", status: resolved.status || 0 });
+            continue;
+          }
+
+          if (existingItemIds.has(resolved.itemId)) {
+            skipped.push({ url: normalizedUrl, reason: "duplicate_item_id", itemId: resolved.itemId });
+            continue;
+          }
+          if (existingUrls.has(resolved.url)) {
+            skipped.push({ url: normalizedUrl, reason: "duplicate_url", existingUrl: resolved.url });
+            continue;
+          }
+
+          const key = buildStableCatalogKey(resolved.name, resolved.itemId, existingKeys);
+          const entry = {
+            key,
+            name: resolved.name,
+            url: resolved.url,
+            itemId: resolved.itemId,
+            portalBase: resolved.portalBase,
+            defaultEnabled: false,
+            offline: false
+          };
+
+          catalog[group].push(entry);
+          existingKeys.add(key);
+          existingUrls.add(normalizedUrl);
+          existingUrls.add(resolved.url);
+          existingItemIds.add(resolved.itemId);
+          added.push({ group, sourceUrl: normalizedUrl, ...entry });
+        }
+
+        if (added.length > 0) {
+          await writeJsonFile(GIS_CATALOG_FILE, catalog);
+        }
+
+        return send(res, 200, JSON.stringify({ ok: true, added, skipped, errors }, null, 2), { "Content-Type": "application/json" });
+      } catch (err) {
+        return send(res, 400, JSON.stringify({ ok: false, error: "invalid_payload", message: err.message }, null, 2), { "Content-Type": "application/json" });
+      }
     }
 
     if (urlObj.pathname === "/api/gis/status" && req.method === "GET") {
