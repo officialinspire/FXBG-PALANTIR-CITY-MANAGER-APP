@@ -485,9 +485,9 @@
 
     // Per-county bounding boxes for accurate region tagging (used by assignRegionTag)
     countyBboxes: {
-      fxbg:     { minLat: 38.28, maxLat: 38.34, minLon: -77.52, maxLon: -77.42 },  // Fredericksburg City
-      stafford: { minLat: 38.35, maxLat: 38.53, minLon: -77.60, maxLon: -77.32 },  // Stafford County
-      spotsy:   { minLat: 38.10, maxLat: 38.28, minLon: -77.72, maxLon: -77.38 },  // Spotsylvania County
+      fxbg:     { minLat: 38.26, maxLat: 38.36, minLon: -77.56, maxLon: -77.40 },  // Fredericksburg City
+      stafford: { minLat: 38.25, maxLat: 38.62, minLon: -77.70, maxLon: -77.25 },  // Stafford County
+      spotsy:   { minLat: 38.05, maxLat: 38.40, minLon: -77.80, maxLon: -77.30 },  // Spotsylvania County
     },
 
     // Freshness (CURRENT ONLY)
@@ -2885,15 +2885,23 @@
     }
 
     const countyBboxes = CONFIG.countyBboxes || {};
-    if (countyBboxes.fxbg && inBbox(lat, lon, countyBboxes.fxbg)) {
+    const M = 0.01; // ~0.7 miles
+    const withMargin = (bbox) => ({
+      minLat: bbox.minLat - M,
+      maxLat: bbox.maxLat + M,
+      minLon: bbox.minLon - M,
+      maxLon: bbox.maxLon + M,
+    });
+
+    if (countyBboxes.fxbg && inBbox(lat, lon, withMargin(countyBboxes.fxbg))) {
       item.regionTag = "fxbg";
       return item.regionTag;
     }
-    if (countyBboxes.stafford && inBbox(lat, lon, countyBboxes.stafford)) {
+    if (countyBboxes.stafford && inBbox(lat, lon, withMargin(countyBboxes.stafford))) {
       item.regionTag = "stafford";
       return item.regionTag;
     }
-    if (countyBboxes.spotsy && inBbox(lat, lon, countyBboxes.spotsy)) {
+    if (countyBboxes.spotsy && inBbox(lat, lon, withMargin(countyBboxes.spotsy))) {
       item.regionTag = "spotsy";
       return item.regionTag;
     }
