@@ -201,6 +201,8 @@
     { key: "environmentalTopo", label: "Environmental / Topo" },
     { key: "spotsy", label: "Spotsylvania" }
   ];
+  const MOBILE_VISIBLE_GIS_GROUPS = new Set(["cityLayers", "spotsy", "toggleLayers", "basemapEnhancers"]);
+  const mobileHeavyLayerConfirmations = new Set();
   let gisCatalogCache = null;
   let gisCatalogPromise = null;
   let gisCatalogStatus = "idle";
@@ -5656,7 +5658,10 @@
 
   function getGisCatalogEntries() {
     const entries = [];
-    GIS_PANEL_GROUPS.forEach((group) => {
+    const visibleGroups = IS_MOBILE_UI
+      ? GIS_PANEL_GROUPS.filter((group) => MOBILE_VISIBLE_GIS_GROUPS.has(group.key))
+      : GIS_PANEL_GROUPS;
+    visibleGroups.forEach((group) => {
       const groupEntries = Array.isArray(gisCatalogCache?.[group.key]) ? gisCatalogCache[group.key] : [];
       groupEntries.forEach((entry) => {
         if (entry?.key) {
@@ -5665,6 +5670,19 @@
       });
     });
     return entries;
+  }
+
+  function isMobileVisibleGisGroup(groupKey) {
+    if (!IS_MOBILE_UI) return true;
+    return MOBILE_VISIBLE_GIS_GROUPS.has(groupKey);
+  }
+
+  function isHeavyGisLayer(entryMeta) {
+    if (!entryMeta) return false;
+    const offlineHeavy = entryMeta.offline === true;
+    const styleHintValue = typeof entryMeta.styleHint === "string" ? entryMeta.styleHint.toLowerCase() : "";
+    const styleHintHeavy = styleHintValue.includes("heavy");
+    return offlineHeavy || styleHintHeavy;
   }
 
   function updateGisCatalogEntryName(key, name) {
@@ -5883,7 +5901,21 @@
   async function enableGisLayer(key) {
     const entry = GIS_LAYERS.get(key);
     if (!entry) return;
+    if (!isMobileVisibleGisGroup(entry.meta?.groupKey)) {
+      console.info(`[GIS] Skipping layer ${key} on mobile; group hidden by AOI safety filter.`);
+      return;
+    }
     if (entry.enabled) return;
+
+    if (IS_MOBILE_UI && isHeavyGisLayer(entry.meta) && !mobileHeavyLayerConfirmations.has(key)) {
+      const confirmed = window.confirm("This layer may impact performance on Android. Enable anyway?");
+      if (!confirmed) {
+        refreshLayersPanelUI();
+        return;
+      }
+      mobileHeavyLayerConfirmations.add(key);
+    }
+
     if (entry.loaded && entry.leafletLayer) {
       entry.leafletLayer.addTo(map);
       entry.enabled = true;
@@ -16156,7 +16188,11 @@
       }
     } catch (e) {}
 
-    GIS_PANEL_GROUPS.forEach((group) => {
+    const visibleGroups = IS_MOBILE_UI
+      ? GIS_PANEL_GROUPS.filter((group) => MOBILE_VISIBLE_GIS_GROUPS.has(group.key))
+      : GIS_PANEL_GROUPS;
+
+    visibleGroups.forEach((group) => {
       const entries = Array.isArray(gisCatalogCache?.[group.key]) ? gisCatalogCache[group.key] : [];
       const isCollapsed = collapsedGroups[group.key] === true;
 
