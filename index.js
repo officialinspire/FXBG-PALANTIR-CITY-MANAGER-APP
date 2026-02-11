@@ -6794,6 +6794,15 @@
     window.matchMedia?.("(max-width: 980px)")?.matches &&
     window.matchMedia?.("(orientation: landscape)")?.matches;
 
+  function updateViewportHeightVar() {
+    const root = document.documentElement;
+    if (!root) return;
+    const vv = window.visualViewport;
+    const viewportHeight = vv?.height || window.innerHeight || 0;
+    if (!viewportHeight) return;
+    root.style.setProperty("--viewportH", `${Math.round(viewportHeight)}px`);
+  }
+
   // Keep CSS chrome heights in sync with actual header size (mobile wrap/safe-area/collapse).
   function getSafeAreaTopInsetPx() {
     const root = document.documentElement;
@@ -6823,6 +6832,7 @@
     const safeAreaTop = getSafeAreaTopInsetPx();
     const top = computeVisibleHeaderHeight() + safeAreaTop;
     root.style.setProperty("--topH", `${Math.max(0, Math.round(top))}px`);
+    updateViewportHeightVar();
   }
 
   function updateBarActualHeights() {
@@ -6835,6 +6845,14 @@
     root.style.setProperty("--topbarActual", `${Math.max(0, Math.round(topH))}px`);
     root.style.setProperty("--bottombarActual", `${Math.max(0, Math.round(botH))}px`);
   }
+
+  window.addEventListener("resize", updateViewportHeightVar, { passive: true });
+  window.addEventListener("orientationchange", updateViewportHeightVar, { passive: true });
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener("resize", updateViewportHeightVar, { passive: true });
+    window.visualViewport.addEventListener("scroll", updateViewportHeightVar, { passive: true });
+  }
+  updateViewportHeightVar();
 
   // Mobile header collapse helper (for NewsFlash/Radio panels)
   function setMobileHeaderCollapsed(collapsed) {

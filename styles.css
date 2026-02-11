@@ -53,6 +53,7 @@
   --radius: 18px;
   --safeTop: env(safe-area-inset-top, 0px);
   --safeBottom: env(safe-area-inset-bottom, 0px);
+  --viewportH: 100vh;
   --mobileHeaderH: 118px;
   --mobileDockH: 74px;
   --mapTopInset: calc(var(--safeTop) + var(--mobileHeaderH));
@@ -812,7 +813,7 @@ body.debug-ui button {
 .panel__body{
   padding: 12px 12px 16px;
   overflow: auto;
-  max-height: calc(100vh - 250px);
+  max-height: calc(var(--viewportH, 100vh) - 250px);
 }
 .kv{ display:flex; justify-content:space-between; gap:12px; padding: 8px 0; }
 .kv__k{ color: var(--muted2); font-size: 12px; }
@@ -957,7 +958,7 @@ body.debug-ui button {
     width: auto;
     top: calc(var(--topH) + 12px + var(--safeTop));
     bottom: calc(12px + var(--safeBottom));
-    max-height: calc(100vh - var(--topH) - var(--botH) - 24px - var(--safeTop) - var(--safeBottom));
+    max-height: calc(var(--viewportH, 100vh) - var(--topH) - var(--botH) - 24px - var(--safeTop) - var(--safeBottom));
   }
   .panel--collapsed{
     transform: translateY(110%);
@@ -969,7 +970,7 @@ body.debug-ui button {
 @media (max-width: 400px){
   .panel{
     top: calc(var(--topH) + 16px + var(--safeTop));
-    max-height: calc(100vh - var(--topH) - var(--botH) - 32px - var(--safeTop) - var(--safeBottom));
+    max-height: calc(var(--viewportH, 100vh) - var(--topH) - var(--botH) - 32px - var(--safeTop) - var(--safeBottom));
   }
 }
 
@@ -1179,7 +1180,7 @@ body.debug-ui button {
   top: calc(var(--topH) + 20px);
   right: 10px;
   width: 420px;
-  max-height: calc(100vh - var(--topH) - var(--botH) - 40px);
+  max-height: calc(var(--viewportH, 100vh) - var(--topH) - var(--botH) - 40px);
   z-index: 10400; /* Above mobile header (10100) and dock (10300) */
   border: 1px solid var(--stroke);
   background: rgba(15, 23, 48, .92);
@@ -1401,7 +1402,7 @@ body.debug-ui button {
   top: calc(var(--topH) + 20px);
   left: 10px;
   width: 580px;
-  max-height: calc(100vh - var(--topH) - var(--botH) - 40px);
+  max-height: calc(var(--viewportH, 100vh) - var(--topH) - var(--botH) - 40px);
   z-index: 10400; /* Above mobile header (10100) and dock (10300) */
   border: 1px solid var(--stroke);
   background: rgba(15, 23, 48, .92);
@@ -1782,7 +1783,7 @@ body.debug-ui button {
   top: calc(var(--topH) + 20px);
   right: 10px;
   width: 420px;
-  max-height: calc(100vh - var(--topH) - var(--botH) - 40px);
+  max-height: calc(var(--viewportH, 100vh) - var(--topH) - var(--botH) - 40px);
   z-index: 10400;
   border: 1px solid var(--stroke);
   background: rgba(15, 23, 48, .92);
@@ -2757,7 +2758,7 @@ button {
 
   /* Force map to fill viewport behind UI */
   #map, .mapShell {
-    height: 100vh !important;
+    height: var(--viewportH, 100vh) !important;
   }
 
   /* Compact header: shorter, less padding, rounded */
@@ -2922,7 +2923,7 @@ button {
 
   /* Prevent the bottom panel from being hidden behind footer */
   .dockPanel {
-    max-height: calc(100vh - 110px - var(--safeTop) - var(--safeBottom));
+    max-height: calc(var(--viewportH, 100vh) - 110px - var(--safeTop) - var(--safeBottom));
     bottom: calc(70px + var(--safeBottom));
   }
   .dockPanel.isOpen {
@@ -2931,7 +2932,7 @@ button {
 
   /* Panel adjustments for landscape */
   .panel {
-    max-height: calc(100vh - 100px - var(--safeTop) - var(--safeBottom));
+    max-height: calc(var(--viewportH, 100vh) - 100px - var(--safeTop) - var(--safeBottom));
     width: min(420px, 92vw);
   }
   .panel.open,
@@ -2950,7 +2951,7 @@ button {
   /* News Flash and Radio panels adjustments */
   .newsFlashPanel,
   .radioPanel {
-    max-height: calc(100vh - 90px - var(--safeTop) - var(--safeBottom));
+    max-height: calc(var(--viewportH, 100vh) - 90px - var(--safeTop) - var(--safeBottom));
     top: calc(74px + var(--safeTop));
   }
 
@@ -3179,7 +3180,7 @@ button {
 
   /* Make sure panel max height does not hide behind footer */
   .panel, .drawer, .bottomSheet, .sidePanel{
-    max-height: calc(100vh - 92px - var(--safeTop) - var(--safeBottom)); /* leaves room for footer */
+    max-height: calc(var(--viewportH, 100vh) - 92px - var(--safeTop) - var(--safeBottom)); /* leaves room for footer */
   }
 
   /* Center topbar__center vertically */
@@ -3231,7 +3232,7 @@ button {
 .legendDraggable {
   position: fixed !important;
   z-index: 10050 !important;
-  max-height: calc(100vh - 120px) !important;
+  max-height: calc(var(--viewportH, 100vh) - 120px) !important;
   overflow: auto !important;
   cursor: move;
   cursor: grab;
@@ -3629,7 +3630,7 @@ button {
   top: calc(var(--topH) + 20px);
   left: 10px;
   width: 420px;
-  max-height: calc(100vh - var(--topH) - var(--botH) - 40px);
+  max-height: calc(var(--viewportH, 100vh) - var(--topH) - var(--botH) - 40px);
   z-index: 10400; /* Above mobile header and dock */
   border: 1px solid var(--stroke);
   background: rgba(15, 23, 48, .92);
@@ -3820,7 +3821,7 @@ button {
   top: calc(var(--topH) + 20px);
   right: 10px;
   width: 420px;
-  max-height: calc(100vh - var(--topH) - var(--botH) - 40px);
+  max-height: calc(var(--viewportH, 100vh) - var(--topH) - var(--botH) - 40px);
   z-index: 10400;
   border: 1px solid var(--stroke);
   background: rgba(15, 23, 48, .92);
@@ -4133,7 +4134,7 @@ button {
   right: 0;
   bottom: 16px;
   width: min(420px, calc(100vw - 32px));
-  max-height: calc(100vh - 32px);
+  max-height: calc(var(--viewportH, 100vh) - 32px);
   background: rgba(15, 23, 48, 0.96);
   border: 1px solid var(--stroke);
   border-radius: 18px 0 0 18px;
@@ -4317,7 +4318,7 @@ button {
     top: 0;
     bottom: 0;
     width: 100%;
-    max-height: 100vh;
+    max-height: var(--viewportH, 100vh);
     border-radius: 0;
   }
 }
