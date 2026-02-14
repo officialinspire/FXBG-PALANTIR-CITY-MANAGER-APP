@@ -17017,9 +17017,14 @@
   // -----------------------------
   const mqlPortrait = window.matchMedia?.("(orientation: portrait)");
 
-  // Check localStorage for portrait dismissal preference on load
-  if (localStorage.getItem(STORAGE_KEYS.PORTRAIT_DISMISSED) === 'true') {
-    window.__CM_ALLOW_PORTRAIT = true;
+  // Check localStorage for portrait dismissal preference on load.
+  // Guard storage access because some mobile privacy modes throw here.
+  try {
+    if (localStorage.getItem(STORAGE_KEYS.PORTRAIT_DISMISSED) === 'true') {
+      window.__CM_ALLOW_PORTRAIT = true;
+    }
+  } catch (_err) {
+    window.__CM_ALLOW_PORTRAIT = false;
   }
 
   function updateOrientationUI(){
@@ -17060,8 +17065,12 @@
   const btnContinuePortrait = document.getElementById("btnContinuePortrait");
   if (btnContinuePortrait) {
     btnContinuePortrait.addEventListener("click", () => {
-      // Save dismissal preference to localStorage
-      localStorage.setItem(STORAGE_KEYS.PORTRAIT_DISMISSED, 'true');
+      // Save dismissal preference when storage is available.
+      try {
+        localStorage.setItem(STORAGE_KEYS.PORTRAIT_DISMISSED, 'true');
+      } catch (_err) {
+        // Non-fatal: still allow portrait for this session.
+      }
       window.__CM_ALLOW_PORTRAIT = true;
       updateOrientationUI();
     });
@@ -17069,7 +17078,11 @@
 
   // Helper function to reset portrait dismissal preference (can be called from diagnostics)
   function resetPortraitDismissal() {
-    localStorage.removeItem(STORAGE_KEYS.PORTRAIT_DISMISSED);
+    try {
+      localStorage.removeItem(STORAGE_KEYS.PORTRAIT_DISMISSED);
+    } catch (_err) {
+      // Ignore storage failures in private browsing modes.
+    }
     window.__CM_ALLOW_PORTRAIT = false;
     console.log('[Settings] Portrait mode warning will show again');
     updateOrientationUI();
